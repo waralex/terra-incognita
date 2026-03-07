@@ -136,6 +136,102 @@ impl SchemaRegistry {
         Ok(())
     }
 
+    pub fn list_entity_types(&self) -> Result<Vec<EntityType>, SchemaError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, slug, created_at FROM entity_types ORDER BY slug")?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let id_bytes: Vec<u8> = row.get(0)?;
+                let slug: String = row.get(1)?;
+                let created_at_str: String = row.get(2)?;
+                Ok((id_bytes, slug, created_at_str))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|(id_bytes, slug, created_at_str)| {
+                let id = Uuid::from_slice(&id_bytes).map_err(|e| {
+                    SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string()))
+                })?;
+                let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map_err(|e| {
+                        SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string()))
+                    })?;
+                Ok(EntityType {
+                    id,
+                    slug,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
+    pub fn get_entity_type(&self, slug: &str) -> Result<EntityType, SchemaError> {
+        let (id_bytes, created_at_str): (Vec<u8>, String) = self
+            .conn
+            .query_row(
+                "SELECT id, created_at FROM entity_types WHERE slug = ?1",
+                params![slug],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    SchemaError::EntityTypeNotFound(slug.to_string())
+                }
+                other => SchemaError::Db(other),
+            })?;
+
+        let id = Uuid::from_slice(&id_bytes)
+            .map_err(|e| SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string())))?;
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .map_err(|e| SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string())))?;
+
+        Ok(EntityType {
+            id,
+            slug: slug.to_string(),
+            created_at,
+        })
+    }
+
+    pub fn list_all_properties(&self) -> Result<Vec<EntityProperty>, SchemaError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, slug, value_type, created_at FROM entity_properties ORDER BY slug",
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let id_bytes: Vec<u8> = row.get(0)?;
+                let slug: String = row.get(1)?;
+                let vt_str: String = row.get(2)?;
+                let created_at_str: String = row.get(3)?;
+                Ok((id_bytes, slug, vt_str, created_at_str))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|(id_bytes, slug, vt_str, created_at_str)| {
+                let id = Uuid::from_slice(&id_bytes).map_err(|e| {
+                    SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string()))
+                })?;
+                let value_type = ValueType::from_str(&vt_str)
+                    .ok_or_else(|| SchemaError::InvalidSlug(vt_str.clone()))?;
+                let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .map_err(|_| SchemaError::InvalidSlug(created_at_str))?;
+                Ok(EntityProperty {
+                    id,
+                    slug,
+                    value_type,
+                    created_at,
+                })
+            })
+            .collect()
+    }
+
     pub fn list_properties(
         &self,
         entity_type_slug: &str,
@@ -317,5 +413,59 @@ mod tests {
             reg.list_properties("no-such-type"),
             Err(SchemaError::EntityTypeNotFound(_))
         ));
+    }
+
+    #[test]
+    fn list_entity_types_empty() {
+        let reg = registry();
+        let types = reg.list_entity_types().unwrap();
+        assert!(types.is_empty());
+    }
+
+    #[test]
+    fn list_entity_types_returns_all() {
+        let reg = registry();
+        reg.create_entity_type("bravo").unwrap();
+        reg.create_entity_type("alpha").unwrap();
+        let types = reg.list_entity_types().unwrap();
+        assert_eq!(types.len(), 2);
+        assert_eq!(types[0].slug, "alpha");
+        assert_eq!(types[1].slug, "bravo");
+    }
+
+    #[test]
+    fn get_entity_type_found() {
+        let reg = registry();
+        let created = reg.create_entity_type("tank").unwrap();
+        let fetched = reg.get_entity_type("tank").unwrap();
+        assert_eq!(fetched.id, created.id);
+        assert_eq!(fetched.slug, "tank");
+    }
+
+    #[test]
+    fn get_entity_type_not_found() {
+        let reg = registry();
+        assert!(matches!(
+            reg.get_entity_type("ghost"),
+            Err(SchemaError::EntityTypeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn list_all_properties_empty() {
+        let reg = registry();
+        let props = reg.list_all_properties().unwrap();
+        assert!(props.is_empty());
+    }
+
+    #[test]
+    fn list_all_properties_returns_all() {
+        let reg = registry();
+        reg.create_property("name", ValueType::String).unwrap();
+        reg.create_property("count", ValueType::Number).unwrap();
+        let props = reg.list_all_properties().unwrap();
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].slug, "count");
+        assert_eq!(props[1].slug, "name");
     }
 }

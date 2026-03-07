@@ -2,6 +2,7 @@
 name = "terra-core"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 rusqlite = { version = "0.38", features = ["bundled"] }

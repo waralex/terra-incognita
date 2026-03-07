@@ -2,7 +2,7 @@ mod entity_property;
 mod entity_type;
 mod migrations;
 mod registry;
-mod slug;
+pub(crate) mod slug;
 
 pub use entity_property::{EntityProperty, ValueType};
 pub use entity_type::EntityType;

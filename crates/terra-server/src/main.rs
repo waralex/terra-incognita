@@ -9,6 +9,7 @@ use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::{Router, routing::post};
 use std::sync::{Arc, Mutex};
+use terra_core::assertion::AssertionStore;
 use terra_core::schema::SchemaRegistry;
 use tracing::info;
 
@@ -51,7 +52,12 @@ async fn main() {
 
     let db_path = config.schema_db_path();
     let registry = SchemaRegistry::open(&db_path).expect("failed to open schema registry");
-    let state: AppState = Arc::new(Mutex::new(registry));
+
+    let assertions_path = config.assertions_db_path();
+    let assertions = AssertionStore::open(&assertions_path).expect("failed to open assertion store");
+    info!("assertions_db: {}", assertions_path.display());
+
+    let state: AppState = Arc::new(Mutex::new(crate::state::Inner { registry, assertions }));
 
     let app = Router::new()
         .route("/query", post(handle_query))

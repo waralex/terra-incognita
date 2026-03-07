@@ -1,9 +1,12 @@
+use terra_core::assertion::AssertionKind;
+
 use crate::error::ApiError;
 use crate::query::Command;
 use crate::state::AppState;
 
 pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, ApiError> {
-    let registry = state.lock().unwrap();
+    let inner = state.lock().unwrap();
+    let registry = &inner.registry;
 
     match cmd {
         Command::CreateEntityType { slug, description } => {
@@ -63,6 +66,51 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
             map.insert(
                 serde_yaml::Value::String("status".into()),
                 serde_yaml::Value::String("ok".into()),
+            );
+            Ok(serde_yaml::Value::Mapping(map))
+        }
+        Command::CreateEntity { entity_type, name, kind, context } => {
+            registry.get_entity_type(&entity_type)?;
+
+            let kind = kind.unwrap_or(AssertionKind::Hypothesis);
+            let context_json = match context {
+                Some(yaml_val) => {
+                    let json_str = serde_json::to_string(
+                        &serde_yaml::from_value::<serde_json::Value>(yaml_val)
+                            .unwrap_or(serde_json::Value::Null),
+                    )
+                    .unwrap_or_default();
+                    serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null)
+                }
+                None => serde_json::json!({}),
+            };
+
+            let entry = inner.assertions.create_entity(&entity_type, &name, kind, context_json)?;
+
+            let mut map = serde_yaml::Mapping::new();
+            map.insert(
+                serde_yaml::Value::String("id".into()),
+                serde_yaml::to_value(entry.id).unwrap(),
+            );
+            map.insert(
+                serde_yaml::Value::String("timestamp".into()),
+                serde_yaml::Value::String(entry.timestamp.to_rfc3339()),
+            );
+            map.insert(
+                serde_yaml::Value::String("entity_id".into()),
+                serde_yaml::to_value(entry.entity_id).unwrap(),
+            );
+            map.insert(
+                serde_yaml::Value::String("entity_type".into()),
+                serde_yaml::Value::String(entry.entity_type),
+            );
+            map.insert(
+                serde_yaml::Value::String("kind".into()),
+                serde_yaml::to_value(entry.kind).unwrap(),
+            );
+            map.insert(
+                serde_yaml::Value::String("name".into()),
+                serde_yaml::Value::String(entry.name),
             );
             Ok(serde_yaml::Value::Mapping(map))
         }

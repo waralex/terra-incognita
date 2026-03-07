@@ -1,5 +1,6 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use terra_core::assertion::AssertionError;
 use terra_core::schema::SchemaError;
 
 pub struct ApiError {
@@ -27,6 +28,21 @@ impl From<SchemaError> for ApiError {
             SchemaError::EntityTypeNotFound(_) => (StatusCode::NOT_FOUND, "entity_type_not_found"),
             SchemaError::PropertyNotFound(_) => (StatusCode::NOT_FOUND, "property_not_found"),
             SchemaError::Db(_) => (StatusCode::INTERNAL_SERVER_ERROR, "database_error"),
+        };
+        Self {
+            status,
+            kind: kind.to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<AssertionError> for ApiError {
+    fn from(err: AssertionError) -> Self {
+        let (status, kind) = match &err {
+            AssertionError::InvalidName(_) => (StatusCode::BAD_REQUEST, "invalid_name"),
+            AssertionError::EntityTypeNotFound(_) => (StatusCode::NOT_FOUND, "entity_type_not_found"),
+            AssertionError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage_error"),
         };
         Self {
             status,

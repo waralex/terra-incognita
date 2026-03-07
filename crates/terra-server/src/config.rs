@@ -61,6 +61,10 @@ impl Config {
         self.data_dir.join("schema.db")
     }
 
+    pub fn assertions_db_path(&self) -> PathBuf {
+        self.data_dir.join("assertions")
+    }
+
     pub fn ensure_data_dir(&self) -> std::io::Result<()> {
         if !self.data_dir.exists() {
             info!("creating data directory: {}", self.data_dir.display());

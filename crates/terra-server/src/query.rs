@@ -7,6 +7,12 @@ pub enum Command {
     CreateProperty { slug: String, value_type: terra_core::schema::ValueType, description: Option<String> },
     ListProperties { entity_type: Option<String> },
     AttachProperty { entity_type: String, slug: String },
+    CreateEntity {
+        entity_type: String,
+        name: String,
+        kind: Option<terra_core::assertion::AssertionKind>,
+        context: Option<serde_yaml::Value>,
+    },
 }
 
 impl Command {
@@ -57,6 +63,22 @@ impl Command {
                 let entity_type = require_str(&val, "entity_type")?;
                 let slug = require_str(&val, "slug")?;
                 Ok(Command::AttachProperty { entity_type, slug })
+            }
+            ("create", "entity") => {
+                let entity_type = require_str(&val, "entity_type")?;
+                let name = require_str(&val, "name")?;
+                let kind = match optional_str(&val, "kind").as_deref() {
+                    Some("hypothesis") | None => None,
+                    Some("refinement") => Some(terra_core::assertion::AssertionKind::Refinement),
+                    Some(other) => {
+                        return Err(ApiError::bad_request(
+                            "parse_error",
+                            format!("invalid kind: {other}, expected 'hypothesis' or 'refinement'"),
+                        ));
+                    }
+                };
+                let context = val.get("context").cloned();
+                Ok(Command::CreateEntity { entity_type, name, kind, context })
             }
             _ => Err(ApiError::bad_request(
                 "unknown_command",

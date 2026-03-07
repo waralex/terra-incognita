@@ -6,8 +6,8 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
     let registry = state.lock().unwrap();
 
     match cmd {
-        Command::CreateEntityType { slug } => {
-            let et = registry.create_entity_type(&slug)?;
+        Command::CreateEntityType { slug, description } => {
+            let et = registry.create_entity_type(&slug, description.as_deref())?;
             Ok(serde_yaml::to_value(&et).unwrap())
         }
         Command::ListEntityTypes => {
@@ -27,6 +27,12 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
                 serde_yaml::Value::String("slug".into()),
                 serde_yaml::Value::String(et.slug),
             );
+            if let Some(desc) = et.description {
+                map.insert(
+                    serde_yaml::Value::String("description".into()),
+                    serde_yaml::Value::String(desc),
+                );
+            }
             map.insert(
                 serde_yaml::Value::String("created_at".into()),
                 serde_yaml::to_value(&et.created_at).unwrap(),
@@ -37,8 +43,8 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
             );
             Ok(serde_yaml::Value::Mapping(map))
         }
-        Command::CreateProperty { slug, value_type } => {
-            let prop = registry.create_property(&slug, value_type)?;
+        Command::CreateProperty { slug, value_type, description } => {
+            let prop = registry.create_property(&slug, value_type, description.as_deref())?;
             Ok(serde_yaml::to_value(&prop).unwrap())
         }
         Command::ListProperties { entity_type: None } => {

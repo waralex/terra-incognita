@@ -34,7 +34,11 @@ impl SchemaRegistry {
         Ok(())
     }
 
-    pub fn create_entity_type(&self, slug: &str) -> Result<EntityType, SchemaError> {
+    pub fn create_entity_type(
+        &self,
+        slug: &str,
+        description: Option<&str>,
+    ) -> Result<EntityType, SchemaError> {
         validate_slug(slug)?;
 
         let id = Uuid::now_v7();
@@ -43,8 +47,8 @@ impl SchemaRegistry {
 
         self.conn
             .execute(
-                "INSERT INTO entity_types (id, slug, created_at) VALUES (?1, ?2, ?3)",
-                params![id.as_bytes().as_slice(), slug, created_at_str],
+                "INSERT INTO entity_types (id, slug, description, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id.as_bytes().as_slice(), slug, description, created_at_str],
             )
             .map_err(|e| match e {
                 rusqlite::Error::SqliteFailure(err, _)
@@ -58,6 +62,7 @@ impl SchemaRegistry {
         Ok(EntityType {
             id,
             slug: slug.to_string(),
+            description: description.map(String::from),
             created_at: now,
         })
     }
@@ -66,6 +71,7 @@ impl SchemaRegistry {
         &self,
         slug: &str,
         value_type: ValueType,
+        description: Option<&str>,
     ) -> Result<EntityProperty, SchemaError> {
         validate_slug(slug)?;
 
@@ -75,8 +81,8 @@ impl SchemaRegistry {
 
         self.conn
             .execute(
-                "INSERT INTO entity_properties (id, slug, value_type, created_at) VALUES (?1, ?2, ?3, ?4)",
-                params![id.as_bytes().as_slice(), slug, value_type.as_str(), created_at_str],
+                "INSERT INTO entity_properties (id, slug, description, value_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id.as_bytes().as_slice(), slug, description, value_type.as_str(), created_at_str],
             )
             .map_err(|e| match e {
                 rusqlite::Error::SqliteFailure(err, _)
@@ -90,6 +96,7 @@ impl SchemaRegistry {
         Ok(EntityProperty {
             id,
             slug: slug.to_string(),
+            description: description.map(String::from),
             value_type,
             created_at: now,
         })
@@ -139,19 +146,20 @@ impl SchemaRegistry {
     pub fn list_entity_types(&self) -> Result<Vec<EntityType>, SchemaError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, slug, created_at FROM entity_types ORDER BY slug")?;
+            .prepare("SELECT id, slug, description, created_at FROM entity_types ORDER BY slug")?;
 
         let rows = stmt
             .query_map([], |row| {
                 let id_bytes: Vec<u8> = row.get(0)?;
                 let slug: String = row.get(1)?;
-                let created_at_str: String = row.get(2)?;
-                Ok((id_bytes, slug, created_at_str))
+                let description: Option<String> = row.get(2)?;
+                let created_at_str: String = row.get(3)?;
+                Ok((id_bytes, slug, description, created_at_str))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(id_bytes, slug, created_at_str)| {
+            .map(|(id_bytes, slug, description, created_at_str)| {
                 let id = Uuid::from_slice(&id_bytes).map_err(|e| {
                     SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string()))
                 })?;
@@ -163,6 +171,7 @@ impl SchemaRegistry {
                 Ok(EntityType {
                     id,
                     slug,
+                    description,
                     created_at,
                 })
             })
@@ -170,12 +179,12 @@ impl SchemaRegistry {
     }
 
     pub fn get_entity_type(&self, slug: &str) -> Result<EntityType, SchemaError> {
-        let (id_bytes, created_at_str): (Vec<u8>, String) = self
+        let (id_bytes, description, created_at_str): (Vec<u8>, Option<String>, String) = self
             .conn
             .query_row(
-                "SELECT id, created_at FROM entity_types WHERE slug = ?1",
+                "SELECT id, description, created_at FROM entity_types WHERE slug = ?1",
                 params![slug],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .map_err(|e| match e {
                 rusqlite::Error::QueryReturnedNoRows => {
@@ -193,27 +202,29 @@ impl SchemaRegistry {
         Ok(EntityType {
             id,
             slug: slug.to_string(),
+            description,
             created_at,
         })
     }
 
     pub fn list_all_properties(&self) -> Result<Vec<EntityProperty>, SchemaError> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, slug, value_type, created_at FROM entity_properties ORDER BY slug",
+            "SELECT id, slug, description, value_type, created_at FROM entity_properties ORDER BY slug",
         )?;
 
         let rows = stmt
             .query_map([], |row| {
                 let id_bytes: Vec<u8> = row.get(0)?;
                 let slug: String = row.get(1)?;
-                let vt_str: String = row.get(2)?;
-                let created_at_str: String = row.get(3)?;
-                Ok((id_bytes, slug, vt_str, created_at_str))
+                let description: Option<String> = row.get(2)?;
+                let vt_str: String = row.get(3)?;
+                let created_at_str: String = row.get(4)?;
+                Ok((id_bytes, slug, description, vt_str, created_at_str))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(id_bytes, slug, vt_str, created_at_str)| {
+            .map(|(id_bytes, slug, description, vt_str, created_at_str)| {
                 let id = Uuid::from_slice(&id_bytes).map_err(|e| {
                     SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string()))
                 })?;
@@ -225,6 +236,7 @@ impl SchemaRegistry {
                 Ok(EntityProperty {
                     id,
                     slug,
+                    description,
                     value_type,
                     created_at,
                 })
@@ -251,7 +263,7 @@ impl SchemaRegistry {
             })?;
 
         let mut stmt = self.conn.prepare(
-            "SELECT p.id, p.slug, p.value_type, p.created_at
+            "SELECT p.id, p.slug, p.description, p.value_type, p.created_at
              FROM entity_properties p
              JOIN entity_type_properties tp ON tp.entity_property_id = p.id
              WHERE tp.entity_type_id = ?1
@@ -262,15 +274,16 @@ impl SchemaRegistry {
             .query_map(params![type_id], |row| {
                 let id_bytes: Vec<u8> = row.get(0)?;
                 let slug: String = row.get(1)?;
-                let vt_str: String = row.get(2)?;
-                let created_at_str: String = row.get(3)?;
-                Ok((id_bytes, slug, vt_str, created_at_str))
+                let description: Option<String> = row.get(2)?;
+                let vt_str: String = row.get(3)?;
+                let created_at_str: String = row.get(4)?;
+                Ok((id_bytes, slug, description, vt_str, created_at_str))
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
         props
             .into_iter()
-            .map(|(id_bytes, slug, vt_str, created_at_str)| {
+            .map(|(id_bytes, slug, description, vt_str, created_at_str)| {
                 let id = Uuid::from_slice(&id_bytes)
                     .map_err(|e| SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string())))?;
                 let value_type = ValueType::from_str(&vt_str)
@@ -281,6 +294,7 @@ impl SchemaRegistry {
                 Ok(EntityProperty {
                     id,
                     slug,
+                    description,
                     value_type,
                     created_at,
                 })
@@ -300,24 +314,35 @@ mod tests {
     #[test]
     fn create_entity_type() {
         let reg = registry();
-        let et = reg.create_entity_type("military-unit").unwrap();
+        let et = reg.create_entity_type("military-unit", None).unwrap();
         assert_eq!(et.slug, "military-unit");
+        assert!(et.description.is_none());
         assert_eq!(et.id.get_version(), Some(uuid::Version::SortRand));
+    }
+
+    #[test]
+    fn create_entity_type_with_description() {
+        let reg = registry();
+        let et = reg
+            .create_entity_type("tank", Some("Armored fighting vehicle"))
+            .unwrap();
+        assert_eq!(et.slug, "tank");
+        assert_eq!(et.description.as_deref(), Some("Armored fighting vehicle"));
     }
 
     #[test]
     fn reject_invalid_slug() {
         let reg = registry();
         assert!(matches!(
-            reg.create_entity_type("Invalid"),
+            reg.create_entity_type("Invalid", None),
             Err(SchemaError::InvalidSlug(_))
         ));
         assert!(matches!(
-            reg.create_entity_type(""),
+            reg.create_entity_type("", None),
             Err(SchemaError::InvalidSlug(_))
         ));
         assert!(matches!(
-            reg.create_entity_type("-leading"),
+            reg.create_entity_type("-leading", None),
             Err(SchemaError::InvalidSlug(_))
         ));
     }
@@ -325,9 +350,9 @@ mod tests {
     #[test]
     fn reject_duplicate_entity_type() {
         let reg = registry();
-        reg.create_entity_type("unit").unwrap();
+        reg.create_entity_type("unit", None).unwrap();
         assert!(matches!(
-            reg.create_entity_type("unit"),
+            reg.create_entity_type("unit", None),
             Err(SchemaError::DuplicateEntityType(_))
         ));
     }
@@ -335,8 +360,10 @@ mod tests {
     #[test]
     fn create_property_and_attach() {
         let reg = registry();
-        reg.create_entity_type("military-unit").unwrap();
-        let prop = reg.create_property("unit-name", ValueType::String).unwrap();
+        reg.create_entity_type("military-unit", None).unwrap();
+        let prop = reg
+            .create_property("unit-name", ValueType::String, None)
+            .unwrap();
         assert_eq!(prop.slug, "unit-name");
         assert_eq!(prop.value_type, ValueType::String);
 
@@ -349,11 +376,21 @@ mod tests {
     }
 
     #[test]
+    fn create_property_with_description() {
+        let reg = registry();
+        let prop = reg
+            .create_property("armor-class", ValueType::String, Some("Protection level rating"))
+            .unwrap();
+        assert_eq!(prop.description.as_deref(), Some("Protection level rating"));
+    }
+
+    #[test]
     fn reject_duplicate_property() {
         let reg = registry();
-        reg.create_property("name", ValueType::String).unwrap();
+        reg.create_property("name", ValueType::String, None)
+            .unwrap();
         assert!(matches!(
-            reg.create_property("name", ValueType::Number),
+            reg.create_property("name", ValueType::Number, None),
             Err(SchemaError::DuplicateProperty(_))
         ));
     }
@@ -361,7 +398,8 @@ mod tests {
     #[test]
     fn attach_to_nonexistent_entity_type() {
         let reg = registry();
-        reg.create_property("name", ValueType::String).unwrap();
+        reg.create_property("name", ValueType::String, None)
+            .unwrap();
         assert!(matches!(
             reg.attach_property("no-such-type", "name"),
             Err(SchemaError::EntityTypeNotFound(_))
@@ -371,7 +409,7 @@ mod tests {
     #[test]
     fn attach_nonexistent_property() {
         let reg = registry();
-        reg.create_entity_type("unit").unwrap();
+        reg.create_entity_type("unit", None).unwrap();
         assert!(matches!(
             reg.attach_property("unit", "no-such-prop"),
             Err(SchemaError::PropertyNotFound(_))
@@ -381,10 +419,12 @@ mod tests {
     #[test]
     fn many_to_many_property_attachment() {
         let reg = registry();
-        reg.create_entity_type("unit").unwrap();
-        reg.create_entity_type("location").unwrap();
-        reg.create_property("name", ValueType::String).unwrap();
-        reg.create_property("code", ValueType::Number).unwrap();
+        reg.create_entity_type("unit", None).unwrap();
+        reg.create_entity_type("location", None).unwrap();
+        reg.create_property("name", ValueType::String, None)
+            .unwrap();
+        reg.create_property("code", ValueType::Number, None)
+            .unwrap();
 
         reg.attach_property("unit", "name").unwrap();
         reg.attach_property("unit", "code").unwrap();
@@ -401,7 +441,7 @@ mod tests {
     #[test]
     fn list_properties_empty() {
         let reg = registry();
-        reg.create_entity_type("empty").unwrap();
+        reg.create_entity_type("empty", None).unwrap();
         let props = reg.list_properties("empty").unwrap();
         assert!(props.is_empty());
     }
@@ -425,8 +465,8 @@ mod tests {
     #[test]
     fn list_entity_types_returns_all() {
         let reg = registry();
-        reg.create_entity_type("bravo").unwrap();
-        reg.create_entity_type("alpha").unwrap();
+        reg.create_entity_type("bravo", None).unwrap();
+        reg.create_entity_type("alpha", None).unwrap();
         let types = reg.list_entity_types().unwrap();
         assert_eq!(types.len(), 2);
         assert_eq!(types[0].slug, "alpha");
@@ -436,7 +476,7 @@ mod tests {
     #[test]
     fn get_entity_type_found() {
         let reg = registry();
-        let created = reg.create_entity_type("tank").unwrap();
+        let created = reg.create_entity_type("tank", None).unwrap();
         let fetched = reg.get_entity_type("tank").unwrap();
         assert_eq!(fetched.id, created.id);
         assert_eq!(fetched.slug, "tank");
@@ -461,11 +501,32 @@ mod tests {
     #[test]
     fn list_all_properties_returns_all() {
         let reg = registry();
-        reg.create_property("name", ValueType::String).unwrap();
-        reg.create_property("count", ValueType::Number).unwrap();
+        reg.create_property("name", ValueType::String, None)
+            .unwrap();
+        reg.create_property("count", ValueType::Number, None)
+            .unwrap();
         let props = reg.list_all_properties().unwrap();
         assert_eq!(props.len(), 2);
         assert_eq!(props[0].slug, "count");
         assert_eq!(props[1].slug, "name");
+    }
+
+    #[test]
+    fn get_entity_type_preserves_description() {
+        let reg = registry();
+        reg.create_entity_type("tank", Some("Armored vehicle")).unwrap();
+        let fetched = reg.get_entity_type("tank").unwrap();
+        assert_eq!(fetched.description.as_deref(), Some("Armored vehicle"));
+    }
+
+    #[test]
+    fn list_properties_preserves_description() {
+        let reg = registry();
+        reg.create_entity_type("unit", None).unwrap();
+        reg.create_property("name", ValueType::String, Some("Display name"))
+            .unwrap();
+        reg.attach_property("unit", "name").unwrap();
+        let props = reg.list_properties("unit").unwrap();
+        assert_eq!(props[0].description.as_deref(), Some("Display name"));
     }
 }

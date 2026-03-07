@@ -1,10 +1,10 @@
 use crate::error::ApiError;
 
 pub enum Command {
-    CreateEntityType { slug: String },
+    CreateEntityType { slug: String, description: Option<String> },
     ListEntityTypes,
     GetEntityType { slug: String },
-    CreateProperty { slug: String, value_type: terra_core::schema::ValueType },
+    CreateProperty { slug: String, value_type: terra_core::schema::ValueType, description: Option<String> },
     ListProperties { entity_type: Option<String> },
     AttachProperty { entity_type: String, slug: String },
 }
@@ -27,7 +27,8 @@ impl Command {
         match (verb, target) {
             ("create", "entity-type") => {
                 let slug = require_str(&val, "slug")?;
-                Ok(Command::CreateEntityType { slug })
+                let description = optional_str(&val, "description");
+                Ok(Command::CreateEntityType { slug, description })
             }
             ("list", "entity-type") => Ok(Command::ListEntityTypes),
             ("get", "entity-type") => {
@@ -45,7 +46,8 @@ impl Command {
                                 "invalid value_type: expected 'string' or 'number'",
                             )
                         })?;
-                Ok(Command::CreateProperty { slug, value_type })
+                let description = optional_str(&val, "description");
+                Ok(Command::CreateProperty { slug, value_type, description })
             }
             ("list", "property") => {
                 let entity_type = val.get("entity_type").and_then(|v| v.as_str()).map(String::from);
@@ -69,4 +71,8 @@ fn require_str(val: &serde_yaml::Value, field: &str) -> Result<String, ApiError>
         .and_then(|v| v.as_str())
         .map(String::from)
         .ok_or_else(|| ApiError::bad_request("parse_error", format!("missing field: {field}")))
+}
+
+fn optional_str(val: &serde_yaml::Value, field: &str) -> Option<String> {
+    val.get(field).and_then(|v| v.as_str()).map(String::from)
 }

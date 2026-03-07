@@ -37,6 +37,8 @@ impl fmt::Display for ValueType {
 pub struct EntityProperty {
     pub id: Uuid,
     pub slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub value_type: ValueType,
     pub created_at: DateTime<Utc>,
 }

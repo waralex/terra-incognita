@@ -9,6 +9,7 @@ pub enum ValueType {
     String,
     Number,
     Struct,
+    Set,
 }
 
 impl ValueType {
@@ -17,6 +18,7 @@ impl ValueType {
             ValueType::String => "string",
             ValueType::Number => "number",
             ValueType::Struct => "struct",
+            ValueType::Set => "set",
         }
     }
 
@@ -25,6 +27,7 @@ impl ValueType {
             "string" => Some(ValueType::String),
             "number" => Some(ValueType::Number),
             "struct" => Some(ValueType::Struct),
+            "set" => Some(ValueType::Set),
             _ => None,
         }
     }

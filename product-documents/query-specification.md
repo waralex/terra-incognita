@@ -24,6 +24,7 @@ Invalid: `Military-Unit`, `unit_name`, `-leading`, `trailing-`, `double--hyphen`
 - `string`
 - `number`
 - `struct` — arbitrary JSON structure, accepts JSON or YAML on input, stored as JSON
+- `set` — classification/tagging via membership assertions (see Set Semantics below)
 
 ---
 
@@ -169,6 +170,34 @@ Response:
 
 ```yaml
 status: ok
+```
+
+---
+
+## Set Semantics
+
+A `set` property models classification and tagging. Each assertion on a set property
+is an atomic membership claim — `contains` or `not_contains` — with a single value
+or a vector of values.
+
+Each claim is an independent assertion with its own confidence, source, and kind
+(hypothesis or refinement). The current membership of the set emerges from the
+collection of assertions.
+
+Example — classifying an entity:
+
+```yaml
+# hypothesis: it's a bee
+op: contains
+value: bee
+
+# hypothesis: it's an insect and a living organism
+op: contains
+values: [insect, living-organism]
+
+# hypothesis: it's not a rock
+op: not_contains
+value: rock
 ```
 
 ---

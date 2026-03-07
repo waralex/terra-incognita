@@ -122,6 +122,11 @@ Circular but tractable.
 **Hierarchical query performance.** Recursive traversal of dynamic relation-based
 hierarchies at scale. Open problem — do not optimize prematurely.
 
+## Code Organization
+
+One entity — one file. Deep directory structure when needed. No god-files,
+no "utils.rs", no bags of loosely related things.
+
 ## Stack
 
 - Rust — core, API, validation layer

@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub enum ValueType {
     String,
     Number,
+    Struct,
 }
 
 impl ValueType {
@@ -15,6 +16,7 @@ impl ValueType {
         match self {
             ValueType::String => "string",
             ValueType::Number => "number",
+            ValueType::Struct => "struct",
         }
     }
 
@@ -22,6 +24,7 @@ impl ValueType {
         match s {
             "string" => Some(ValueType::String),
             "number" => Some(ValueType::Number),
+            "struct" => Some(ValueType::Struct),
             _ => None,
         }
     }

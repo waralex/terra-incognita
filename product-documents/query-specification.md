@@ -23,6 +23,7 @@ Invalid: `Military-Unit`, `unit_name`, `-leading`, `trailing-`, `double--hyphen`
 
 - `string`
 - `number`
+- `struct` — arbitrary JSON structure, accepts JSON or YAML on input, stored as JSON
 
 ---
 
@@ -111,6 +112,16 @@ slug: combat-strength
 value_type: number
 description: Offensive capability rating
 created_at: "2026-03-07T14:24:30.000000Z"
+```
+
+Struct property example:
+
+```yaml
+verb: create
+target: property
+slug: equipment
+value_type: struct
+description: Equipment and gear details  # optional
 ```
 
 ### list property

@@ -49,7 +49,7 @@ impl Command {
                         .map_err(|_| {
                             ApiError::bad_request(
                                 "parse_error",
-                                "invalid value_type: expected 'string', 'number', 'struct', or 'set'",
+                                "invalid value_type: expected 'set', 'struct', or 'range'",
                             )
                         })?;
                 let description = optional_str(&val, "description");

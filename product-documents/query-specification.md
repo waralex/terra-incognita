@@ -21,10 +21,9 @@ Invalid: `Military-Unit`, `unit_name`, `-leading`, `trailing-`, `double--hyphen`
 
 ## Value Types
 
-- `string`
-- `number`
-- `struct` — arbitrary JSON structure, accepts JSON or YAML on input, stored as JSON
-- `set` — classification/tagging via membership assertions (see Set Semantics below)
+- `set` — classification/tagging via membership assertions (contains / not_contains)
+- `struct` — arbitrary JSON structure; a single string, number, or boolean is a trivial case
+- `range` — interval (numbers, dates, etc.); a single value is a degenerate range (start == end). Interpretation type is specified at query time, not at property creation
 
 ---
 
@@ -87,11 +86,11 @@ created_at: "2026-03-07T14:22:45.123456Z"
 properties:
   - id: 01901234-5678-9abc-def0-333333333333
     slug: unit-name
-    value_type: string
+    value_type: struct
     created_at: "2026-03-07T14:23:10.000000Z"
   - id: 01901234-5678-9abc-def0-444444444444
     slug: troop-count
-    value_type: number
+    value_type: range
     created_at: "2026-03-07T14:23:15.000000Z"
 ```
 
@@ -101,7 +100,7 @@ properties:
 verb: create
 target: property
 slug: combat-strength
-value_type: number
+value_type: range
 description: Offensive capability rating  # optional
 ```
 
@@ -110,19 +109,9 @@ Response:
 ```yaml
 id: 01901234-5678-9abc-def0-555555555555
 slug: combat-strength
-value_type: number
+value_type: range
 description: Offensive capability rating
 created_at: "2026-03-07T14:24:30.000000Z"
-```
-
-Struct property example:
-
-```yaml
-verb: create
-target: property
-slug: equipment
-value_type: struct
-description: Equipment and gear details  # optional
 ```
 
 ### list property
@@ -147,11 +136,11 @@ Response:
 ```yaml
 - id: 01901234-5678-9abc-def0-333333333333
   slug: unit-name
-  value_type: string
+  value_type: struct
   created_at: "2026-03-07T14:23:10.000000Z"
 - id: 01901234-5678-9abc-def0-444444444444
   slug: troop-count
-  value_type: number
+  value_type: range
   created_at: "2026-03-07T14:23:15.000000Z"
 ```
 

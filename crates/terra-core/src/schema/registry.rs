@@ -362,24 +362,24 @@ mod tests {
         let reg = registry();
         reg.create_entity_type("military-unit", None).unwrap();
         let prop = reg
-            .create_property("unit-name", ValueType::String, None)
+            .create_property("unit-name", ValueType::Struct, None)
             .unwrap();
         assert_eq!(prop.slug, "unit-name");
-        assert_eq!(prop.value_type, ValueType::String);
+        assert_eq!(prop.value_type, ValueType::Struct);
 
         reg.attach_property("military-unit", "unit-name").unwrap();
 
         let props = reg.list_properties("military-unit").unwrap();
         assert_eq!(props.len(), 1);
         assert_eq!(props[0].slug, "unit-name");
-        assert_eq!(props[0].value_type, ValueType::String);
+        assert_eq!(props[0].value_type, ValueType::Struct);
     }
 
     #[test]
     fn create_property_with_description() {
         let reg = registry();
         let prop = reg
-            .create_property("armor-class", ValueType::String, Some("Protection level rating"))
+            .create_property("armor-class", ValueType::Struct, Some("Protection level rating"))
             .unwrap();
         assert_eq!(prop.description.as_deref(), Some("Protection level rating"));
     }
@@ -387,10 +387,10 @@ mod tests {
     #[test]
     fn reject_duplicate_property() {
         let reg = registry();
-        reg.create_property("name", ValueType::String, None)
+        reg.create_property("name", ValueType::Struct, None)
             .unwrap();
         assert!(matches!(
-            reg.create_property("name", ValueType::Number, None),
+            reg.create_property("name", ValueType::Range, None),
             Err(SchemaError::DuplicateProperty(_))
         ));
     }
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn attach_to_nonexistent_entity_type() {
         let reg = registry();
-        reg.create_property("name", ValueType::String, None)
+        reg.create_property("name", ValueType::Struct, None)
             .unwrap();
         assert!(matches!(
             reg.attach_property("no-such-type", "name"),
@@ -421,9 +421,9 @@ mod tests {
         let reg = registry();
         reg.create_entity_type("unit", None).unwrap();
         reg.create_entity_type("location", None).unwrap();
-        reg.create_property("name", ValueType::String, None)
+        reg.create_property("name", ValueType::Struct, None)
             .unwrap();
-        reg.create_property("code", ValueType::Number, None)
+        reg.create_property("code", ValueType::Range, None)
             .unwrap();
 
         reg.attach_property("unit", "name").unwrap();
@@ -501,9 +501,9 @@ mod tests {
     #[test]
     fn list_all_properties_returns_all() {
         let reg = registry();
-        reg.create_property("name", ValueType::String, None)
+        reg.create_property("name", ValueType::Struct, None)
             .unwrap();
-        reg.create_property("count", ValueType::Number, None)
+        reg.create_property("count", ValueType::Range, None)
             .unwrap();
         let props = reg.list_all_properties().unwrap();
         assert_eq!(props.len(), 2);
@@ -523,7 +523,7 @@ mod tests {
     fn list_properties_preserves_description() {
         let reg = registry();
         reg.create_entity_type("unit", None).unwrap();
-        reg.create_property("name", ValueType::String, Some("Display name"))
+        reg.create_property("name", ValueType::Struct, Some("Display name"))
             .unwrap();
         reg.attach_property("unit", "name").unwrap();
         let props = reg.list_properties("unit").unwrap();

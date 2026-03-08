@@ -6,28 +6,25 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ValueType {
-    String,
-    Number,
-    Struct,
     Set,
+    Struct,
+    Range,
 }
 
 impl ValueType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ValueType::String => "string",
-            ValueType::Number => "number",
-            ValueType::Struct => "struct",
             ValueType::Set => "set",
+            ValueType::Struct => "struct",
+            ValueType::Range => "range",
         }
     }
 
     pub fn from_str(s: &str) -> Option<ValueType> {
         match s {
-            "string" => Some(ValueType::String),
-            "number" => Some(ValueType::Number),
-            "struct" => Some(ValueType::Struct),
             "set" => Some(ValueType::Set),
+            "struct" => Some(ValueType::Struct),
+            "range" => Some(ValueType::Range),
             _ => None,
         }
     }

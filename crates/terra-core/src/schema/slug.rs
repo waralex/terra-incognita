@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn valid_slugs() {
-        assert!(validate_slug("military-unit").is_ok());
+        assert!(validate_slug("research-project").is_ok());
         assert!(validate_slug("unit").is_ok());
         assert!(validate_slug("a").is_ok());
         assert!(validate_slug("unit-123").is_ok());

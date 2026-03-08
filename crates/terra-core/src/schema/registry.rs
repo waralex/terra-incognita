@@ -604,8 +604,8 @@ mod tests {
     #[test]
     fn create_entity_type() {
         let reg = registry();
-        let et = reg.create_entity_type("military-unit", None).unwrap();
-        assert_eq!(et.slug, "military-unit");
+        let et = reg.create_entity_type("research-project", None).unwrap();
+        assert_eq!(et.slug, "research-project");
         assert!(et.description.is_none());
         assert_eq!(et.id.get_version(), Some(uuid::Version::SortRand));
     }
@@ -614,10 +614,10 @@ mod tests {
     fn create_entity_type_with_description() {
         let reg = registry();
         let et = reg
-            .create_entity_type("tank", Some("Armored fighting vehicle"))
+            .create_entity_type("sensor", Some("Data collection device"))
             .unwrap();
-        assert_eq!(et.slug, "tank");
-        assert_eq!(et.description.as_deref(), Some("Armored fighting vehicle"));
+        assert_eq!(et.slug, "sensor");
+        assert_eq!(et.description.as_deref(), Some("Data collection device"));
     }
 
     #[test]
@@ -650,18 +650,18 @@ mod tests {
     #[test]
     fn create_property_and_attach() {
         let reg = registry();
-        reg.create_entity_type("military-unit", None).unwrap();
+        reg.create_entity_type("research-project", None).unwrap();
         let prop = reg
-            .create_property("unit-name", ValueType::Struct, None)
+            .create_property("project-name", ValueType::Struct, None)
             .unwrap();
-        assert_eq!(prop.slug, "unit-name");
+        assert_eq!(prop.slug, "project-name");
         assert_eq!(prop.value_type, ValueType::Struct);
 
-        reg.attach_property("military-unit", "unit-name").unwrap();
+        reg.attach_property("research-project", "project-name").unwrap();
 
-        let props = reg.list_properties("military-unit").unwrap();
+        let props = reg.list_properties("research-project").unwrap();
         assert_eq!(props.len(), 1);
-        assert_eq!(props[0].slug, "unit-name");
+        assert_eq!(props[0].slug, "project-name");
         assert_eq!(props[0].value_type, ValueType::Struct);
     }
 
@@ -669,9 +669,9 @@ mod tests {
     fn create_property_with_description() {
         let reg = registry();
         let prop = reg
-            .create_property("armor-class", ValueType::Struct, Some("Protection level rating"))
+            .create_property("priority", ValueType::Struct, Some("Task priority level"))
             .unwrap();
-        assert_eq!(prop.description.as_deref(), Some("Protection level rating"));
+        assert_eq!(prop.description.as_deref(), Some("Task priority level"));
     }
 
     #[test]
@@ -766,10 +766,10 @@ mod tests {
     #[test]
     fn get_entity_type_found() {
         let reg = registry();
-        let created = reg.create_entity_type("tank", None).unwrap();
-        let fetched = reg.get_entity_type("tank").unwrap();
+        let created = reg.create_entity_type("sensor", None).unwrap();
+        let fetched = reg.get_entity_type("sensor").unwrap();
         assert_eq!(fetched.id, created.id);
-        assert_eq!(fetched.slug, "tank");
+        assert_eq!(fetched.slug, "sensor");
     }
 
     #[test]
@@ -804,9 +804,9 @@ mod tests {
     #[test]
     fn get_entity_type_preserves_description() {
         let reg = registry();
-        reg.create_entity_type("tank", Some("Armored vehicle")).unwrap();
-        let fetched = reg.get_entity_type("tank").unwrap();
-        assert_eq!(fetched.description.as_deref(), Some("Armored vehicle"));
+        reg.create_entity_type("sensor", Some("Data collection device")).unwrap();
+        let fetched = reg.get_entity_type("sensor").unwrap();
+        assert_eq!(fetched.description.as_deref(), Some("Data collection device"));
     }
 
     #[test]

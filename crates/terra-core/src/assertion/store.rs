@@ -211,11 +211,11 @@ mod tests {
         let s = store(&dir);
 
         let entry = s
-            .create_entity("1st-tank-brigade", Some("military-unit"), serde_json::json!({}))
+            .create_entity("temperature-sensor-1", Some("sensor"), serde_json::json!({}))
             .unwrap();
 
-        assert_eq!(entry.entity_type.as_deref(), Some("military-unit"));
-        assert_eq!(entry.name, "1st-tank-brigade");
+        assert_eq!(entry.entity_type.as_deref(), Some("sensor"));
+        assert_eq!(entry.name, "temperature-sensor-1");
         assert_eq!(entry.id.get_version(), Some(uuid::Version::SortRand));
         assert_eq!(entry.entity_id.get_version(), Some(uuid::Version::SortRand));
     }
@@ -226,11 +226,11 @@ mod tests {
         let s = store(&dir);
 
         let entry = s
-            .create_entity("2nd-brigade", None, serde_json::json!({}))
+            .create_entity("pressure-sensor-2", None, serde_json::json!({}))
             .unwrap();
 
         assert!(entry.entity_type.is_none());
-        assert_eq!(entry.name, "2nd-brigade");
+        assert_eq!(entry.name, "pressure-sensor-2");
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
 
         let ctx = serde_json::json!({"source": "manual entry"});
         let entry = s
-            .create_entity("3rd-brigade", Some("military-unit"), ctx.clone())
+            .create_entity("humidity-sensor-3", Some("sensor"), ctx.clone())
             .unwrap();
 
         assert_eq!(entry.context, ctx);
@@ -252,7 +252,7 @@ mod tests {
         let s = store(&dir);
 
         let err = s
-            .create_entity("Invalid Name", Some("military-unit"), serde_json::json!({}))
+            .create_entity("Invalid Name", Some("sensor"), serde_json::json!({}))
             .unwrap_err();
 
         assert!(matches!(err, AssertionError::InvalidName(_)));
@@ -264,7 +264,7 @@ mod tests {
         let s = store(&dir);
 
         let err = s
-            .create_entity("", Some("military-unit"), serde_json::json!({}))
+            .create_entity("", Some("sensor"), serde_json::json!({}))
             .unwrap_err();
 
         assert!(matches!(err, AssertionError::InvalidName(_)));

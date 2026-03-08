@@ -120,7 +120,7 @@ mod tests {
             Command::CreateEntityTypes(vec![
                 CreateEntityType {
                     slug: "unit".into(),
-                    description: Some("Military unit".into()),
+                    description: Some("Research project".into()),
                     properties: vec![],
                 },
             ]),

@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use terra_core::assertion::AssertionError;
+use terra_core::command::CommandError;
 use terra_core::schema::SchemaError;
 
 pub struct ApiError {
@@ -77,6 +78,15 @@ impl From<AssertionError> for ApiError {
             status,
             kind: kind.to_string(),
             message: err.to_string(),
+        }
+    }
+}
+
+impl From<CommandError> for ApiError {
+    fn from(err: CommandError) -> Self {
+        match err {
+            CommandError::Schema(e) => e.into(),
+            CommandError::Assertion(e) => e.into(),
         }
     }
 }

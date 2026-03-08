@@ -15,16 +15,16 @@ use tracing::info;
 
 use crate::config::Config;
 use crate::dispatch::dispatch;
-use crate::query::Command;
+use crate::query::QueryDto;
 use crate::state::AppState;
 
 async fn handle_query(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
-    let cmd = match Command::parse(&body) {
-        Ok(cmd) => cmd,
+    let dto = match QueryDto::parse(&body) {
+        Ok(dto) => dto,
         Err(e) => return e.into_response(),
     };
 
-    match dispatch(cmd, &state) {
+    match dispatch(dto, &state) {
         Ok(val) => {
             let yaml = serde_yaml::to_string(&val).unwrap();
             (

@@ -3,15 +3,20 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
+/// Semantic value type that a property carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ValueType {
+    /// Classification via membership assertions.
     Set,
+    /// Structured or composite value.
     Struct,
+    /// Numeric range.
     Range,
 }
 
 impl ValueType {
+    /// Returns the string representation (`"set"`, `"struct"`, `"range"`).
     pub fn as_str(&self) -> &'static str {
         match self {
             ValueType::Set => "set",
@@ -20,6 +25,7 @@ impl ValueType {
         }
     }
 
+    /// Parses a value type from its string representation.
     pub fn from_str(s: &str) -> Option<ValueType> {
         match s {
             "set" => Some(ValueType::Set),
@@ -36,6 +42,7 @@ impl fmt::Display for ValueType {
     }
 }
 
+/// Registered property that can be attached to entity types.
 #[derive(Debug, Clone, Serialize)]
 pub struct EntityProperty {
     pub id: Uuid,

@@ -122,6 +122,11 @@ Circular but tractable.
 **Hierarchical query performance.** Recursive traversal of dynamic relation-based
 hierarchies at scale. Open problem — do not optimize prematurely.
 
+## Code Style
+
+Docstrings (`///`) on all public items (structs, enums, functions, methods, traits).
+This overrides any global instruction to skip docstrings.
+
 ## Code Organization
 
 One entity — one file. Deep directory structure when needed. No god-files,

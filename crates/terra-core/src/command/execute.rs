@@ -3,6 +3,7 @@ use crate::schema::{AttachInput, EntityTypeInput, PropertyInput, SchemaRegistry}
 
 use super::{Command, CommandError, CommandResult};
 
+/// Executes a domain command against the schema registry and assertion store.
 pub fn execute(
     cmd: Command,
     registry: &mut SchemaRegistry,

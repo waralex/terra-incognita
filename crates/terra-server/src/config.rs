@@ -7,6 +7,7 @@ const CONFIG_ENV: &str = "TERRA_INCOGNITA_CONFIG";
 const DEFAULT_DATA_DIR: &str = ".terra-incognita";
 const DEFAULT_PORT: u16 = 3000;
 
+/// Server configuration loaded from `terra-incognita.yml`.
 #[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default = "default_port")]
@@ -33,6 +34,7 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Loads config from file (current dir, env var, home dir) or falls back to defaults.
     pub fn load() -> Self {
         let candidates = config_candidates();
 
@@ -57,14 +59,17 @@ impl Config {
         Config::default()
     }
 
+    /// Returns the path to the SQLite schema database.
     pub fn schema_db_path(&self) -> PathBuf {
         self.data_dir.join("schema.db")
     }
 
+    /// Returns the path to the RocksDB assertions directory.
     pub fn assertions_db_path(&self) -> PathBuf {
         self.data_dir.join("assertions")
     }
 
+    /// Creates the data directory if it does not exist.
     pub fn ensure_data_dir(&self) -> std::io::Result<()> {
         if !self.data_dir.exists() {
             info!("creating data directory: {}", self.data_dir.display());

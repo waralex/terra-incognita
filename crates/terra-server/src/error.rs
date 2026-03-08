@@ -4,6 +4,7 @@ use terra_core::assertion::AssertionError;
 use terra_core::command::CommandError;
 use terra_core::schema::SchemaError;
 
+/// HTTP API error with status code, error kind, and human-readable message.
 pub struct ApiError {
     pub status: StatusCode,
     pub kind: String,
@@ -11,6 +12,7 @@ pub struct ApiError {
 }
 
 impl ApiError {
+    /// Creates a 400 Bad Request error with the given kind and message.
     pub fn bad_request(kind: &str, message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,

@@ -4,6 +4,7 @@ use terra_core::command::{
     AttachProperty, Command, CreateEntity, CreateEntityType, CreateProperty,
 };
 
+/// DTO for batch entity type creation items.
 #[derive(Deserialize)]
 pub struct EntityTypeItemDto {
     pub slug: String,
@@ -12,6 +13,7 @@ pub struct EntityTypeItemDto {
     pub properties: Vec<String>,
 }
 
+/// DTO for batch property creation items.
 #[derive(Deserialize)]
 pub struct PropertyItemDto {
     pub slug: String,
@@ -21,12 +23,14 @@ pub struct PropertyItemDto {
     pub entity_types: Vec<String>,
 }
 
+/// DTO for batch property attachment items.
 #[derive(Deserialize)]
 pub struct AttachItemDto {
     pub entity_type: String,
     pub slug: String,
 }
 
+/// DTO for batch entity creation items.
 #[derive(Deserialize)]
 pub struct EntityItemDto {
     pub entity_name: String,
@@ -34,6 +38,7 @@ pub struct EntityItemDto {
     pub context: Option<serde_yaml::Value>,
 }
 
+/// Serde-tagged query DTO parsed from YAML. Normalized into a domain [`Command`] via [`into_command`](QueryDto::into_command).
 #[derive(Deserialize)]
 #[serde(tag = "command")]
 pub enum QueryDto {
@@ -77,17 +82,22 @@ pub enum QueryDto {
     ListLog,
 }
 
+/// Controls how the result is serialized back: single object or array.
 pub enum ResponseShape {
+    /// DTO had inline fields (single item) — serialize `results[0]` as object.
     Single,
+    /// DTO had `items` array (batch) — serialize full array.
     Batch,
 }
 
 impl QueryDto {
+    /// Parses a YAML request body into a query DTO.
     pub fn parse(body: &[u8]) -> Result<Self, ApiError> {
         serde_yaml::from_slice(body)
             .map_err(|e| ApiError::bad_request("parse_error", e.to_string()))
     }
 
+    /// Normalizes the DTO into a domain command and response shape.
     pub fn into_command(self) -> Result<(Command, ResponseShape), ApiError> {
         match self {
             QueryDto::CreateEntityType {

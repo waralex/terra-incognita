@@ -1,5 +1,6 @@
 use crate::schema::SchemaError;
 
+/// Validates a slug: lowercase ASCII, digits, hyphens; no leading/trailing/consecutive hyphens.
 pub fn validate_slug(slug: &str) -> Result<(), SchemaError> {
     if slug.is_empty() {
         return Err(SchemaError::InvalidSlug(slug.to_string()));

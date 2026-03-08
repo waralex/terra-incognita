@@ -10,11 +10,13 @@ use crate::schema::SchemaError;
 
 const CF_ASSERTIONS: &str = "assertions";
 
+/// RocksDB-backed store for assertions and entity creation log.
 pub struct AssertionStore {
     db: DB,
 }
 
 impl AssertionStore {
+    /// Opens or creates an assertion store at the given path.
     pub fn open(path: &Path) -> Result<Self, AssertionError> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -27,6 +29,7 @@ impl AssertionStore {
         Ok(Self { db })
     }
 
+    /// Creates a single entity and writes it to the assertion log.
     pub fn create_entity(
         &self,
         name: &str,
@@ -72,6 +75,7 @@ impl AssertionStore {
         })
     }
 
+    /// Creates entities atomically via RocksDB WriteBatch. All-or-nothing.
     pub fn create_entities_batch(
         &self,
         items: &[EntityInput<'_>],
@@ -129,6 +133,7 @@ impl AssertionStore {
         Ok(results)
     }
 
+    /// Returns all log entries in reverse chronological order.
     pub fn list_log(&self) -> Result<Vec<LogEntry>, AssertionError> {
         let cf = self
             .db

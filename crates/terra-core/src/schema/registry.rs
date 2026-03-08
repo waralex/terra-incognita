@@ -9,29 +9,36 @@ use crate::schema::reserved;
 use crate::schema::slug::validate_slug;
 use crate::schema::SchemaError;
 
+/// Input for creating an entity type (single item in a batch).
 pub struct EntityTypeInput<'a> {
     pub slug: &'a str,
     pub description: Option<&'a str>,
+    /// Property slugs to attach to the new entity type.
     pub properties: &'a [&'a str],
 }
 
+/// Input for creating a property (single item in a batch).
 pub struct PropertyInput<'a> {
     pub slug: &'a str,
     pub value_type: ValueType,
     pub description: Option<&'a str>,
+    /// Entity type slugs to attach this property to.
     pub entity_types: &'a [&'a str],
 }
 
+/// Input for attaching an existing property to an existing entity type.
 pub struct AttachInput<'a> {
     pub entity_type: &'a str,
     pub property: &'a str,
 }
 
+/// SQLite-backed registry for entity types and their properties.
 pub struct SchemaRegistry {
     conn: Connection,
 }
 
 impl SchemaRegistry {
+    /// Opens a schema registry at the given path, creating it if needed.
     pub fn open(path: &Path) -> Result<Self, SchemaError> {
         let conn = Connection::open(path)?;
         let registry = Self { conn };
@@ -39,6 +46,7 @@ impl SchemaRegistry {
         Ok(registry)
     }
 
+    /// Opens an in-memory schema registry (for testing).
     pub fn open_in_memory() -> Result<Self, SchemaError> {
         let conn = Connection::open_in_memory()?;
         let registry = Self { conn };
@@ -53,6 +61,7 @@ impl SchemaRegistry {
         Ok(())
     }
 
+    /// Creates a single entity type with the given slug.
     pub fn create_entity_type(
         &self,
         slug: &str,
@@ -86,6 +95,7 @@ impl SchemaRegistry {
         })
     }
 
+    /// Creates a single property with the given slug and value type.
     pub fn create_property(
         &self,
         slug: &str,
@@ -124,6 +134,7 @@ impl SchemaRegistry {
         })
     }
 
+    /// Attaches an existing property to an existing entity type.
     pub fn attach_property(
         &self,
         entity_type_slug: &str,
@@ -165,6 +176,7 @@ impl SchemaRegistry {
         Ok(())
     }
 
+    /// Attaches properties to entity types in a single transaction. All-or-nothing.
     pub fn attach_properties_batch(
         &mut self,
         items: &[AttachInput<'_>],
@@ -230,6 +242,7 @@ impl SchemaRegistry {
         Ok(items.len())
     }
 
+    /// Lists all entity types, ordered by slug.
     pub fn list_entity_types(&self) -> Result<Vec<EntityType>, SchemaError> {
         let mut stmt = self
             .conn
@@ -265,6 +278,7 @@ impl SchemaRegistry {
             .collect()
     }
 
+    /// Retrieves a single entity type by slug.
     pub fn get_entity_type(&self, slug: &str) -> Result<EntityType, SchemaError> {
         let (id_bytes, description, created_at_str): (Vec<u8>, Option<String>, String) = self
             .conn
@@ -294,6 +308,7 @@ impl SchemaRegistry {
         })
     }
 
+    /// Lists all properties across all entity types, ordered by slug.
     pub fn list_all_properties(&self) -> Result<Vec<EntityProperty>, SchemaError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, slug, description, value_type, created_at FROM entity_properties ORDER BY slug",
@@ -331,6 +346,7 @@ impl SchemaRegistry {
             .collect()
     }
 
+    /// Creates entity types in a single transaction with optional property attachment. All-or-nothing.
     pub fn create_entity_types_batch(
         &mut self,
         items: &[EntityTypeInput<'_>],
@@ -420,6 +436,7 @@ impl SchemaRegistry {
         Ok(results)
     }
 
+    /// Creates properties in a single transaction with optional entity type attachment. All-or-nothing.
     pub fn create_properties_batch(
         &mut self,
         items: &[PropertyInput<'_>],
@@ -516,6 +533,7 @@ impl SchemaRegistry {
         Ok(results)
     }
 
+    /// Lists properties attached to a given entity type, ordered by slug.
     pub fn list_properties(
         &self,
         entity_type_slug: &str,

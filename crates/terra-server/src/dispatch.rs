@@ -4,6 +4,7 @@ use crate::state::AppState;
 use terra_core::assertion::LogEntry;
 use terra_core::command::CommandResult;
 
+/// Parses a DTO into a domain command, executes it, and serializes the result.
 pub fn dispatch(dto: QueryDto, state: &AppState) -> Result<serde_yaml::Value, ApiError> {
     let (cmd, shape) = dto.into_command()?;
     let mut inner = state.lock().unwrap();

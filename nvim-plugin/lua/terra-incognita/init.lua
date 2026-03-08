@@ -1,7 +1,6 @@
 local M = {}
 
 local defaults = {
-  terra_cli = "terra-cli",
   data_dir = vim.fn.expand("~/.terra-incognita/nvim"),
   keymap_execute = "<leader>te",
   keymap_toggle = "<leader>tt",
@@ -11,7 +10,6 @@ function M.setup(opts)
   opts = vim.tbl_deep_extend("force", defaults, opts or {})
 
   require("terra-incognita.connection").setup(opts.data_dir)
-  require("terra-incognita.executor").setup({ terra_cli = opts.terra_cli })
 
   vim.api.nvim_create_user_command("Terra", function()
     require("terra-incognita.ui").toggle()

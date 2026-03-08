@@ -29,9 +29,8 @@ impl AssertionStore {
 
     pub fn create_entity(
         &self,
-        entity_type: &str,
         name: &str,
-        kind: AssertionKind,
+        entity_type: Option<&str>,
         context: serde_json::Value,
     ) -> Result<LogEntry, AssertionError> {
         validate_slug(name).map_err(|e| match e {
@@ -44,12 +43,11 @@ impl AssertionStore {
         let log_entry_id = Uuid::now_v7();
         let entity_id = Uuid::now_v7();
 
-        let key = encode_key(timestamp_us, &log_entry_id, &entity_id, kind);
+        let key = encode_key(timestamp_us, &log_entry_id, &entity_id, AssertionKind::Hypothesis);
 
         let value = serde_json::json!({
             "entity_type": entity_type,
             "name": name,
-            "properties": {},
             "context": context,
         });
         let value_bytes = serde_json::to_vec(&value)
@@ -68,12 +66,49 @@ impl AssertionStore {
             id: log_entry_id,
             timestamp: now,
             entity_id,
-            entity_type: entity_type.to_string(),
-            kind,
+            entity_type: entity_type.map(String::from),
             name: name.to_string(),
-            properties: serde_json::json!({}),
             context,
         })
+    }
+
+    pub fn list_log(&self) -> Result<Vec<LogEntry>, AssertionError> {
+        let cf = self
+            .db
+            .cf_handle(CF_ASSERTIONS)
+            .ok_or_else(|| AssertionError::Storage("missing column family".into()))?;
+
+        let mut entries = Vec::new();
+        let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::End);
+
+        for item in iter {
+            let (key, val) = item.map_err(|e| AssertionError::Storage(e.to_string()))?;
+            let (timestamp_us, log_entry_id, entity_id) = decode_key(&key)?;
+
+            let record: serde_json::Value = serde_json::from_slice(&val)
+                .map_err(|e| AssertionError::Storage(e.to_string()))?;
+
+            let timestamp = chrono::DateTime::from_timestamp_micros(timestamp_us)
+                .ok_or_else(|| AssertionError::Storage("invalid timestamp".into()))?;
+
+            entries.push(LogEntry {
+                id: log_entry_id,
+                timestamp,
+                entity_id,
+                entity_type: record.get("entity_type")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                name: record.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                context: record.get("context")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            });
+        }
+
+        Ok(entries)
     }
 }
 
@@ -84,6 +119,20 @@ fn encode_key(timestamp_us: i64, log_entry_id: &Uuid, entity_id: &Uuid, kind: As
     key[24..40].copy_from_slice(entity_id.as_bytes());
     key[40] = kind.as_byte();
     key
+}
+
+fn decode_key(key: &[u8]) -> Result<(i64, Uuid, Uuid), AssertionError> {
+    if key.len() < 40 {
+        return Err(AssertionError::Storage("invalid key length".into()));
+    }
+    let timestamp_us = i64::from_be_bytes(
+        key[0..8].try_into().map_err(|_| AssertionError::Storage("bad timestamp".into()))?
+    );
+    let log_entry_id = Uuid::from_slice(&key[8..24])
+        .map_err(|e| AssertionError::Storage(e.to_string()))?;
+    let entity_id = Uuid::from_slice(&key[24..40])
+        .map_err(|e| AssertionError::Storage(e.to_string()))?;
+    Ok((timestamp_us, log_entry_id, entity_id))
 }
 
 #[cfg(test)]
@@ -100,26 +149,26 @@ mod tests {
         let s = store(&dir);
 
         let entry = s
-            .create_entity("military-unit", "1st-tank-brigade", AssertionKind::Hypothesis, serde_json::json!({}))
+            .create_entity("1st-tank-brigade", Some("military-unit"), serde_json::json!({}))
             .unwrap();
 
-        assert_eq!(entry.entity_type, "military-unit");
+        assert_eq!(entry.entity_type.as_deref(), Some("military-unit"));
         assert_eq!(entry.name, "1st-tank-brigade");
-        assert_eq!(entry.kind, AssertionKind::Hypothesis);
         assert_eq!(entry.id.get_version(), Some(uuid::Version::SortRand));
         assert_eq!(entry.entity_id.get_version(), Some(uuid::Version::SortRand));
     }
 
     #[test]
-    fn create_entity_with_refinement_kind() {
+    fn create_entity_without_type() {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
         let entry = s
-            .create_entity("military-unit", "2nd-brigade", AssertionKind::Refinement, serde_json::json!({}))
+            .create_entity("2nd-brigade", None, serde_json::json!({}))
             .unwrap();
 
-        assert_eq!(entry.kind, AssertionKind::Refinement);
+        assert!(entry.entity_type.is_none());
+        assert_eq!(entry.name, "2nd-brigade");
     }
 
     #[test]
@@ -129,7 +178,7 @@ mod tests {
 
         let ctx = serde_json::json!({"source": "manual entry"});
         let entry = s
-            .create_entity("military-unit", "3rd-brigade", AssertionKind::Hypothesis, ctx.clone())
+            .create_entity("3rd-brigade", Some("military-unit"), ctx.clone())
             .unwrap();
 
         assert_eq!(entry.context, ctx);
@@ -141,7 +190,7 @@ mod tests {
         let s = store(&dir);
 
         let err = s
-            .create_entity("military-unit", "Invalid Name", AssertionKind::Hypothesis, serde_json::json!({}))
+            .create_entity("Invalid Name", Some("military-unit"), serde_json::json!({}))
             .unwrap_err();
 
         assert!(matches!(err, AssertionError::InvalidName(_)));
@@ -153,7 +202,7 @@ mod tests {
         let s = store(&dir);
 
         let err = s
-            .create_entity("military-unit", "", AssertionKind::Hypothesis, serde_json::json!({}))
+            .create_entity("", Some("military-unit"), serde_json::json!({}))
             .unwrap_err();
 
         assert!(matches!(err, AssertionError::InvalidName(_)));
@@ -164,11 +213,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
-        let e1 = s.create_entity("unit", "alpha", AssertionKind::Hypothesis, serde_json::json!({})).unwrap();
-        let e2 = s.create_entity("unit", "bravo", AssertionKind::Hypothesis, serde_json::json!({})).unwrap();
+        let e1 = s.create_entity("alpha", Some("unit"), serde_json::json!({})).unwrap();
+        let e2 = s.create_entity("bravo", Some("unit"), serde_json::json!({})).unwrap();
 
         assert_ne!(e1.id, e2.id);
         assert_ne!(e1.entity_id, e2.entity_id);
+    }
+
+    #[test]
+    fn list_log_returns_entries_reverse_chronological() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+
+        s.create_entity("alpha", Some("unit"), serde_json::json!({})).unwrap();
+        s.create_entity("bravo", None, serde_json::json!({})).unwrap();
+
+        let log = s.list_log().unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].name, "bravo");
+        assert_eq!(log[1].name, "alpha");
     }
 
     #[test]

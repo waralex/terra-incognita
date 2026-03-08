@@ -27,10 +27,8 @@ pub struct LogEntry {
     pub id: Uuid,
     pub timestamp: DateTime<Utc>,
     pub entity_id: Uuid,
-    pub entity_type: String,
-    pub kind: AssertionKind,
+    pub entity_type: Option<String>,
     pub name: String,
-    pub properties: serde_json::Value,
     pub context: serde_json::Value,
 }
 

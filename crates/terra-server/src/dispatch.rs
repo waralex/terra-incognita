@@ -1,5 +1,3 @@
-use terra_core::assertion::AssertionKind;
-
 use crate::error::ApiError;
 use crate::query::Command;
 use crate::state::AppState;
@@ -69,10 +67,7 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
             );
             Ok(serde_yaml::Value::Mapping(map))
         }
-        Command::CreateEntity { entity_type, name, kind, context } => {
-            registry.get_entity_type(&entity_type)?;
-
-            let kind = kind.unwrap_or(AssertionKind::Hypothesis);
+        Command::CreateEntity { entity_name, entity_type, context } => {
             let context_json = match context {
                 Some(yaml_val) => {
                     let json_str = serde_json::to_string(
@@ -85,7 +80,11 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
                 None => serde_json::json!({}),
             };
 
-            let entry = inner.assertions.create_entity(&entity_type, &name, kind, context_json)?;
+            let entry = inner.assertions.create_entity(
+                &entity_name,
+                entity_type.as_deref(),
+                context_json,
+            )?;
 
             let mut map = serde_yaml::Mapping::new();
             map.insert(
@@ -100,19 +99,21 @@ pub fn dispatch(cmd: Command, state: &AppState) -> Result<serde_yaml::Value, Api
                 serde_yaml::Value::String("entity_id".into()),
                 serde_yaml::to_value(entry.entity_id).unwrap(),
             );
-            map.insert(
-                serde_yaml::Value::String("entity_type".into()),
-                serde_yaml::Value::String(entry.entity_type),
-            );
-            map.insert(
-                serde_yaml::Value::String("kind".into()),
-                serde_yaml::to_value(entry.kind).unwrap(),
-            );
+            if let Some(et) = entry.entity_type {
+                map.insert(
+                    serde_yaml::Value::String("entity_type".into()),
+                    serde_yaml::Value::String(et),
+                );
+            }
             map.insert(
                 serde_yaml::Value::String("name".into()),
                 serde_yaml::Value::String(entry.name),
             );
             Ok(serde_yaml::Value::Mapping(map))
+        }
+        Command::ListLog => {
+            let entries = inner.assertions.list_log()?;
+            Ok(serde_yaml::to_value(&entries).unwrap())
         }
     }
 }

@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::schema::entity_property::{EntityProperty, ValueType};
 use crate::schema::entity_type::EntityType;
+use crate::schema::reserved;
 use crate::schema::slug::validate_slug;
 use crate::schema::SchemaError;
 
@@ -74,6 +75,9 @@ impl SchemaRegistry {
         description: Option<&str>,
     ) -> Result<EntityProperty, SchemaError> {
         validate_slug(slug)?;
+        if reserved::is_reserved(slug) {
+            return Err(SchemaError::ReservedProperty(slug.to_string()));
+        }
 
         let id = Uuid::now_v7();
         let now = Utc::now();
@@ -517,6 +521,17 @@ mod tests {
         reg.create_entity_type("tank", Some("Armored vehicle")).unwrap();
         let fetched = reg.get_entity_type("tank").unwrap();
         assert_eq!(fetched.description.as_deref(), Some("Armored vehicle"));
+    }
+
+    #[test]
+    fn reject_reserved_property() {
+        let reg = registry();
+        for slug in &["entity-uuid", "entity-name", "entity-type"] {
+            assert!(matches!(
+                reg.create_property(slug, ValueType::Struct, None),
+                Err(SchemaError::ReservedProperty(_))
+            ));
+        }
     }
 
     #[test]

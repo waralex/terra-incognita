@@ -32,11 +32,12 @@ pub enum Command {
     },
     #[serde(rename = "entity.create")]
     CreateEntity {
-        entity_type: String,
-        name: String,
-        kind: Option<terra_core::assertion::AssertionKind>,
+        entity_name: String,
+        entity_type: Option<String>,
         context: Option<serde_yaml::Value>,
     },
+    #[serde(rename = "log.list")]
+    ListLog,
 }
 
 impl Command {

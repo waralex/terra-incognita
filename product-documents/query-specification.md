@@ -179,10 +179,9 @@ status: ok
 
 ```yaml
 command: entity.create
-entity_type: military-unit
-name: 72nd Mechanized Brigade
-kind: hypothesis  # optional, default: hypothesis
-context:          # optional
+entity_name: 72nd-mechanized-brigade
+entity_type: military-unit  # optional
+context:                     # optional
   source: field-report-2026-03-07
 ```
 
@@ -192,10 +191,44 @@ Response:
 id: 01901234-5678-9abc-def0-666666666666
 entity_id: 01901234-5678-9abc-def0-777777777777
 entity_type: military-unit
-name: 72nd Mechanized Brigade
-kind: hypothesis
+name: 72nd-mechanized-brigade
 timestamp: "2026-03-07T15:00:00.000000+00:00"
 ```
+
+`entity_type` is a set property on the entity, not a schema constraint. If omitted,
+the entity is created without a type.
+
+### log.list
+
+Returns all assertion log entries in reverse chronological order.
+
+```yaml
+command: log.list
+```
+
+Response:
+
+```yaml
+- id: 01901234-5678-9abc-def0-666666666666
+  timestamp: "2026-03-07T15:00:00.000000+00:00"
+  entity_id: 01901234-5678-9abc-def0-777777777777
+  entity_type: military-unit
+  name: 72nd-mechanized-brigade
+  context:
+    source: field-report-2026-03-07
+```
+
+---
+
+## Reserved Properties
+
+The following property slugs are reserved and cannot be created via `property.create`:
+
+- `entity-uuid` — the unique identifier of the entity
+- `entity-name` — the human-readable name (slug) of the entity
+- `entity-type` — the type classification of the entity
+
+These properties are built-in and managed by the system.
 
 ---
 
@@ -245,4 +278,5 @@ Error kinds:
 | `duplicate_property` | Property already exists |
 | `entity_type_not_found` | Referenced entity type not found |
 | `property_not_found` | Referenced property not found |
+| `reserved_property` | Attempt to create a reserved property |
 | `database_error` | Internal database failure |

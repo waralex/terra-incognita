@@ -1,6 +1,7 @@
 mod entity_property;
 mod entity_type;
 mod migrations;
+pub(crate) mod reserved;
 mod registry;
 pub(crate) mod slug;
 
@@ -24,6 +25,9 @@ pub enum SchemaError {
 
     #[error("property not found: {0}")]
     PropertyNotFound(String),
+
+    #[error("reserved property: {0}")]
+    ReservedProperty(String),
 
     #[error("database error: {0}")]
     Db(#[from] rusqlite::Error),

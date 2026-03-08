@@ -27,6 +27,7 @@ impl From<SchemaError> for ApiError {
             SchemaError::DuplicateProperty(_) => (StatusCode::CONFLICT, "duplicate_property"),
             SchemaError::EntityTypeNotFound(_) => (StatusCode::NOT_FOUND, "entity_type_not_found"),
             SchemaError::PropertyNotFound(_) => (StatusCode::NOT_FOUND, "property_not_found"),
+            SchemaError::ReservedProperty(_) => (StatusCode::BAD_REQUEST, "reserved_property"),
             SchemaError::Db(_) => (StatusCode::INTERNAL_SERVER_ERROR, "database_error"),
         };
         Self {

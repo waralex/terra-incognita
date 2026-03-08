@@ -9,6 +9,24 @@ use crate::schema::reserved;
 use crate::schema::slug::validate_slug;
 use crate::schema::SchemaError;
 
+pub struct EntityTypeInput<'a> {
+    pub slug: &'a str,
+    pub description: Option<&'a str>,
+    pub properties: &'a [&'a str],
+}
+
+pub struct PropertyInput<'a> {
+    pub slug: &'a str,
+    pub value_type: ValueType,
+    pub description: Option<&'a str>,
+    pub entity_types: &'a [&'a str],
+}
+
+pub struct AttachInput<'a> {
+    pub entity_type: &'a str,
+    pub property: &'a str,
+}
+
 pub struct SchemaRegistry {
     conn: Connection,
 }
@@ -147,6 +165,71 @@ impl SchemaRegistry {
         Ok(())
     }
 
+    pub fn attach_properties_batch(
+        &mut self,
+        items: &[AttachInput<'_>],
+    ) -> Result<usize, SchemaError> {
+        for (i, item) in items.iter().enumerate() {
+            self.conn
+                .query_row(
+                    "SELECT 1 FROM entity_types WHERE slug = ?1",
+                    params![item.entity_type],
+                    |_| Ok(()),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => SchemaError::BatchItemError {
+                        index: i,
+                        source: Box::new(SchemaError::EntityTypeNotFound(
+                            item.entity_type.to_string(),
+                        )),
+                    },
+                    other => SchemaError::Db(other),
+                })?;
+
+            self.conn
+                .query_row(
+                    "SELECT 1 FROM entity_properties WHERE slug = ?1",
+                    params![item.property],
+                    |_| Ok(()),
+                )
+                .map_err(|e| match e {
+                    rusqlite::Error::QueryReturnedNoRows => SchemaError::BatchItemError {
+                        index: i,
+                        source: Box::new(SchemaError::PropertyNotFound(
+                            item.property.to_string(),
+                        )),
+                    },
+                    other => SchemaError::Db(other),
+                })?;
+        }
+
+        let tx = self.conn.transaction()?;
+
+        for item in items {
+            let type_id: Vec<u8> = tx
+                .query_row(
+                    "SELECT id FROM entity_types WHERE slug = ?1",
+                    params![item.entity_type],
+                    |row| row.get(0),
+                )?;
+
+            let prop_id: Vec<u8> = tx
+                .query_row(
+                    "SELECT id FROM entity_properties WHERE slug = ?1",
+                    params![item.property],
+                    |row| row.get(0),
+                )?;
+
+            tx.execute(
+                "INSERT OR IGNORE INTO entity_type_properties (entity_type_id, entity_property_id) VALUES (?1, ?2)",
+                params![type_id, prop_id],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(items.len())
+    }
+
     pub fn list_entity_types(&self) -> Result<Vec<EntityType>, SchemaError> {
         let mut stmt = self
             .conn
@@ -246,6 +329,191 @@ impl SchemaRegistry {
                 })
             })
             .collect()
+    }
+
+    pub fn create_entity_types_batch(
+        &mut self,
+        items: &[EntityTypeInput<'_>],
+    ) -> Result<Vec<EntityType>, SchemaError> {
+        for (i, item) in items.iter().enumerate() {
+            validate_slug(item.slug).map_err(|e| SchemaError::BatchItemError {
+                index: i,
+                source: Box::new(e),
+            })?;
+            for prop_slug in item.properties {
+                self.conn
+                    .query_row(
+                        "SELECT 1 FROM entity_properties WHERE slug = ?1",
+                        params![prop_slug],
+                        |_| Ok(()),
+                    )
+                    .map_err(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => SchemaError::BatchItemError {
+                            index: i,
+                            source: Box::new(SchemaError::PropertyNotFound(
+                                prop_slug.to_string(),
+                            )),
+                        },
+                        other => SchemaError::Db(other),
+                    })?;
+            }
+        }
+
+        let tx = self.conn.transaction()?;
+        let mut results = Vec::with_capacity(items.len());
+
+        for (i, item) in items.iter().enumerate() {
+            let id = Uuid::now_v7();
+            let now = Utc::now();
+            let created_at_str = now.to_rfc3339();
+
+            tx.execute(
+                "INSERT INTO entity_types (id, slug, description, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![id.as_bytes().as_slice(), item.slug, item.description, created_at_str],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(err, _)
+                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    SchemaError::BatchItemError {
+                        index: i,
+                        source: Box::new(SchemaError::DuplicateEntityType(
+                            item.slug.to_string(),
+                        )),
+                    }
+                }
+                other => SchemaError::Db(other),
+            })?;
+
+            for prop_slug in item.properties {
+                let prop_id: Vec<u8> = tx
+                    .query_row(
+                        "SELECT id FROM entity_properties WHERE slug = ?1",
+                        params![prop_slug],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => SchemaError::BatchItemError {
+                            index: i,
+                            source: Box::new(SchemaError::PropertyNotFound(
+                                prop_slug.to_string(),
+                            )),
+                        },
+                        other => SchemaError::Db(other),
+                    })?;
+
+                tx.execute(
+                    "INSERT OR IGNORE INTO entity_type_properties (entity_type_id, entity_property_id) VALUES (?1, ?2)",
+                    params![id.as_bytes().as_slice(), prop_id],
+                )?;
+            }
+
+            results.push(EntityType {
+                id,
+                slug: item.slug.to_string(),
+                description: item.description.map(String::from),
+                created_at: now,
+            });
+        }
+
+        tx.commit()?;
+        Ok(results)
+    }
+
+    pub fn create_properties_batch(
+        &mut self,
+        items: &[PropertyInput<'_>],
+    ) -> Result<Vec<EntityProperty>, SchemaError> {
+        for (i, item) in items.iter().enumerate() {
+            validate_slug(item.slug).map_err(|e| SchemaError::BatchItemError {
+                index: i,
+                source: Box::new(e),
+            })?;
+            if reserved::is_reserved(item.slug) {
+                return Err(SchemaError::BatchItemError {
+                    index: i,
+                    source: Box::new(SchemaError::ReservedProperty(item.slug.to_string())),
+                });
+            }
+            for et_slug in item.entity_types {
+                self.conn
+                    .query_row(
+                        "SELECT 1 FROM entity_types WHERE slug = ?1",
+                        params![et_slug],
+                        |_| Ok(()),
+                    )
+                    .map_err(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => SchemaError::BatchItemError {
+                            index: i,
+                            source: Box::new(SchemaError::EntityTypeNotFound(
+                                et_slug.to_string(),
+                            )),
+                        },
+                        other => SchemaError::Db(other),
+                    })?;
+            }
+        }
+
+        let tx = self.conn.transaction()?;
+        let mut results = Vec::with_capacity(items.len());
+
+        for (i, item) in items.iter().enumerate() {
+            let id = Uuid::now_v7();
+            let now = Utc::now();
+            let created_at_str = now.to_rfc3339();
+
+            tx.execute(
+                "INSERT INTO entity_properties (id, slug, description, value_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id.as_bytes().as_slice(), item.slug, item.description, item.value_type.as_str(), created_at_str],
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::SqliteFailure(err, _)
+                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    SchemaError::BatchItemError {
+                        index: i,
+                        source: Box::new(SchemaError::DuplicateProperty(
+                            item.slug.to_string(),
+                        )),
+                    }
+                }
+                other => SchemaError::Db(other),
+            })?;
+
+            for et_slug in item.entity_types {
+                let type_id: Vec<u8> = tx
+                    .query_row(
+                        "SELECT id FROM entity_types WHERE slug = ?1",
+                        params![et_slug],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => SchemaError::BatchItemError {
+                            index: i,
+                            source: Box::new(SchemaError::EntityTypeNotFound(
+                                et_slug.to_string(),
+                            )),
+                        },
+                        other => SchemaError::Db(other),
+                    })?;
+
+                tx.execute(
+                    "INSERT OR IGNORE INTO entity_type_properties (entity_type_id, entity_property_id) VALUES (?1, ?2)",
+                    params![type_id, id.as_bytes().as_slice()],
+                )?;
+            }
+
+            results.push(EntityProperty {
+                id,
+                slug: item.slug.to_string(),
+                description: item.description.map(String::from),
+                value_type: item.value_type,
+                created_at: now,
+            });
+        }
+
+        tx.commit()?;
+        Ok(results)
     }
 
     pub fn list_properties(
@@ -532,6 +800,230 @@ mod tests {
                 Err(SchemaError::ReservedProperty(_))
             ));
         }
+    }
+
+    #[test]
+    fn batch_create_entity_types() {
+        let mut reg = registry();
+        let items = vec![
+            EntityTypeInput { slug: "alpha", description: None, properties: &[] },
+            EntityTypeInput { slug: "bravo", description: Some("Second"), properties: &[] },
+        ];
+        let results = reg.create_entity_types_batch(&items).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].slug, "alpha");
+        assert_eq!(results[1].slug, "bravo");
+        assert_eq!(results[1].description.as_deref(), Some("Second"));
+
+        let all = reg.list_entity_types().unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn batch_create_entity_types_with_property_attachment() {
+        let mut reg = registry();
+        reg.create_property("name", ValueType::Struct, None).unwrap();
+        reg.create_property("code", ValueType::Range, None).unwrap();
+
+        let items = vec![
+            EntityTypeInput { slug: "unit", description: None, properties: &["name", "code"] },
+            EntityTypeInput { slug: "location", description: None, properties: &["name"] },
+        ];
+        let results = reg.create_entity_types_batch(&items).unwrap();
+        assert_eq!(results.len(), 2);
+
+        let unit_props = reg.list_properties("unit").unwrap();
+        assert_eq!(unit_props.len(), 2);
+
+        let loc_props = reg.list_properties("location").unwrap();
+        assert_eq!(loc_props.len(), 1);
+        assert_eq!(loc_props[0].slug, "name");
+    }
+
+    #[test]
+    fn batch_create_entity_types_rollback_on_duplicate() {
+        let mut reg = registry();
+        reg.create_entity_type("existing", None).unwrap();
+
+        let items = vec![
+            EntityTypeInput { slug: "new-one", description: None, properties: &[] },
+            EntityTypeInput { slug: "existing", description: None, properties: &[] },
+        ];
+        let err = reg.create_entity_types_batch(&items).unwrap_err();
+        assert!(matches!(err, SchemaError::BatchItemError { index: 1, .. }));
+
+        // new-one should not exist due to rollback
+        assert!(reg.get_entity_type("new-one").is_err());
+    }
+
+    #[test]
+    fn batch_create_entity_types_rollback_on_invalid_slug() {
+        let mut reg = registry();
+        let items = vec![
+            EntityTypeInput { slug: "good", description: None, properties: &[] },
+            EntityTypeInput { slug: "BAD", description: None, properties: &[] },
+        ];
+        let err = reg.create_entity_types_batch(&items).unwrap_err();
+        assert!(matches!(err, SchemaError::BatchItemError { index: 1, .. }));
+
+        assert!(reg.get_entity_type("good").is_err());
+    }
+
+    #[test]
+    fn batch_create_entity_types_nonexistent_property() {
+        let mut reg = registry();
+        let items = vec![
+            EntityTypeInput { slug: "unit", description: None, properties: &["no-such-prop"] },
+        ];
+        let err = reg.create_entity_types_batch(&items).unwrap_err();
+        assert!(matches!(
+            err,
+            SchemaError::BatchItemError { index: 0, ref source }
+            if matches!(source.as_ref(), SchemaError::PropertyNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn batch_create_properties() {
+        let mut reg = registry();
+        let items = vec![
+            PropertyInput { slug: "name", value_type: ValueType::Struct, description: None, entity_types: &[] },
+            PropertyInput { slug: "count", value_type: ValueType::Range, description: Some("Amount"), entity_types: &[] },
+        ];
+        let results = reg.create_properties_batch(&items).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].slug, "name");
+        assert_eq!(results[1].slug, "count");
+        assert_eq!(results[1].description.as_deref(), Some("Amount"));
+
+        let all = reg.list_all_properties().unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn batch_create_properties_with_entity_type_attachment() {
+        let mut reg = registry();
+        reg.create_entity_type("unit", None).unwrap();
+        reg.create_entity_type("location", None).unwrap();
+
+        let items = vec![
+            PropertyInput { slug: "name", value_type: ValueType::Struct, description: None, entity_types: &["unit", "location"] },
+            PropertyInput { slug: "code", value_type: ValueType::Range, description: None, entity_types: &["unit"] },
+        ];
+        let results = reg.create_properties_batch(&items).unwrap();
+        assert_eq!(results.len(), 2);
+
+        let unit_props = reg.list_properties("unit").unwrap();
+        assert_eq!(unit_props.len(), 2);
+
+        let loc_props = reg.list_properties("location").unwrap();
+        assert_eq!(loc_props.len(), 1);
+        assert_eq!(loc_props[0].slug, "name");
+    }
+
+    #[test]
+    fn batch_create_properties_rollback_on_reserved() {
+        let mut reg = registry();
+        let items = vec![
+            PropertyInput { slug: "good-prop", value_type: ValueType::Struct, description: None, entity_types: &[] },
+            PropertyInput { slug: "entity-uuid", value_type: ValueType::Struct, description: None, entity_types: &[] },
+        ];
+        let err = reg.create_properties_batch(&items).unwrap_err();
+        assert!(matches!(
+            err,
+            SchemaError::BatchItemError { index: 1, ref source }
+            if matches!(source.as_ref(), SchemaError::ReservedProperty(_))
+        ));
+
+        let all = reg.list_all_properties().unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn batch_create_properties_nonexistent_entity_type() {
+        let mut reg = registry();
+        let items = vec![
+            PropertyInput { slug: "name", value_type: ValueType::Struct, description: None, entity_types: &["no-such-type"] },
+        ];
+        let err = reg.create_properties_batch(&items).unwrap_err();
+        assert!(matches!(
+            err,
+            SchemaError::BatchItemError { index: 0, ref source }
+            if matches!(source.as_ref(), SchemaError::EntityTypeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn batch_attach_properties() {
+        let mut reg = registry();
+        reg.create_entity_type("unit", None).unwrap();
+        reg.create_entity_type("location", None).unwrap();
+        reg.create_property("name", ValueType::Struct, None).unwrap();
+        reg.create_property("code", ValueType::Range, None).unwrap();
+
+        let items = vec![
+            AttachInput { entity_type: "unit", property: "name" },
+            AttachInput { entity_type: "unit", property: "code" },
+            AttachInput { entity_type: "location", property: "name" },
+        ];
+        let count = reg.attach_properties_batch(&items).unwrap();
+        assert_eq!(count, 3);
+
+        let unit_props = reg.list_properties("unit").unwrap();
+        assert_eq!(unit_props.len(), 2);
+
+        let loc_props = reg.list_properties("location").unwrap();
+        assert_eq!(loc_props.len(), 1);
+    }
+
+    #[test]
+    fn batch_attach_nonexistent_entity_type() {
+        let mut reg = registry();
+        reg.create_property("name", ValueType::Struct, None).unwrap();
+
+        let items = vec![
+            AttachInput { entity_type: "no-such-type", property: "name" },
+        ];
+        let err = reg.attach_properties_batch(&items).unwrap_err();
+        assert!(matches!(
+            err,
+            SchemaError::BatchItemError { index: 0, ref source }
+            if matches!(source.as_ref(), SchemaError::EntityTypeNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn batch_attach_nonexistent_property() {
+        let mut reg = registry();
+        reg.create_entity_type("unit", None).unwrap();
+
+        let items = vec![
+            AttachInput { entity_type: "unit", property: "no-such-prop" },
+        ];
+        let err = reg.attach_properties_batch(&items).unwrap_err();
+        assert!(matches!(
+            err,
+            SchemaError::BatchItemError { index: 0, ref source }
+            if matches!(source.as_ref(), SchemaError::PropertyNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn batch_attach_rollback_on_error() {
+        let mut reg = registry();
+        reg.create_entity_type("unit", None).unwrap();
+        reg.create_property("name", ValueType::Struct, None).unwrap();
+
+        let items = vec![
+            AttachInput { entity_type: "unit", property: "name" },
+            AttachInput { entity_type: "unit", property: "no-such-prop" },
+        ];
+        let err = reg.attach_properties_batch(&items).unwrap_err();
+        assert!(matches!(err, SchemaError::BatchItemError { index: 1, .. }));
+
+        // First attachment should be rolled back
+        let props = reg.list_properties("unit").unwrap();
+        assert!(props.is_empty());
     }
 
     #[test]

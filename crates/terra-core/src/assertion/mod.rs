@@ -32,6 +32,12 @@ pub struct LogEntry {
     pub context: serde_json::Value,
 }
 
+pub struct EntityInput<'a> {
+    pub name: &'a str,
+    pub entity_type: Option<&'a str>,
+    pub context: serde_json::Value,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AssertionError {
     #[error("invalid name: {0}")]
@@ -39,6 +45,12 @@ pub enum AssertionError {
 
     #[error("entity type not found: {0}")]
     EntityTypeNotFound(String),
+
+    #[error("batch item {index}: {source}")]
+    BatchItemError {
+        index: usize,
+        source: Box<AssertionError>,
+    },
 
     #[error("storage error: {0}")]
     Storage(String),

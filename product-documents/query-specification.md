@@ -22,6 +22,20 @@ Consequences:
 - Tooling is trivial — `curl -d @query.yml` works for everything
 - No URL construction, no path parameters, no method selection
 
+## Batch Convention
+
+All mutating commands (`*.create`, `*.attach`) support batch input via `items`.
+The contract:
+
+- **Single mode:** fields at the top level (`slug`, `entity_name`, etc.)
+- **Batch mode:** an `items` array, each element carrying the same fields
+- **Mutually exclusive:** provide either top-level fields or `items`, not both
+- **All-or-nothing:** batch operations are atomic — if any item fails, nothing is committed
+- **Response shape matches input:** single mode returns an object, batch mode returns an array
+- **Backward compatible:** existing single-format queries work unchanged
+
+Read-only commands (`*.list`, `*.get`, `log.list`) do not need batch input.
+
 ## Envelope
 
 ```yaml
@@ -52,19 +66,47 @@ Invalid: `Military-Unit`, `unit_name`, `-leading`, `trailing-`, `double--hyphen`
 
 ### entity-type.create
 
+Single:
+
 ```yaml
 command: entity-type.create
 slug: military-unit
 description: A collective body of soldiers  # optional
+properties: [unit-name, troop-count]         # optional, attach existing properties
 ```
 
-Response:
+Batch (all-or-nothing — if any item fails, nothing is created):
+
+```yaml
+command: entity-type.create
+items:
+  - slug: military-unit
+    description: A collective body of soldiers
+    properties: [unit-name, troop-count]
+  - slug: location
+```
+
+Provide either `slug` (single) or `items` (batch), not both.
+
+Single response:
 
 ```yaml
 id: 01901234-5678-9abc-def0-123456789abc
 slug: military-unit
 description: A collective body of soldiers
 created_at: "2026-03-07T14:22:45.123456Z"
+```
+
+Batch response:
+
+```yaml
+- id: 01901234-5678-9abc-def0-123456789abc
+  slug: military-unit
+  description: A collective body of soldiers
+  created_at: "2026-03-07T14:22:45.123456Z"
+- id: 01901234-5678-9abc-def0-234567890abc
+  slug: location
+  created_at: "2026-03-07T14:22:45.123457Z"
 ```
 
 ### entity-type.list
@@ -114,14 +156,31 @@ properties:
 
 ### property.create
 
+Single:
+
 ```yaml
 command: property.create
 slug: combat-strength
 value_type: range
 description: Offensive capability rating  # optional
+entity_types: [military-unit]              # optional, attach to existing entity types
 ```
 
-Response:
+Batch (all-or-nothing — if any item fails, nothing is created):
+
+```yaml
+command: property.create
+items:
+  - slug: unit-name
+    value_type: struct
+    entity_types: [military-unit]
+  - slug: troop-count
+    value_type: range
+```
+
+Provide either `slug` (single) or `items` (batch), not both.
+
+Single response:
 
 ```yaml
 id: 01901234-5678-9abc-def0-555555555555
@@ -129,6 +188,19 @@ slug: combat-strength
 value_type: range
 description: Offensive capability rating
 created_at: "2026-03-07T14:24:30.000000Z"
+```
+
+Batch response:
+
+```yaml
+- id: 01901234-5678-9abc-def0-555555555555
+  slug: unit-name
+  value_type: struct
+  created_at: "2026-03-07T14:24:30.000000Z"
+- id: 01901234-5678-9abc-def0-666666666666
+  slug: troop-count
+  value_type: range
+  created_at: "2026-03-07T14:24:30.000001Z"
 ```
 
 ### property.list
@@ -161,7 +233,9 @@ Response:
 
 ### property.attach
 
-Attaches an existing property to an entity type.
+Attaches existing properties to entity types.
+
+Single:
 
 ```yaml
 command: property.attach
@@ -169,13 +243,35 @@ entity_type: military-unit
 slug: combat-strength
 ```
 
-Response:
+Batch (all-or-nothing):
+
+```yaml
+command: property.attach
+items:
+  - entity_type: military-unit
+    slug: combat-strength
+  - entity_type: military-unit
+    slug: unit-name
+  - entity_type: location
+    slug: unit-name
+```
+
+Response (single):
 
 ```yaml
 status: ok
 ```
 
+Response (batch):
+
+```yaml
+status: ok
+count: 3
+```
+
 ### entity.create
+
+Single:
 
 ```yaml
 command: entity.create
@@ -185,7 +281,20 @@ context:                     # optional
   source: field-report-2026-03-07
 ```
 
-Response:
+Batch (all-or-nothing):
+
+```yaml
+command: entity.create
+items:
+  - entity_name: 72nd-mechanized-brigade
+    entity_type: military-unit
+    context:
+      source: field-report-2026-03-07
+  - entity_name: kherson-region
+    entity_type: location
+```
+
+Single response:
 
 ```yaml
 id: 01901234-5678-9abc-def0-666666666666
@@ -193,6 +302,21 @@ entity_id: 01901234-5678-9abc-def0-777777777777
 entity_type: military-unit
 name: 72nd-mechanized-brigade
 timestamp: "2026-03-07T15:00:00.000000+00:00"
+```
+
+Batch response:
+
+```yaml
+- id: 01901234-5678-9abc-def0-666666666666
+  entity_id: 01901234-5678-9abc-def0-777777777777
+  entity_type: military-unit
+  name: 72nd-mechanized-brigade
+  timestamp: "2026-03-07T15:00:00.000000+00:00"
+- id: 01901234-5678-9abc-def0-888888888888
+  entity_id: 01901234-5678-9abc-def0-999999999999
+  entity_type: location
+  name: kherson-region
+  timestamp: "2026-03-07T15:00:00.000001+00:00"
 ```
 
 `entity_type` is a set property on the entity, not a schema constraint. If omitted,

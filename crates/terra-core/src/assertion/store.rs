@@ -4,7 +4,7 @@ use chrono::Utc;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 use uuid::Uuid;
 
-use crate::assertion::{AssertionError, AssertionKind, LogEntry};
+use crate::assertion::{AssertionError, AssertionKind, EntityInput, LogEntry};
 use crate::schema::slug::validate_slug;
 use crate::schema::SchemaError;
 
@@ -70,6 +70,63 @@ impl AssertionStore {
             name: name.to_string(),
             context,
         })
+    }
+
+    pub fn create_entities_batch(
+        &self,
+        items: &[EntityInput<'_>],
+    ) -> Result<Vec<LogEntry>, AssertionError> {
+        for (i, item) in items.iter().enumerate() {
+            validate_slug(item.name).map_err(|e| match e {
+                SchemaError::InvalidSlug(s) => AssertionError::BatchItemError {
+                    index: i,
+                    source: Box::new(AssertionError::InvalidName(s)),
+                },
+                _ => AssertionError::Storage(e.to_string()),
+            })?;
+        }
+
+        let cf = self
+            .db
+            .cf_handle(CF_ASSERTIONS)
+            .ok_or_else(|| AssertionError::Storage("missing column family".into()))?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+        let mut results = Vec::with_capacity(items.len());
+
+        for item in items {
+            let now = Utc::now();
+            let timestamp_us = now.timestamp_micros();
+            let log_entry_id = Uuid::now_v7();
+            let entity_id = Uuid::now_v7();
+
+            let key = encode_key(timestamp_us, &log_entry_id, &entity_id, AssertionKind::Hypothesis);
+
+            let value = serde_json::json!({
+                "entity_type": item.entity_type,
+                "name": item.name,
+                "context": item.context,
+            });
+            let value_bytes = serde_json::to_vec(&value)
+                .map_err(|e| AssertionError::Storage(e.to_string()))?;
+
+            batch.put_cf(&cf, &key, &value_bytes);
+
+            results.push(LogEntry {
+                id: log_entry_id,
+                timestamp: now,
+                entity_id,
+                entity_type: item.entity_type.map(String::from),
+                name: item.name.to_string(),
+                context: item.context.clone(),
+            });
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| AssertionError::Storage(e.to_string()))?;
+
+        Ok(results)
     }
 
     pub fn list_log(&self) -> Result<Vec<LogEntry>, AssertionError> {
@@ -248,5 +305,47 @@ mod tests {
         let k1 = encode_key(100, &id, &id, AssertionKind::Hypothesis);
         let k2 = encode_key(200, &id, &id, AssertionKind::Hypothesis);
         assert!(k1 < k2);
+    }
+
+    #[test]
+    fn batch_create_entities() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+
+        let items = vec![
+            EntityInput { name: "alpha", entity_type: Some("unit"), context: serde_json::json!({}) },
+            EntityInput { name: "bravo", entity_type: None, context: serde_json::json!({"source": "test"}) },
+        ];
+        let results = s.create_entities_batch(&items).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "alpha");
+        assert_eq!(results[0].entity_type.as_deref(), Some("unit"));
+        assert_eq!(results[1].name, "bravo");
+        assert!(results[1].entity_type.is_none());
+        assert_ne!(results[0].entity_id, results[1].entity_id);
+
+        let log = s.list_log().unwrap();
+        assert_eq!(log.len(), 2);
+    }
+
+    #[test]
+    fn batch_create_entities_invalid_name_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = store(&dir);
+
+        let items = vec![
+            EntityInput { name: "good-name", entity_type: None, context: serde_json::json!({}) },
+            EntityInput { name: "BAD NAME", entity_type: None, context: serde_json::json!({}) },
+        ];
+        let err = s.create_entities_batch(&items).unwrap_err();
+        assert!(matches!(
+            err,
+            AssertionError::BatchItemError { index: 1, ref source }
+            if matches!(source.as_ref(), AssertionError::InvalidName(_))
+        ));
+
+        // Nothing should be written due to validation failing before write
+        let log = s.list_log().unwrap();
+        assert!(log.is_empty());
     }
 }

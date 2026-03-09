@@ -1,10 +1,12 @@
 mod assert_entity;
 mod execute;
+mod query_entity;
 
 pub use assert_entity::AssertEntityError;
 pub use execute::execute;
+pub use query_entity::{EntityProjection, ProjectionError, PropertyState};
 
-use crate::assertion::{EntityError, LogEntry, LogError, PropertyValue, Transaction, WriterError};
+use crate::assertion::{EntityError, EntityRecord, LogEntry, LogError, PropertyValue, Transaction, WriterError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
 use crate::schema::SchemaError;
 
@@ -28,6 +30,13 @@ pub enum Command {
     CreateEntity(AssertEntityInput),
     /// Assert facts/hypotheses about an existing entity in one transaction.
     AssertEntity(AssertEntityInput),
+    /// List all entities (slug + uuid).
+    ListEntities,
+    /// Get entity projected onto an entity type.
+    GetEntity {
+        entity: String,
+        entity_type: String,
+    },
     /// List all entries in the fact log.
     ListLog,
 }
@@ -99,6 +108,10 @@ pub enum CommandResult {
         entity_type: EntityType,
         properties: Vec<EntityProperty>,
     },
+    /// List of entities (slug + uuid).
+    EntityList(Vec<EntityRecord>),
+    /// Entity projected onto an entity type.
+    EntityDetail(EntityProjection),
     /// Full assertion log.
     LogEntries(Vec<LogEntry>),
 }
@@ -125,4 +138,8 @@ pub enum CommandError {
     /// Business logic error from assert-entity flow.
     #[error(transparent)]
     AssertEntity(#[from] AssertEntityError),
+
+    /// Projection error from entity query.
+    #[error(transparent)]
+    Projection(#[from] ProjectionError),
 }

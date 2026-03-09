@@ -101,6 +101,13 @@ pub enum QueryDto {
         #[serde(default)]
         hypotheses: Vec<AssertionItemDto>,
     },
+    #[serde(rename = "entity.list")]
+    ListEntities,
+    #[serde(rename = "entity.get")]
+    GetEntity {
+        entity: String,
+        entity_type: String,
+    },
     #[serde(rename = "log.list")]
     ListLog,
 }
@@ -263,6 +270,19 @@ impl QueryDto {
                     facts: convert_assertion_items(facts)?,
                     hypotheses: convert_assertion_items(hypotheses)?,
                 }),
+                ResponseShape::Single,
+            )),
+            QueryDto::ListEntities => {
+                Ok((Command::ListEntities, ResponseShape::Batch))
+            }
+            QueryDto::GetEntity {
+                entity,
+                entity_type,
+            } => Ok((
+                Command::GetEntity {
+                    entity,
+                    entity_type,
+                },
                 ResponseShape::Single,
             )),
             QueryDto::ListLog => Ok((Command::ListLog, ResponseShape::Batch)),

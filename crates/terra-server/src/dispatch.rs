@@ -97,6 +97,27 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_yaml::
             );
             serde_yaml::Value::Mapping(map)
         }
+        CommandResult::EntityList(entities) => {
+            let items: Vec<serde_yaml::Value> = entities
+                .iter()
+                .map(|e| {
+                    let mut map = serde_yaml::Mapping::new();
+                    map.insert(
+                        serde_yaml::Value::String("id".into()),
+                        serde_yaml::to_value(&e.id).unwrap(),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("slug".into()),
+                        serde_yaml::Value::String(e.slug.clone()),
+                    );
+                    serde_yaml::Value::Mapping(map)
+                })
+                .collect();
+            serde_yaml::to_value(&items).unwrap()
+        }
+        CommandResult::EntityDetail(projection) => {
+            serde_yaml::to_value(&projection).unwrap()
+        }
         CommandResult::LogEntries(entries) => {
             let items: Vec<serde_yaml::Value> =
                 entries.iter().map(serialize_log_entry).collect();

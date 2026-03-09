@@ -3,6 +3,7 @@ use crate::schema::{AttachInput, EntityTypeInput, PropertyInput, SchemaRegistry}
 
 use super::{Command, CommandError, CommandResult};
 use super::assert_entity;
+use super::query_entity;
 
 /// Executes a domain command against the schema registry and assertion store.
 pub fn execute(
@@ -96,6 +97,17 @@ pub fn execute(
                 facts: result.facts,
                 hypotheses: result.hypotheses,
             })
+        }
+        Command::ListEntities => {
+            let entities = store.entities().list_active()?;
+            Ok(CommandResult::EntityList(entities))
+        }
+        Command::GetEntity {
+            entity,
+            entity_type,
+        } => {
+            let projection = query_entity::project_entity(&entity, &entity_type, registry, store)?;
+            Ok(CommandResult::EntityDetail(projection))
         }
         Command::ListLog => {
             let entries = store.facts().list()?;

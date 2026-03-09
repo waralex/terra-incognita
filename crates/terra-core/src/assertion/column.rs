@@ -95,6 +95,67 @@ impl Column {
         Ok(cells)
     }
 
+    /// Returns the latest cell for a given property+entity, or None.
+    pub fn latest_for_entity(
+        &self,
+        property_id: Uuid,
+        entity_id: Uuid,
+    ) -> Result<Option<ColumnCell>, LogError> {
+        let cf = self.cf()?;
+        let prefix = ColumnKey::prefix_branch_property(&super::MAIN_BRANCH, &property_id);
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+
+        let mut latest: Option<ColumnCell> = None;
+        for item in iter {
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+            let k = ColumnKey::decode(&raw_key)?;
+            if k.entity_id != entity_id {
+                continue;
+            }
+            let value: serde_json::Value =
+                serde_json::from_slice(&val).map_err(|e| LogError::Storage(e.to_string()))?;
+            // Keys are sorted by timestamp, so last match wins
+            latest = Some(ColumnCell {
+                branch_id: k.branch_id,
+                property_id: k.property_id,
+                timestamp_us: k.timestamp_us,
+                log_entry_id: k.log_entry_id,
+                entity_id: k.entity_id,
+                value,
+            });
+        }
+        Ok(latest)
+    }
+
+    /// Counts cells for a given property+entity where log_entry_id > the given threshold.
+    pub fn count_after(
+        &self,
+        property_id: Uuid,
+        entity_id: Uuid,
+        after_log_entry_id: Uuid,
+    ) -> Result<usize, LogError> {
+        let cf = self.cf()?;
+        let prefix = ColumnKey::prefix_branch_property(&super::MAIN_BRANCH, &property_id);
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        let threshold = *after_log_entry_id.as_bytes();
+
+        let mut count = 0;
+        for item in iter {
+            let (raw_key, _) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+            let k = ColumnKey::decode(&raw_key)?;
+            if k.entity_id == entity_id && *k.log_entry_id.as_bytes() > threshold {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
     pub(crate) fn cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
         self.db
             .cf_handle(self.cf_name)

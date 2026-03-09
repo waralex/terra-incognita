@@ -90,6 +90,25 @@ impl From<CommandError> for ApiError {
                 kind: "assertion_error".to_string(),
                 message: e.to_string(),
             },
+            CommandError::Projection(e) => {
+                use terra_core::command::ProjectionError;
+                let (status, kind) = match &e {
+                    ProjectionError::EntityNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "entity_not_found")
+                    }
+                    ProjectionError::Entity(_) | ProjectionError::Storage(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "storage_error")
+                    }
+                    ProjectionError::Schema(_) => {
+                        (StatusCode::NOT_FOUND, "entity_type_not_found")
+                    }
+                };
+                Self {
+                    status,
+                    kind: kind.to_string(),
+                    message: e.to_string(),
+                }
+            }
             CommandError::AssertEntity(e) => {
                 use terra_core::command::AssertEntityError;
                 let (status, kind) = match &e {

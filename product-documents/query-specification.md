@@ -8,12 +8,12 @@ to a file, versioned, shared, and executed later without knowledge of which endp
 to call or how to construct the URL.
 
 This is a deliberate choice against REST-style routing where intent is split between
-HTTP method, URL path, and body. In REST, `POST /entity-types` with `{"slug": "tank"}`
+HTTP method, URL path, and body. In REST, `POST /entity-types` with `{"slug": "book"}`
 is three pieces of information in three places. Here, one YAML document is enough:
 
 ```yaml
 command: entity-type.create
-slug: tank
+slug: book
 ```
 
 Consequences:
@@ -51,8 +51,8 @@ parameters. Unknown fields are ignored.
 - No leading/trailing hyphens, no consecutive hyphens `--`
 - Cannot be empty
 
-Valid: `military-unit`, `unit-123`, `combat-strength`
-Invalid: `Military-Unit`, `unit_name`, `-leading`, `trailing-`, `double--hyphen`
+Valid: `research-project`, `unit-123`, `page-count`
+Invalid: `Research-Project`, `unit_name`, `-leading`, `trailing-`, `double--hyphen`
 
 ## Value Types
 
@@ -70,9 +70,9 @@ Single:
 
 ```yaml
 command: entity-type.create
-slug: military-unit
-description: A collective body of soldiers  # optional
-properties: [unit-name, troop-count]         # optional, attach existing properties
+slug: book
+description: A published written work  # optional
+properties: [title, page-count]         # optional, attach existing properties
 ```
 
 Batch (all-or-nothing — if any item fails, nothing is created):
@@ -80,10 +80,10 @@ Batch (all-or-nothing — if any item fails, nothing is created):
 ```yaml
 command: entity-type.create
 items:
-  - slug: military-unit
-    description: A collective body of soldiers
-    properties: [unit-name, troop-count]
-  - slug: location
+  - slug: book
+    description: A published written work
+    properties: [title, page-count]
+  - slug: author
 ```
 
 Provide either `slug` (single) or `items` (batch), not both.
@@ -92,8 +92,8 @@ Single response:
 
 ```yaml
 id: 01901234-5678-9abc-def0-123456789abc
-slug: military-unit
-description: A collective body of soldiers
+slug: book
+description: A published written work
 created_at: "2026-03-07T14:22:45.123456Z"
 ```
 
@@ -101,11 +101,11 @@ Batch response:
 
 ```yaml
 - id: 01901234-5678-9abc-def0-123456789abc
-  slug: military-unit
-  description: A collective body of soldiers
+  slug: book
+  description: A published written work
   created_at: "2026-03-07T14:22:45.123456Z"
 - id: 01901234-5678-9abc-def0-234567890abc
-  slug: location
+  slug: author
   created_at: "2026-03-07T14:22:45.123457Z"
 ```
 
@@ -119,11 +119,11 @@ Response:
 
 ```yaml
 - id: 01901234-5678-9abc-def0-111111111111
-  slug: location
-  description: A geographic area
+  slug: author
+  description: A person who writes books
   created_at: "2026-03-07T14:20:00.000000Z"
 - id: 01901234-5678-9abc-def0-222222222222
-  slug: military-unit
+  slug: book
   created_at: "2026-03-07T14:22:45.123456Z"
 ```
 
@@ -133,23 +133,23 @@ Returns entity type with all attached properties.
 
 ```yaml
 command: entity-type.get
-slug: military-unit
+slug: book
 ```
 
 Response:
 
 ```yaml
 id: 01901234-5678-9abc-def0-222222222222
-slug: military-unit
-description: A collective body of soldiers
+slug: book
+description: A published written work
 created_at: "2026-03-07T14:22:45.123456Z"
 properties:
   - id: 01901234-5678-9abc-def0-333333333333
-    slug: unit-name
+    slug: title
     value_type: struct
     created_at: "2026-03-07T14:23:10.000000Z"
   - id: 01901234-5678-9abc-def0-444444444444
-    slug: troop-count
+    slug: page-count
     value_type: range
     created_at: "2026-03-07T14:23:15.000000Z"
 ```
@@ -160,10 +160,10 @@ Single:
 
 ```yaml
 command: property.create
-slug: combat-strength
+slug: rating
 value_type: range
-description: Offensive capability rating  # optional
-entity_types: [military-unit]              # optional, attach to existing entity types
+description: Average reader rating  # optional
+entity_types: [book]                 # optional, attach to existing entity types
 ```
 
 Batch (all-or-nothing — if any item fails, nothing is created):
@@ -171,10 +171,10 @@ Batch (all-or-nothing — if any item fails, nothing is created):
 ```yaml
 command: property.create
 items:
-  - slug: unit-name
+  - slug: title
     value_type: struct
-    entity_types: [military-unit]
-  - slug: troop-count
+    entity_types: [book]
+  - slug: page-count
     value_type: range
 ```
 
@@ -184,9 +184,9 @@ Single response:
 
 ```yaml
 id: 01901234-5678-9abc-def0-555555555555
-slug: combat-strength
+slug: rating
 value_type: range
-description: Offensive capability rating
+description: Average reader rating
 created_at: "2026-03-07T14:24:30.000000Z"
 ```
 
@@ -194,11 +194,11 @@ Batch response:
 
 ```yaml
 - id: 01901234-5678-9abc-def0-555555555555
-  slug: unit-name
+  slug: title
   value_type: struct
   created_at: "2026-03-07T14:24:30.000000Z"
 - id: 01901234-5678-9abc-def0-666666666666
-  slug: troop-count
+  slug: page-count
   value_type: range
   created_at: "2026-03-07T14:24:30.000001Z"
 ```
@@ -215,18 +215,18 @@ Filtered by entity type:
 
 ```yaml
 command: property.list
-entity_type: military-unit
+entity_type: book
 ```
 
 Response:
 
 ```yaml
 - id: 01901234-5678-9abc-def0-333333333333
-  slug: unit-name
+  slug: title
   value_type: struct
   created_at: "2026-03-07T14:23:10.000000Z"
 - id: 01901234-5678-9abc-def0-444444444444
-  slug: troop-count
+  slug: page-count
   value_type: range
   created_at: "2026-03-07T14:23:15.000000Z"
 ```
@@ -239,8 +239,8 @@ Single:
 
 ```yaml
 command: property.attach
-entity_type: military-unit
-slug: combat-strength
+entity_type: book
+slug: rating
 ```
 
 Batch (all-or-nothing):
@@ -248,12 +248,12 @@ Batch (all-or-nothing):
 ```yaml
 command: property.attach
 items:
-  - entity_type: military-unit
-    slug: combat-strength
-  - entity_type: military-unit
-    slug: unit-name
-  - entity_type: location
-    slug: unit-name
+  - entity_type: book
+    slug: rating
+  - entity_type: book
+    slug: title
+  - entity_type: author
+    slug: title
 ```
 
 Response (single):
@@ -275,10 +275,10 @@ Single:
 
 ```yaml
 command: entity.create
-entity_name: 72nd-mechanized-brigade
-entity_type: military-unit  # optional
-context:                     # optional
-  source: field-report-2026-03-07
+entity_name: brave-new-world
+entity_type: book      # optional
+context:                # optional
+  source: catalog-import-2026-03-07
 ```
 
 Batch (all-or-nothing):
@@ -286,12 +286,12 @@ Batch (all-or-nothing):
 ```yaml
 command: entity.create
 items:
-  - entity_name: 72nd-mechanized-brigade
-    entity_type: military-unit
+  - entity_name: brave-new-world
+    entity_type: book
     context:
-      source: field-report-2026-03-07
-  - entity_name: kherson-region
-    entity_type: location
+      source: catalog-import-2026-03-07
+  - entity_name: aldous-huxley
+    entity_type: author
 ```
 
 Single response:
@@ -299,8 +299,8 @@ Single response:
 ```yaml
 id: 01901234-5678-9abc-def0-666666666666
 entity_id: 01901234-5678-9abc-def0-777777777777
-entity_type: military-unit
-name: 72nd-mechanized-brigade
+entity_type: book
+name: brave-new-world
 timestamp: "2026-03-07T15:00:00.000000+00:00"
 ```
 
@@ -309,13 +309,13 @@ Batch response:
 ```yaml
 - id: 01901234-5678-9abc-def0-666666666666
   entity_id: 01901234-5678-9abc-def0-777777777777
-  entity_type: military-unit
-  name: 72nd-mechanized-brigade
+  entity_type: book
+  name: brave-new-world
   timestamp: "2026-03-07T15:00:00.000000+00:00"
 - id: 01901234-5678-9abc-def0-888888888888
   entity_id: 01901234-5678-9abc-def0-999999999999
-  entity_type: location
-  name: kherson-region
+  entity_type: author
+  name: aldous-huxley
   timestamp: "2026-03-07T15:00:00.000001+00:00"
 ```
 
@@ -336,10 +336,10 @@ Response:
 - id: 01901234-5678-9abc-def0-666666666666
   timestamp: "2026-03-07T15:00:00.000000+00:00"
   entity_id: 01901234-5678-9abc-def0-777777777777
-  entity_type: military-unit
-  name: 72nd-mechanized-brigade
+  entity_type: book
+  name: brave-new-world
   context:
-    source: field-report-2026-03-07
+    source: catalog-import-2026-03-07
 ```
 
 ---

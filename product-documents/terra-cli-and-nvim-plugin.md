@@ -26,7 +26,7 @@ target: entity-type" | terra-cli http://staging:4000/query
 terra-cli < list-types.yml
 
 # Pipe with file and custom server
-terra-cli http://remote:3000/query < create-tank.yml
+terra-cli http://remote:3000/query < create-book.yml
 ```
 
 ## Exit Codes
@@ -130,9 +130,9 @@ All data in `~/.terra-incognita/nvim/`:
 └── queries/
     ├── local/                   # queries for "local" connection
     │   ├── list-types.yml
-    │   └── create-tank.yml
+    │   └── create-book.yml
     └── staging/                 # queries for "staging" connection
-        └── get-unit.yml
+        └── get-author.yml
 ```
 
 ### connections.yml

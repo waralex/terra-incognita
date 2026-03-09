@@ -16,8 +16,10 @@ pub struct LogEntry {
     pub timestamp: DateTime<Utc>,
     /// The entity this entry refers to.
     pub entity_id: Uuid,
-    /// Arbitrary JSON body — property assertions, context, etc.
-    pub body: serde_json::Value,
+    /// Property assertions: property_id → typed value.
+    pub properties: serde_json::Value,
+    /// Why this assertion was made — free-form JSON (string, structured chain, references, etc.).
+    pub reasoning: serde_json::Value,
 }
 
 /// Errors from log operations.
@@ -43,7 +45,8 @@ impl AppendLog {
     pub fn append(
         &self,
         entity_id: Uuid,
-        body: serde_json::Value,
+        properties: serde_json::Value,
+        reasoning: serde_json::Value,
     ) -> Result<LogEntry, LogError> {
         let now = Utc::now();
         let timestamp_us = now.timestamp_micros();
@@ -55,8 +58,12 @@ impl AppendLog {
             entry_id,
             entity_id,
         };
+        let stored = serde_json::json!({
+            "properties": properties,
+            "reasoning": reasoning,
+        });
         let value_bytes =
-            serde_json::to_vec(&body).map_err(|e| LogError::Storage(e.to_string()))?;
+            serde_json::to_vec(&stored).map_err(|e| LogError::Storage(e.to_string()))?;
 
         let cf = self.cf()?;
         self.db
@@ -67,20 +74,21 @@ impl AppendLog {
             id: entry_id,
             timestamp: now,
             entity_id,
-            body,
+            properties,
+            reasoning,
         })
     }
 
     /// Appends multiple entries atomically via WriteBatch.
     pub fn append_batch(
         &self,
-        items: &[(Uuid, serde_json::Value)],
+        items: &[(Uuid, serde_json::Value, serde_json::Value)],
     ) -> Result<Vec<LogEntry>, LogError> {
         let cf = self.cf()?;
         let mut batch = rocksdb::WriteBatch::default();
         let mut results = Vec::with_capacity(items.len());
 
-        for (entity_id, body) in items {
+        for (entity_id, properties, reasoning) in items {
             let now = Utc::now();
             let timestamp_us = now.timestamp_micros();
             let entry_id = Uuid::now_v7();
@@ -91,8 +99,12 @@ impl AppendLog {
                 entry_id,
                 entity_id: *entity_id,
             };
+            let stored = serde_json::json!({
+                "properties": properties,
+                "reasoning": reasoning,
+            });
             let value_bytes =
-                serde_json::to_vec(body).map_err(|e| LogError::Storage(e.to_string()))?;
+                serde_json::to_vec(&stored).map_err(|e| LogError::Storage(e.to_string()))?;
 
             batch.put_cf(&cf, &key.encode(), &value_bytes);
 
@@ -100,7 +112,8 @@ impl AppendLog {
                 id: entry_id,
                 timestamp: now,
                 entity_id: *entity_id,
-                body: body.clone(),
+                properties: properties.clone(),
+                reasoning: reasoning.clone(),
             });
         }
 
@@ -121,17 +134,21 @@ impl AppendLog {
             let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
             let k = LogKey::decode(&raw_key)?;
 
-            let body: serde_json::Value =
+            let stored: serde_json::Value =
                 serde_json::from_slice(&val).map_err(|e| LogError::Storage(e.to_string()))?;
 
             let timestamp = DateTime::from_timestamp_micros(k.timestamp_us)
                 .ok_or_else(|| LogError::Storage("invalid timestamp".into()))?;
 
+            let properties = stored.get("properties").cloned().unwrap_or(serde_json::Value::Null);
+            let reasoning = stored.get("reasoning").cloned().unwrap_or(serde_json::Value::Null);
+
             entries.push(LogEntry {
                 id: k.entry_id,
                 timestamp,
                 entity_id: k.entity_id,
-                body,
+                properties,
+                reasoning,
             });
         }
 
@@ -176,18 +193,21 @@ mod tests {
         let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
         let entity_id = Uuid::now_v7();
-        let body = serde_json::json!({"name": "alpha", "score": 42});
+        let props = serde_json::json!({"name": "alpha", "score": 42});
+        let reasoning = serde_json::json!("initial observation");
 
-        let entry = log.append(entity_id, body.clone()).unwrap();
+        let entry = log.append(entity_id, props.clone(), reasoning.clone()).unwrap();
         assert_eq!(entry.entity_id, entity_id);
-        assert_eq!(entry.body, body);
+        assert_eq!(entry.properties, props);
+        assert_eq!(entry.reasoning, reasoning);
         assert_eq!(entry.id.get_version(), Some(uuid::Version::SortRand));
 
         let entries = log.list().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, entry.id);
         assert_eq!(entries[0].entity_id, entity_id);
-        assert_eq!(entries[0].body, body);
+        assert_eq!(entries[0].properties, props);
+        assert_eq!(entries[0].reasoning, reasoning);
     }
 
     #[test]
@@ -196,10 +216,10 @@ mod tests {
         let db = open_db(&dir);
         let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
-        let items: Vec<(Uuid, serde_json::Value)> = vec![
-            (Uuid::now_v7(), serde_json::json!({"name": "first"})),
-            (Uuid::now_v7(), serde_json::json!({"name": "second"})),
-            (Uuid::now_v7(), serde_json::json!({"name": "third"})),
+        let items: Vec<(Uuid, serde_json::Value, serde_json::Value)> = vec![
+            (Uuid::now_v7(), serde_json::json!({"name": "first"}), serde_json::json!(null)),
+            (Uuid::now_v7(), serde_json::json!({"name": "second"}), serde_json::json!(null)),
+            (Uuid::now_v7(), serde_json::json!({"name": "third"}), serde_json::json!("batch reason")),
         ];
 
         let results = log.append_batch(&items).unwrap();
@@ -208,8 +228,9 @@ mod tests {
         let entries = log.list().unwrap();
         assert_eq!(entries.len(), 3);
         // Reverse chronological — last appended first
-        assert_eq!(entries[0].body["name"], "third");
-        assert_eq!(entries[2].body["name"], "first");
+        assert_eq!(entries[0].properties["name"], "third");
+        assert_eq!(entries[0].reasoning, serde_json::json!("batch reason"));
+        assert_eq!(entries[2].properties["name"], "first");
     }
 
     #[test]
@@ -228,8 +249,8 @@ mod tests {
         let db = open_db(&dir);
         let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
-        let e1 = log.append(Uuid::now_v7(), serde_json::json!({})).unwrap();
-        let e2 = log.append(Uuid::now_v7(), serde_json::json!({})).unwrap();
+        let e1 = log.append(Uuid::now_v7(), serde_json::json!({}), serde_json::json!(null)).unwrap();
+        let e2 = log.append(Uuid::now_v7(), serde_json::json!({}), serde_json::json!(null)).unwrap();
 
         assert_ne!(e1.id, e2.id);
     }

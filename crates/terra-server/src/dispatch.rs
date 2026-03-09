@@ -100,8 +100,12 @@ fn serialize_log_entry(entry: &LogEntry) -> serde_yaml::Value {
         serde_yaml::to_value(&entry.entity_id).unwrap(),
     );
     map.insert(
-        serde_yaml::Value::String("body".into()),
-        serde_yaml::to_value(&entry.body).unwrap(),
+        serde_yaml::Value::String("properties".into()),
+        serde_yaml::to_value(&entry.properties).unwrap(),
+    );
+    map.insert(
+        serde_yaml::Value::String("reasoning".into()),
+        serde_yaml::to_value(&entry.reasoning).unwrap(),
     );
     serde_yaml::Value::Mapping(map)
 }

@@ -20,6 +20,8 @@ pub struct AssertionInput {
     pub entity_type_id: Uuid,
     /// Property values: property_id → typed value.
     pub properties: HashMap<Uuid, PropertyValue>,
+    /// Why this assertion was made — free-form JSON.
+    pub reasoning: serde_json::Value,
 }
 
 /// Errors from assertion writer operations.
@@ -104,12 +106,12 @@ impl AssertionWriter {
             let timestamp_us = now.timestamp_micros();
             let log_entry_id = Uuid::now_v7();
 
-            // Build log body: property_id → JSON representation of typed value
-            let mut body_map = serde_json::Map::new();
+            // Build properties JSON: property_id → typed value
+            let mut props_map = serde_json::Map::new();
             for (property_id, value) in &input.properties {
-                body_map.insert(property_id.to_string(), value.to_json()?);
+                props_map.insert(property_id.to_string(), value.to_json()?);
             }
-            let body = serde_json::Value::Object(body_map);
+            let properties = serde_json::Value::Object(props_map);
 
             let log_key = LogKey {
                 branch_id: super::MAIN_BRANCH,
@@ -117,7 +119,11 @@ impl AssertionWriter {
                 entry_id: log_entry_id,
                 entity_id: input.entity_id,
             };
-            let log_val = serde_json::to_vec(&body)
+            let stored = serde_json::json!({
+                "properties": properties,
+                "reasoning": input.reasoning,
+            });
+            let log_val = serde_json::to_vec(&stored)
                 .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
             batch.put_cf(&log_cf, &log_key.encode(), &log_val);
 
@@ -145,7 +151,8 @@ impl AssertionWriter {
                 id: log_entry_id,
                 timestamp: now,
                 entity_id: input.entity_id,
-                body,
+                properties,
+                reasoning: input.reasoning.clone(),
             });
         }
 
@@ -274,6 +281,7 @@ mod tests {
                     entity_id,
                     entity_type_id: et_id,
                     properties: props,
+                    reasoning: serde_json::json!(null),
                 }],
                 &reg,
             )
@@ -305,6 +313,7 @@ mod tests {
                     entity_id,
                     entity_type_id: et_id,
                     properties: props,
+                    reasoning: serde_json::json!(null),
                 }],
                 &reg,
             )
@@ -341,6 +350,7 @@ mod tests {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
                     properties: props,
+                    reasoning: serde_json::json!(null),
                 }],
                 &reg,
             )
@@ -367,6 +377,7 @@ mod tests {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
                     properties: props,
+                    reasoning: serde_json::json!(null),
                 }],
                 &reg,
             )
@@ -388,11 +399,13 @@ mod tests {
                         entity_id: Uuid::now_v7(),
                         entity_type_id: et_id,
                         properties: HashMap::from([(p_bpm, range_eq(json!(100)))]),
+                        reasoning: json!(null),
                     },
                     AssertionInput {
                         entity_id: Uuid::now_v7(),
                         entity_type_id: et_id,
                         properties: HashMap::from([(p_bpm, range_eq(json!(200)))]),
+                        reasoning: json!(null),
                     },
                 ],
                 &reg,
@@ -423,6 +436,7 @@ mod tests {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
                     properties: HashMap::from([(p_bpm, range_eq(json!(120)))]),
+                    reasoning: json!(null),
                 }],
                 &reg,
             )
@@ -434,6 +448,7 @@ mod tests {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
                     properties: HashMap::from([(p_bpm, range_eq(json!(130)))]),
+                    reasoning: json!(null),
                 }],
                 &reg,
             )

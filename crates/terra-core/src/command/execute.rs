@@ -83,16 +83,16 @@ pub fn execute(
             Ok(CommandResult::Attached { count })
         }
         Command::CreateEntities(items) => {
-            let batch: Vec<(Uuid, serde_json::Value)> = items
+            let batch: Vec<(Uuid, serde_json::Value, serde_json::Value)> = items
                 .iter()
                 .map(|item| {
                     let entity_id = Uuid::now_v7();
-                    let body = serde_json::json!({
+                    let properties = serde_json::json!({
                         "entity_name": item.entity_name,
                         "entity_type": item.entity_type,
-                        "context": item.context,
                     });
-                    (entity_id, body)
+                    let reasoning = item.context.clone();
+                    (entity_id, properties, reasoning)
                 })
                 .collect();
             let results = store.facts().append_batch(&batch)?;
@@ -315,8 +315,8 @@ mod tests {
         match result {
             CommandResult::Entities(entries) => {
                 assert_eq!(entries.len(), 2);
-                assert_eq!(entries[0].body["entity_name"], "alpha");
-                assert_eq!(entries[1].body["entity_name"], "bravo");
+                assert_eq!(entries[0].properties["entity_name"], "alpha");
+                assert_eq!(entries[1].properties["entity_name"], "bravo");
             }
             _ => panic!("unexpected result"),
         }

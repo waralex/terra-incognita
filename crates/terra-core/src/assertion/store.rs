@@ -139,19 +139,19 @@ mod tests {
         let eid2 = Uuid::now_v7();
 
         s.facts()
-            .append(eid1, serde_json::json!({"name": "alpha"}))
+            .append(eid1, serde_json::json!({"name": "alpha"}), serde_json::json!(null))
             .unwrap();
         s.hypotheses()
-            .append(eid2, serde_json::json!({"name": "beta"}))
+            .append(eid2, serde_json::json!({"name": "beta"}), serde_json::json!(null))
             .unwrap();
 
         let facts = s.facts().list().unwrap();
         assert_eq!(facts.len(), 1);
-        assert_eq!(facts[0].body["name"], "alpha");
+        assert_eq!(facts[0].properties["name"], "alpha");
 
         let hyps = s.hypotheses().list().unwrap();
         assert_eq!(hyps.len(), 1);
-        assert_eq!(hyps[0].body["name"], "beta");
+        assert_eq!(hyps[0].properties["name"], "beta");
     }
 
     #[test]
@@ -159,14 +159,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
-        let fact_items: Vec<(Uuid, serde_json::Value)> = vec![
-            (Uuid::now_v7(), serde_json::json!({"name": "r1"})),
-            (Uuid::now_v7(), serde_json::json!({"name": "r2"})),
+        let fact_items: Vec<(Uuid, serde_json::Value, serde_json::Value)> = vec![
+            (Uuid::now_v7(), serde_json::json!({"name": "r1"}), serde_json::json!(null)),
+            (Uuid::now_v7(), serde_json::json!({"name": "r2"}), serde_json::json!(null)),
         ];
         s.facts().append_batch(&fact_items).unwrap();
 
-        let hyp_items: Vec<(Uuid, serde_json::Value)> = vec![
-            (Uuid::now_v7(), serde_json::json!({"name": "h1"})),
+        let hyp_items: Vec<(Uuid, serde_json::Value, serde_json::Value)> = vec![
+            (Uuid::now_v7(), serde_json::json!({"name": "h1"}), serde_json::json!(null)),
         ];
         s.hypotheses().append_batch(&hyp_items).unwrap();
 

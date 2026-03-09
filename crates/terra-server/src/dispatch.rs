@@ -99,6 +99,12 @@ fn serialize_log_entry(entry: &LogEntry) -> serde_yaml::Value {
         serde_yaml::Value::String("entity_id".into()),
         serde_yaml::to_value(&entry.entity_id).unwrap(),
     );
+    if let Some(tx_id) = &entry.tx_id {
+        map.insert(
+            serde_yaml::Value::String("tx_id".into()),
+            serde_yaml::to_value(tx_id).unwrap(),
+        );
+    }
     map.insert(
         serde_yaml::Value::String("properties".into()),
         serde_yaml::to_value(&entry.properties).unwrap(),

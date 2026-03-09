@@ -16,6 +16,9 @@ pub struct LogEntry {
     pub timestamp: DateTime<Utc>,
     /// The entity this entry refers to.
     pub entity_id: Uuid,
+    /// Transaction that groups this entry with related assertions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tx_id: Option<Uuid>,
     /// Property assertions: property_id → typed value.
     pub properties: serde_json::Value,
     /// Why this assertion was made — free-form JSON (string, structured chain, references, etc.).
@@ -74,6 +77,7 @@ impl AppendLog {
             id: entry_id,
             timestamp: now,
             entity_id,
+            tx_id: None,
             properties,
             reasoning,
         })
@@ -112,6 +116,7 @@ impl AppendLog {
                 id: entry_id,
                 timestamp: now,
                 entity_id: *entity_id,
+                tx_id: None,
                 properties: properties.clone(),
                 reasoning: reasoning.clone(),
             });
@@ -142,11 +147,15 @@ impl AppendLog {
 
             let properties = stored.get("properties").cloned().unwrap_or(serde_json::Value::Null);
             let reasoning = stored.get("reasoning").cloned().unwrap_or(serde_json::Value::Null);
+            let tx_id = stored.get("tx_id")
+                .and_then(|v| v.as_str())
+                .and_then(|s| Uuid::parse_str(s).ok());
 
             entries.push(LogEntry {
                 id: k.entry_id,
                 timestamp,
                 entity_id: k.entity_id,
+                tx_id,
                 properties,
                 reasoning,
             });

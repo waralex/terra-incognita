@@ -11,6 +11,7 @@ use super::column::{Column, ColumnKey};
 use super::key::StorageKey;
 use super::log::{AppendLog, LogEntry, LogError, LogKey};
 use super::property_value::PropertyValue;
+use super::transaction::{Transaction, TransactionStore};
 
 /// Input for a single assertion (or hypothesis) about an entity.
 pub struct AssertionInput {
@@ -56,6 +57,7 @@ pub enum WriterError {
 pub struct AssertionWriter {
     db: Arc<DB>,
     log: AppendLog,
+    tx_store: TransactionStore,
     col_set: Column,
     col_struct: Column,
     col_range: Column,
@@ -65,6 +67,7 @@ impl AssertionWriter {
     pub(crate) fn new(
         db: Arc<DB>,
         log_cf: &'static str,
+        tx_cf: &'static str,
         set_cf: &'static str,
         struct_cf: &'static str,
         range_cf: &'static str,
@@ -72,6 +75,7 @@ impl AssertionWriter {
         Self {
             db: Arc::clone(&db),
             log: AppendLog::new(Arc::clone(&db), log_cf),
+            tx_store: TransactionStore::new(Arc::clone(&db), tx_cf),
             col_set: Column::new(Arc::clone(&db), set_cf),
             col_struct: Column::new(Arc::clone(&db), struct_cf),
             col_range: Column::new(db, range_cf),
@@ -151,6 +155,7 @@ impl AssertionWriter {
                 id: log_entry_id,
                 timestamp: now,
                 entity_id: input.entity_id,
+                tx_id: None,
                 properties,
                 reasoning: input.reasoning.clone(),
             });
@@ -161,6 +166,98 @@ impl AssertionWriter {
             .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
 
         Ok(log_entries)
+    }
+
+    /// Writes assertions within a transaction, atomically.
+    ///
+    /// Creates a transaction record with its own reasoning (why this batch was made),
+    /// then writes each assertion with its per-value reasoning. Everything goes into
+    /// a single WriteBatch: transaction record + log entries + typed columns.
+    pub fn write_tx(
+        &self,
+        entity_id: Uuid,
+        tx_reasoning: serde_json::Value,
+        inputs: &[AssertionInput],
+        registry: &SchemaRegistry,
+    ) -> Result<(Transaction, Vec<LogEntry>), WriterError> {
+        let resolved = self.validate(inputs, registry)?;
+
+        let log_cf = self.log.cf().map_err(WriterError::Storage)?;
+        let set_cf = self.col_set.cf().map_err(WriterError::Storage)?;
+        let struct_cf = self.col_struct.cf().map_err(WriterError::Storage)?;
+        let range_cf = self.col_range.cf().map_err(WriterError::Storage)?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+
+        let now = Utc::now();
+        let tx = Transaction {
+            id: Uuid::now_v7(),
+            entity_id,
+            reasoning: tx_reasoning,
+            timestamp: now,
+        };
+        self.tx_store.put_to_batch(&mut batch, &tx)?;
+
+        let mut log_entries = Vec::with_capacity(inputs.len());
+
+        for (input, prop_types) in inputs.iter().zip(resolved.iter()) {
+            let timestamp_us = Utc::now().timestamp_micros();
+            let log_entry_id = Uuid::now_v7();
+
+            let mut props_map = serde_json::Map::new();
+            for (property_id, value) in &input.properties {
+                props_map.insert(property_id.to_string(), value.to_json()?);
+            }
+            let properties = serde_json::Value::Object(props_map);
+
+            let log_key = LogKey {
+                branch_id: super::MAIN_BRANCH,
+                timestamp_us,
+                entry_id: log_entry_id,
+                entity_id: input.entity_id,
+            };
+            let stored = serde_json::json!({
+                "properties": properties,
+                "reasoning": input.reasoning,
+                "tx_id": tx.id.to_string(),
+            });
+            let log_val = serde_json::to_vec(&stored)
+                .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
+            batch.put_cf(&log_cf, &log_key.encode(), &log_val);
+
+            for (property_id, value) in &input.properties {
+                let vt = prop_types[property_id];
+                let col_key = ColumnKey {
+                    branch_id: super::MAIN_BRANCH,
+                    property_id: *property_id,
+                    timestamp_us,
+                    log_entry_id,
+                    entity_id: input.entity_id,
+                };
+                let col_val = value.to_bytes()?;
+                let cf = match vt {
+                    ValueType::Set => &set_cf,
+                    ValueType::Struct => &struct_cf,
+                    ValueType::Range => &range_cf,
+                };
+                batch.put_cf(cf, &col_key.encode(), &col_val);
+            }
+
+            log_entries.push(LogEntry {
+                id: log_entry_id,
+                timestamp: Utc::now(),
+                entity_id: input.entity_id,
+                tx_id: Some(tx.id),
+                properties,
+                reasoning: input.reasoning.clone(),
+            });
+        }
+
+        self.db
+            .write(batch)
+            .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
+
+        Ok((tx, log_entries))
     }
 
     /// Validates all inputs: properties belong to entity type and value types match.
@@ -456,5 +553,99 @@ mod tests {
 
         assert_eq!(store.facts().list().unwrap().len(), 1);
         assert_eq!(store.hypotheses().list().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn write_tx_creates_transaction_and_entries() {
+        let (store, reg, _dir) = setup();
+        let (et_id, p_bpm, p_cert, _p_meta) = create_schema(&reg);
+        let writer = store.fact_writer();
+
+        let entity_id = Uuid::now_v7();
+        let (tx, entries) = writer
+            .write_tx(
+                entity_id,
+                json!("analyzed spectral data and narrowed hypotheses"),
+                &[
+                    AssertionInput {
+                        entity_id,
+                        entity_type_id: et_id,
+                        properties: HashMap::from([(p_bpm, range_eq(json!(128)))]),
+                        reasoning: json!("BPM detected from audio analysis"),
+                    },
+                    AssertionInput {
+                        entity_id,
+                        entity_type_id: et_id,
+                        properties: HashMap::from([(p_cert, set_contains(vec![json!("gold")]))]),
+                        reasoning: json!("certification confirmed by RIAA database"),
+                    },
+                ],
+                &reg,
+            )
+            .unwrap();
+
+        assert_eq!(tx.entity_id, entity_id);
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().all(|e| e.tx_id == Some(tx.id)));
+
+        // Transaction is retrievable
+        let loaded_tx = store.transactions().get(&tx.id).unwrap().unwrap();
+        assert_eq!(loaded_tx.entity_id, entity_id);
+        assert_eq!(loaded_tx.reasoning, json!("analyzed spectral data and narrowed hypotheses"));
+
+        // Log entries have tx_id
+        let log = store.facts().list().unwrap();
+        assert_eq!(log.len(), 2);
+        assert!(log.iter().all(|e| e.tx_id == Some(tx.id)));
+    }
+
+    #[test]
+    fn write_tx_fans_out_to_columns() {
+        let (store, reg, _dir) = setup();
+        let (et_id, p_bpm, _p_cert, _p_meta) = create_schema(&reg);
+        let writer = store.fact_writer();
+
+        let entity_id = Uuid::now_v7();
+        writer
+            .write_tx(
+                entity_id,
+                json!(null),
+                &[AssertionInput {
+                    entity_id,
+                    entity_type_id: et_id,
+                    properties: HashMap::from([(p_bpm, range_eq(json!(160)))]),
+                    reasoning: json!(null),
+                }],
+                &reg,
+            )
+            .unwrap();
+
+        let range_col = store.fact_col_range();
+        let cells = range_col.scan_property(p_bpm).unwrap();
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].value, json!({"eq": 160}));
+    }
+
+    #[test]
+    fn write_without_tx_has_no_tx_id() {
+        let (store, reg, _dir) = setup();
+        let (et_id, p_bpm, _p_cert, _p_meta) = create_schema(&reg);
+        let writer = store.fact_writer();
+
+        writer
+            .write(
+                &[AssertionInput {
+                    entity_id: Uuid::now_v7(),
+                    entity_type_id: et_id,
+                    properties: HashMap::from([(p_bpm, range_eq(json!(90)))]),
+                    reasoning: json!(null),
+                }],
+                &reg,
+            )
+            .unwrap();
+
+        let log = store.facts().list().unwrap();
+        assert_eq!(log.len(), 1);
+        assert!(log[0].tx_id.is_none());
     }
 }

@@ -7,6 +7,7 @@ use super::column::Column;
 use super::entity::EntityStore;
 use super::entity_io::EntityIo;
 use super::log::AppendLog;
+use super::transaction::TransactionStore;
 use super::writer::AssertionWriter;
 use super::LogError;
 
@@ -18,6 +19,7 @@ const CF_FACT_RANGE: &str = "fact_range";
 const CF_HYP_SET: &str = "hyp_set";
 const CF_HYP_STRUCT: &str = "hyp_struct";
 const CF_HYP_RANGE: &str = "hyp_range";
+const CF_TRANSACTIONS: &str = "transactions";
 const CF_ENTITY_MAIN: &str = "entity_main";
 const CF_ENTITY_SLUG: &str = "entity_slug";
 
@@ -48,6 +50,7 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_HYP_SET, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_STRUCT, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_RANGE, col_opts),
+            ColumnFamilyDescriptor::new(CF_TRANSACTIONS, Options::default()),
             ColumnFamilyDescriptor::new(CF_ENTITY_MAIN, entity_opts),
             ColumnFamilyDescriptor::new(CF_ENTITY_SLUG, Options::default()),
         ];
@@ -73,12 +76,12 @@ impl AssertionStore {
 
     /// Writer for fact assertions.
     pub fn fact_writer(&self) -> AssertionWriter {
-        AssertionWriter::new(Arc::clone(&self.db), CF_FACTS, CF_FACT_SET, CF_FACT_STRUCT, CF_FACT_RANGE)
+        AssertionWriter::new(Arc::clone(&self.db), CF_FACTS, CF_TRANSACTIONS, CF_FACT_SET, CF_FACT_STRUCT, CF_FACT_RANGE)
     }
 
     /// Writer for hypothesis assertions.
     pub fn hypothesis_writer(&self) -> AssertionWriter {
-        AssertionWriter::new(Arc::clone(&self.db), CF_HYPOTHESES, CF_HYP_SET, CF_HYP_STRUCT, CF_HYP_RANGE)
+        AssertionWriter::new(Arc::clone(&self.db), CF_HYPOTHESES, CF_TRANSACTIONS, CF_HYP_SET, CF_HYP_STRUCT, CF_HYP_RANGE)
     }
 
     // -- Column accessors (for reads) --
@@ -111,6 +114,13 @@ impl AssertionStore {
     /// Hypothesis range column.
     pub fn hypothesis_col_range(&self) -> Column {
         Column::new(Arc::clone(&self.db), CF_HYP_RANGE)
+    }
+
+    // -- Transactions --
+
+    /// Transaction store for grouping related assertions.
+    pub fn transactions(&self) -> TransactionStore {
+        TransactionStore::new(Arc::clone(&self.db), CF_TRANSACTIONS)
     }
 
     // -- Entities --

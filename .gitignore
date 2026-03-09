@@ -4,3 +4,5 @@ temp
 # Added by cargo
 
 /target
+.terra-incognita
+.claude

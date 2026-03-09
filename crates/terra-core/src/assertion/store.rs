@@ -7,16 +7,16 @@ use super::log::AppendLog;
 use super::writer::AssertionWriter;
 use super::LogError;
 
-const CF_REFINEMENTS: &str = "assertions";
+const CF_FACTS: &str = "facts";
 const CF_HYPOTHESES: &str = "hypotheses";
-const CF_REF_SET: &str = "ref_set";
-const CF_REF_STRUCT: &str = "ref_struct";
-const CF_REF_RANGE: &str = "ref_range";
+const CF_FACT_SET: &str = "fact_set";
+const CF_FACT_STRUCT: &str = "fact_struct";
+const CF_FACT_RANGE: &str = "fact_range";
 const CF_HYP_SET: &str = "hyp_set";
 const CF_HYP_STRUCT: &str = "hyp_struct";
 const CF_HYP_RANGE: &str = "hyp_range";
 
-/// RocksDB-backed store owning logs and typed columns for refinements and hypotheses.
+/// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
     db: DB,
 }
@@ -32,11 +32,11 @@ impl AssertionStore {
         col_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
 
         let cfs = vec![
-            ColumnFamilyDescriptor::new(CF_REFINEMENTS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_FACTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HYPOTHESES, Options::default()),
-            ColumnFamilyDescriptor::new(CF_REF_SET, col_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_REF_STRUCT, col_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_REF_RANGE, col_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_FACT_SET, col_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_FACT_STRUCT, col_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_FACT_RANGE, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_SET, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_STRUCT, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_RANGE, col_opts),
@@ -49,9 +49,9 @@ impl AssertionStore {
 
     // -- Logs --
 
-    /// Refinement log — convergence points, definitive claims.
-    pub fn refinements(&self) -> AppendLog<'_> {
-        AppendLog::new(&self.db, CF_REFINEMENTS)
+    /// Fact log — convergence points, definitive claims.
+    pub fn facts(&self) -> AppendLog<'_> {
+        AppendLog::new(&self.db, CF_FACTS)
     }
 
     /// Hypothesis log — tentative claims under consideration.
@@ -61,9 +61,9 @@ impl AssertionStore {
 
     // -- Writers (log + columns in one WriteBatch) --
 
-    /// Writer for refinement assertions.
-    pub fn refinement_writer(&self) -> AssertionWriter<'_> {
-        AssertionWriter::new(&self.db, CF_REFINEMENTS, CF_REF_SET, CF_REF_STRUCT, CF_REF_RANGE)
+    /// Writer for fact assertions.
+    pub fn fact_writer(&self) -> AssertionWriter<'_> {
+        AssertionWriter::new(&self.db, CF_FACTS, CF_FACT_SET, CF_FACT_STRUCT, CF_FACT_RANGE)
     }
 
     /// Writer for hypothesis assertions.
@@ -73,19 +73,19 @@ impl AssertionStore {
 
     // -- Column accessors (for reads) --
 
-    /// Refinement set column.
-    pub fn refinement_col_set(&self) -> Column<'_> {
-        Column::new(&self.db, CF_REF_SET)
+    /// Fact set column.
+    pub fn fact_col_set(&self) -> Column<'_> {
+        Column::new(&self.db, CF_FACT_SET)
     }
 
-    /// Refinement struct column.
-    pub fn refinement_col_struct(&self) -> Column<'_> {
-        Column::new(&self.db, CF_REF_STRUCT)
+    /// Fact struct column.
+    pub fn fact_col_struct(&self) -> Column<'_> {
+        Column::new(&self.db, CF_FACT_STRUCT)
     }
 
-    /// Refinement range column.
-    pub fn refinement_col_range(&self) -> Column<'_> {
-        Column::new(&self.db, CF_REF_RANGE)
+    /// Fact range column.
+    pub fn fact_col_range(&self) -> Column<'_> {
+        Column::new(&self.db, CF_FACT_RANGE)
     }
 
     /// Hypothesis set column.
@@ -114,23 +114,23 @@ mod tests {
     }
 
     #[test]
-    fn refinements_and_hypotheses_are_separate() {
+    fn facts_and_hypotheses_are_separate() {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
         let eid1 = Uuid::now_v7();
         let eid2 = Uuid::now_v7();
 
-        s.refinements()
+        s.facts()
             .append(eid1, serde_json::json!({"name": "alpha"}))
             .unwrap();
         s.hypotheses()
             .append(eid2, serde_json::json!({"name": "beta"}))
             .unwrap();
 
-        let refs = s.refinements().list().unwrap();
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].body["name"], "alpha");
+        let facts = s.facts().list().unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].body["name"], "alpha");
 
         let hyps = s.hypotheses().list().unwrap();
         assert_eq!(hyps.len(), 1);
@@ -142,18 +142,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
-        let ref_items: Vec<(Uuid, serde_json::Value)> = vec![
+        let fact_items: Vec<(Uuid, serde_json::Value)> = vec![
             (Uuid::now_v7(), serde_json::json!({"name": "r1"})),
             (Uuid::now_v7(), serde_json::json!({"name": "r2"})),
         ];
-        s.refinements().append_batch(&ref_items).unwrap();
+        s.facts().append_batch(&fact_items).unwrap();
 
         let hyp_items: Vec<(Uuid, serde_json::Value)> = vec![
             (Uuid::now_v7(), serde_json::json!({"name": "h1"})),
         ];
         s.hypotheses().append_batch(&hyp_items).unwrap();
 
-        assert_eq!(s.refinements().list().unwrap().len(), 2);
+        assert_eq!(s.facts().list().unwrap().len(), 2);
         assert_eq!(s.hypotheses().list().unwrap().len(), 1);
     }
 }

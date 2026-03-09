@@ -20,9 +20,9 @@ pub enum Command {
     ListProperties { entity_type: Option<String> },
     /// Attach existing properties to existing entity types.
     AttachProperties(Vec<AttachProperty>),
-    /// Create one or more entities in the refinement log.
+    /// Create one or more entities in the fact log.
     CreateEntities(Vec<CreateEntity>),
-    /// List all entries in the refinement log.
+    /// List all entries in the fact log.
     ListLog,
 }
 

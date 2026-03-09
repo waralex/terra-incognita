@@ -205,7 +205,7 @@ mod tests {
     fn write_single_assertion() {
         let (store, reg, _dir) = setup();
         let (et_id, p_bpm, p_cert, _p_meta) = create_schema(&reg);
-        let writer = store.refinement_writer();
+        let writer = store.fact_writer();
 
         let entity_id = Uuid::now_v7();
         let mut props = HashMap::new();
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(entries[0].entity_id, entity_id);
 
         // Log should have the entry
-        let log = store.refinements().list().unwrap();
+        let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 1);
     }
 
@@ -235,7 +235,7 @@ mod tests {
     fn write_fans_out_to_columns() {
         let (store, reg, _dir) = setup();
         let (et_id, p_bpm, p_cert, p_meta) = create_schema(&reg);
-        let writer = store.refinement_writer();
+        let writer = store.fact_writer();
 
         let entity_id = Uuid::now_v7();
         let mut props = HashMap::new();
@@ -255,17 +255,17 @@ mod tests {
             .unwrap();
 
         // Verify column data
-        let range_col = store.refinement_col_range();
+        let range_col = store.fact_col_range();
         let range_cells = range_col.scan_property(p_bpm).unwrap();
         assert_eq!(range_cells.len(), 1);
         assert_eq!(range_cells[0].value, serde_json::json!(140));
 
-        let set_col = store.refinement_col_set();
+        let set_col = store.fact_col_set();
         let set_cells = set_col.scan_property(p_cert).unwrap();
         assert_eq!(set_cells.len(), 1);
         assert_eq!(set_cells[0].value, serde_json::json!("platinum"));
 
-        let struct_col = store.refinement_col_struct();
+        let struct_col = store.fact_col_struct();
         let struct_cells = struct_col.scan_property(p_meta).unwrap();
         assert_eq!(struct_cells.len(), 1);
         assert_eq!(struct_cells[0].value, serde_json::json!({"genre": "pop"}));
@@ -275,7 +275,7 @@ mod tests {
     fn rejects_unknown_property() {
         let (store, reg, _dir) = setup();
         let (et_id, _p_bpm, _p_cert, _p_meta) = create_schema(&reg);
-        let writer = store.refinement_writer();
+        let writer = store.fact_writer();
 
         let bogus_prop = Uuid::now_v7();
         let mut props = HashMap::new();
@@ -295,7 +295,7 @@ mod tests {
         assert!(matches!(err, WriterError::PropertyNotAttached { .. }));
 
         // Nothing written
-        let log = store.refinements().list().unwrap();
+        let log = store.facts().list().unwrap();
         assert!(log.is_empty());
     }
 
@@ -303,7 +303,7 @@ mod tests {
     fn batch_write_is_atomic() {
         let (store, reg, _dir) = setup();
         let (et_id, p_bpm, _p_cert, _p_meta) = create_schema(&reg);
-        let writer = store.refinement_writer();
+        let writer = store.fact_writer();
 
         let entries = writer
             .write(
@@ -325,10 +325,10 @@ mod tests {
 
         assert_eq!(entries.len(), 2);
 
-        let log = store.refinements().list().unwrap();
+        let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 2);
 
-        let range_col = store.refinement_col_range();
+        let range_col = store.fact_col_range();
         let cells = range_col.scan_property(p_bpm).unwrap();
         assert_eq!(cells.len(), 2);
     }
@@ -338,10 +338,10 @@ mod tests {
         let (store, reg, _dir) = setup();
         let (et_id, p_bpm, _p_cert, _p_meta) = create_schema(&reg);
 
-        let ref_writer = store.refinement_writer();
+        let fact_writer = store.fact_writer();
         let hyp_writer = store.hypothesis_writer();
 
-        ref_writer
+        fact_writer
             .write(
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
@@ -363,7 +363,7 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(store.refinements().list().unwrap().len(), 1);
+        assert_eq!(store.facts().list().unwrap().len(), 1);
         assert_eq!(store.hypotheses().list().unwrap().len(), 1);
     }
 }

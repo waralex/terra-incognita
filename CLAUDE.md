@@ -55,22 +55,22 @@ to multiple hierarchies simultaneously.
 
 ## Assertion Kinds
 
-Every assertion has a kind: **hypothesis** or **refinement**.
+Every assertion has a kind: **hypothesis** or **fact**.
 
 **Hypothesis** — a tentative claim. Multiple hypotheses can coexist for the same
 property. They represent the space of possibilities under consideration.
 
-**Refinement** — a convergence point. "Based on available evidence, the position was X."
-A refinement does not delete hypotheses — it marks a decision amid uncertainty.
+**Fact** — a convergence point. "Based on available evidence, the position was X."
+A fact does not delete hypotheses — it marks a decision amid uncertainty.
 The hypotheses remain as the reasoning trail.
 
-**Deliberation cycle.** The workflow is: hypotheses → refinement → new hypotheses →
-new refinement. Each cycle narrows understanding while preserving the full history
+**Deliberation cycle.** The workflow is: hypotheses → fact → new hypotheses →
+new fact. Each cycle narrows understanding while preserving the full history
 of reasoning.
 
-**Default query behavior.** A query for a property returns the latest refinement in
+**Default query behavior.** A query for a property returns the latest fact in
 the requested time interval, plus all hypotheses that follow it. This gives the caller
-the current best understanding together with open questions. If no refinement exists,
+the current best understanding together with open questions. If no fact exists,
 all hypotheses are returned.
 
 ## Query Model

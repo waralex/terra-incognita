@@ -363,7 +363,7 @@ is an atomic membership claim — `contains` or `not_contains` — with a single
 or a vector of values.
 
 Each claim is an independent assertion with its own confidence, source, and kind
-(hypothesis or refinement). The current membership of the set emerges from the
+(hypothesis or fact). The current membership of the set emerges from the
 collection of assertions.
 
 Example — classifying an entity:

@@ -95,11 +95,11 @@ pub fn execute(
                     (entity_id, body)
                 })
                 .collect();
-            let results = store.refinements().append_batch(&batch)?;
+            let results = store.facts().append_batch(&batch)?;
             Ok(CommandResult::Entities(results))
         }
         Command::ListLog => {
-            let entries = store.refinements().list()?;
+            let entries = store.facts().list()?;
             Ok(CommandResult::LogEntries(entries))
         }
     }

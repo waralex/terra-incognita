@@ -1,6 +1,7 @@
 pub(crate) mod column;
 mod entity;
 pub(crate) mod entity_io;
+pub(crate) mod key;
 pub(crate) mod log;
 mod property_value;
 mod store;

@@ -4,6 +4,7 @@ use rocksdb::DB;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::key::{storage_key, StorageKey};
 use super::log::LogError;
 
 /// A single cell in a column: one property value for one entity at one point in time.
@@ -35,7 +36,7 @@ impl Column {
 
     /// Writes a single cell.
     pub fn put(&self, cell: &ColumnCell) -> Result<(), LogError> {
-        let key = encode_key(cell);
+        let key = ColumnKey::from_cell(cell).encode();
         let val = serde_json::to_vec(&cell.value)
             .map_err(|e| LogError::Storage(e.to_string()))?;
 
@@ -51,7 +52,7 @@ impl Column {
         let mut batch = rocksdb::WriteBatch::default();
 
         for cell in cells {
-            let key = encode_key(cell);
+            let key = ColumnKey::from_cell(cell).encode();
             let val = serde_json::to_vec(&cell.value)
                 .map_err(|e| LogError::Storage(e.to_string()))?;
             batch.put_cf(cf, &key, &val);
@@ -65,30 +66,28 @@ impl Column {
     /// Scans all cells for a given property on the main branch, ordered by timestamp.
     pub fn scan_property(&self, property_id: Uuid) -> Result<Vec<ColumnCell>, LogError> {
         let cf = self.cf()?;
-        let mut prefix = [0u8; 32];
-        prefix[0..16].copy_from_slice(super::MAIN_BRANCH.as_bytes());
-        prefix[16..32].copy_from_slice(property_id.as_bytes());
+        let prefix = ColumnKey::prefix_branch_property(&super::MAIN_BRANCH, &property_id);
 
         let mut cells = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, &prefix);
 
         for item in iter {
-            let (key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
 
-            if !key.starts_with(&prefix) {
+            if !raw_key.starts_with(&prefix) {
                 break;
             }
 
-            let (bid, pid, ts, lid, eid) = decode_key(&key)?;
+            let k = ColumnKey::decode(&raw_key)?;
             let value: serde_json::Value = serde_json::from_slice(&val)
                 .map_err(|e| LogError::Storage(e.to_string()))?;
 
             cells.push(ColumnCell {
-                branch_id: bid,
-                property_id: pid,
-                timestamp_us: ts,
-                log_entry_id: lid,
-                entity_id: eid,
+                branch_id: k.branch_id,
+                property_id: k.property_id,
+                timestamp_us: k.timestamp_us,
+                log_entry_id: k.log_entry_id,
+                entity_id: k.entity_id,
                 value,
             });
         }
@@ -103,36 +102,29 @@ impl Column {
     }
 }
 
-// Key: branch_id(16) | property_id(16) | timestamp_us(8 BE) | log_entry_id(16) | entity_id(16) = 72 bytes
-
-pub(crate) fn encode_key(cell: &ColumnCell) -> [u8; 72] {
-    let mut key = [0u8; 72];
-    key[0..16].copy_from_slice(cell.branch_id.as_bytes());
-    key[16..32].copy_from_slice(cell.property_id.as_bytes());
-    key[32..40].copy_from_slice(&cell.timestamp_us.to_be_bytes());
-    key[40..56].copy_from_slice(cell.log_entry_id.as_bytes());
-    key[56..72].copy_from_slice(cell.entity_id.as_bytes());
-    key
+storage_key! {
+    pub(crate) struct ColumnKey(72) {
+        branch_id: Uuid,
+        property_id: Uuid,
+        timestamp_us: i64,
+        log_entry_id: Uuid,
+        entity_id: Uuid,
+    }
+    prefixes {
+        prefix_branch_property(branch_id: Uuid, property_id: Uuid) -> 32,
+    }
 }
 
-fn decode_key(key: &[u8]) -> Result<(Uuid, Uuid, i64, Uuid, Uuid), LogError> {
-    if key.len() < 72 {
-        return Err(LogError::Storage("column key too short".into()));
+impl ColumnKey {
+    pub(crate) fn from_cell(cell: &ColumnCell) -> Self {
+        Self {
+            branch_id: cell.branch_id,
+            property_id: cell.property_id,
+            timestamp_us: cell.timestamp_us,
+            log_entry_id: cell.log_entry_id,
+            entity_id: cell.entity_id,
+        }
     }
-    let branch_id =
-        Uuid::from_slice(&key[0..16]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let property_id =
-        Uuid::from_slice(&key[16..32]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let timestamp_us = i64::from_be_bytes(
-        key[32..40]
-            .try_into()
-            .map_err(|_| LogError::Storage("bad timestamp".into()))?,
-    );
-    let log_entry_id =
-        Uuid::from_slice(&key[40..56]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let entity_id =
-        Uuid::from_slice(&key[56..72]).map_err(|e| LogError::Storage(e.to_string()))?;
-    Ok((branch_id, property_id, timestamp_us, log_entry_id, entity_id))
 }
 
 #[cfg(test)]
@@ -236,15 +228,12 @@ mod tests {
     #[test]
     fn key_encoding_roundtrip() {
         let c = cell(Uuid::now_v7(), 1_700_000_000_000_000, serde_json::json!(null));
-        let key = encode_key(&c);
-        assert_eq!(key.len(), 72);
+        let key = ColumnKey::from_cell(&c);
+        let encoded = key.encode();
+        assert_eq!(encoded.len(), ColumnKey::SIZE);
 
-        let (bid, pid, ts, lid, eid) = decode_key(&key).unwrap();
-        assert_eq!(bid, c.branch_id);
-        assert_eq!(pid, c.property_id);
-        assert_eq!(ts, c.timestamp_us);
-        assert_eq!(lid, c.log_entry_id);
-        assert_eq!(eid, c.entity_id);
+        let decoded = ColumnKey::decode(&encoded).unwrap();
+        assert_eq!(decoded, key);
     }
 
     #[test]
@@ -254,9 +243,9 @@ mod tests {
         let lid = Uuid::now_v7();
         let eid = Uuid::now_v7();
 
-        let c1 = ColumnCell { branch_id: branch, property_id: prop, timestamp_us: 100, log_entry_id: lid, entity_id: eid, value: serde_json::json!(null) };
-        let c2 = ColumnCell { branch_id: branch, property_id: prop, timestamp_us: 200, log_entry_id: lid, entity_id: eid, value: serde_json::json!(null) };
+        let k1 = ColumnKey { branch_id: branch, property_id: prop, timestamp_us: 100, log_entry_id: lid, entity_id: eid };
+        let k2 = ColumnKey { branch_id: branch, property_id: prop, timestamp_us: 200, log_entry_id: lid, entity_id: eid };
 
-        assert!(encode_key(&c1) < encode_key(&c2));
+        assert!(k1.encode() < k2.encode());
     }
 }

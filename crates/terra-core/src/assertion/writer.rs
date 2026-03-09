@@ -7,8 +7,9 @@ use uuid::Uuid;
 
 use crate::schema::{SchemaRegistry, ValueType};
 
-use super::column::{self, Column, ColumnCell};
-use super::log::{AppendLog, LogEntry, LogError};
+use super::column::{Column, ColumnKey};
+use super::key::StorageKey;
+use super::log::{AppendLog, LogEntry, LogError, LogKey};
 use super::property_value::PropertyValue;
 
 /// Input for a single assertion (or hypothesis) about an entity.
@@ -110,22 +111,26 @@ impl AssertionWriter {
             }
             let body = serde_json::Value::Object(body_map);
 
-            let log_key = super::log::encode_key(&super::MAIN_BRANCH, timestamp_us, &log_entry_id, &input.entity_id);
+            let log_key = LogKey {
+                branch_id: super::MAIN_BRANCH,
+                timestamp_us,
+                entry_id: log_entry_id,
+                entity_id: input.entity_id,
+            };
             let log_val = serde_json::to_vec(&body)
                 .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
-            batch.put_cf(&log_cf, &log_key, &log_val);
+            batch.put_cf(&log_cf, &log_key.encode(), &log_val);
 
             // Fan out to typed columns
             for (property_id, value) in &input.properties {
                 let vt = prop_types[property_id];
-                let col_key = column::encode_key(&ColumnCell {
+                let col_key = ColumnKey {
                     branch_id: super::MAIN_BRANCH,
                     property_id: *property_id,
                     timestamp_us,
                     log_entry_id,
                     entity_id: input.entity_id,
-                    value: serde_json::Value::Null,
-                });
+                };
                 let col_val = value.to_bytes()?;
 
                 let cf = match vt {
@@ -133,7 +138,7 @@ impl AssertionWriter {
                     ValueType::Struct => &struct_cf,
                     ValueType::Range => &range_cf,
                 };
-                batch.put_cf(cf, &col_key, &col_val);
+                batch.put_cf(cf, &col_key.encode(), &col_val);
             }
 
             log_entries.push(LogEntry {

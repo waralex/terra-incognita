@@ -5,6 +5,8 @@ use rocksdb::DB;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::key::{storage_key, StorageKey};
+
 /// A single entry in an append-only log.
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
@@ -47,13 +49,18 @@ impl AppendLog {
         let timestamp_us = now.timestamp_micros();
         let entry_id = Uuid::now_v7();
 
-        let key = encode_key(&super::MAIN_BRANCH, timestamp_us, &entry_id, &entity_id);
+        let key = LogKey {
+            branch_id: super::MAIN_BRANCH,
+            timestamp_us,
+            entry_id,
+            entity_id,
+        };
         let value_bytes =
             serde_json::to_vec(&body).map_err(|e| LogError::Storage(e.to_string()))?;
 
         let cf = self.cf()?;
         self.db
-            .put_cf(&cf, &key, &value_bytes)
+            .put_cf(&cf, &key.encode(), &value_bytes)
             .map_err(|e| LogError::Storage(e.to_string()))?;
 
         Ok(LogEntry {
@@ -78,11 +85,16 @@ impl AppendLog {
             let timestamp_us = now.timestamp_micros();
             let entry_id = Uuid::now_v7();
 
-            let key = encode_key(&super::MAIN_BRANCH, timestamp_us, &entry_id, entity_id);
+            let key = LogKey {
+                branch_id: super::MAIN_BRANCH,
+                timestamp_us,
+                entry_id,
+                entity_id: *entity_id,
+            };
             let value_bytes =
                 serde_json::to_vec(body).map_err(|e| LogError::Storage(e.to_string()))?;
 
-            batch.put_cf(&cf, &key, &value_bytes);
+            batch.put_cf(&cf, &key.encode(), &value_bytes);
 
             results.push(LogEntry {
                 id: entry_id,
@@ -106,19 +118,19 @@ impl AppendLog {
         let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::End);
 
         for item in iter {
-            let (key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            let (_branch_id, timestamp_us, entry_id, entity_id) = decode_key(&key)?;
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            let k = LogKey::decode(&raw_key)?;
 
             let body: serde_json::Value =
                 serde_json::from_slice(&val).map_err(|e| LogError::Storage(e.to_string()))?;
 
-            let timestamp = DateTime::from_timestamp_micros(timestamp_us)
+            let timestamp = DateTime::from_timestamp_micros(k.timestamp_us)
                 .ok_or_else(|| LogError::Storage("invalid timestamp".into()))?;
 
             entries.push(LogEntry {
-                id: entry_id,
+                id: k.entry_id,
                 timestamp,
-                entity_id,
+                entity_id: k.entity_id,
                 body,
             });
         }
@@ -133,33 +145,13 @@ impl AppendLog {
     }
 }
 
-// Key layout: branch_id (16) | timestamp_us (8 BE) | entry_id (16) | entity_id (16) = 56 bytes
-
-pub(crate) fn encode_key(branch_id: &Uuid, timestamp_us: i64, entry_id: &Uuid, entity_id: &Uuid) -> [u8; 56] {
-    let mut key = [0u8; 56];
-    key[0..16].copy_from_slice(branch_id.as_bytes());
-    key[16..24].copy_from_slice(&timestamp_us.to_be_bytes());
-    key[24..40].copy_from_slice(entry_id.as_bytes());
-    key[40..56].copy_from_slice(entity_id.as_bytes());
-    key
-}
-
-fn decode_key(key: &[u8]) -> Result<(Uuid, i64, Uuid, Uuid), LogError> {
-    if key.len() < 56 {
-        return Err(LogError::Storage("invalid key length".into()));
+storage_key! {
+    pub(crate) struct LogKey(56) {
+        branch_id: Uuid,
+        timestamp_us: i64,
+        entry_id: Uuid,
+        entity_id: Uuid,
     }
-    let branch_id =
-        Uuid::from_slice(&key[0..16]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let timestamp_us = i64::from_be_bytes(
-        key[16..24]
-            .try_into()
-            .map_err(|_| LogError::Storage("bad timestamp".into()))?,
-    );
-    let entry_id =
-        Uuid::from_slice(&key[24..40]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let entity_id =
-        Uuid::from_slice(&key[40..56]).map_err(|e| LogError::Storage(e.to_string()))?;
-    Ok((branch_id, timestamp_us, entry_id, entity_id))
 }
 
 #[cfg(test)]
@@ -244,27 +236,25 @@ mod tests {
 
     #[test]
     fn key_encoding_roundtrip() {
-        let branch_id = Uuid::nil();
-        let entry_id = Uuid::now_v7();
-        let entity_id = Uuid::now_v7();
-        let ts: i64 = 1_700_000_000_000_000;
+        let key = LogKey {
+            branch_id: Uuid::nil(),
+            timestamp_us: 1_700_000_000_000_000,
+            entry_id: Uuid::now_v7(),
+            entity_id: Uuid::now_v7(),
+        };
+        let encoded = key.encode();
+        assert_eq!(encoded.len(), LogKey::SIZE);
 
-        let key = encode_key(&branch_id, ts, &entry_id, &entity_id);
-        assert_eq!(key.len(), 56);
-
-        let (bid2, ts2, eid2, entid2) = decode_key(&key).unwrap();
-        assert_eq!(branch_id, bid2);
-        assert_eq!(ts, ts2);
-        assert_eq!(entry_id, eid2);
-        assert_eq!(entity_id, entid2);
+        let decoded = LogKey::decode(&encoded).unwrap();
+        assert_eq!(decoded, key);
     }
 
     #[test]
     fn keys_sort_by_branch_then_timestamp() {
         let branch = Uuid::nil();
         let id = Uuid::now_v7();
-        let k1 = encode_key(&branch, 100, &id, &id);
-        let k2 = encode_key(&branch, 200, &id, &id);
-        assert!(k1 < k2);
+        let k1 = LogKey { branch_id: branch, timestamp_us: 100, entry_id: id, entity_id: id };
+        let k2 = LogKey { branch_id: branch, timestamp_us: 200, entry_id: id, entity_id: id };
+        assert!(k1.encode() < k2.encode());
     }
 }

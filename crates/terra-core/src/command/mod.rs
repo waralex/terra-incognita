@@ -1,10 +1,14 @@
+mod assert_entity;
 mod execute;
 
+pub use assert_entity::AssertEntityError;
 pub use execute::execute;
 
-use crate::assertion::{LogEntry, LogError};
+use crate::assertion::{EntityError, LogEntry, LogError, PropertyValue, Transaction, WriterError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
 use crate::schema::SchemaError;
+
+use std::collections::HashMap;
 
 /// Domain command — plain enum without serde. All mutating variants take `Vec`.
 pub enum Command {
@@ -20,8 +24,10 @@ pub enum Command {
     ListProperties { entity_type: Option<String> },
     /// Attach existing properties to existing entity types.
     AttachProperties(Vec<AttachProperty>),
-    /// Create one or more entities in the fact log.
-    CreateEntities(Vec<CreateEntity>),
+    /// Create entity and optionally assert facts/hypotheses in one transaction.
+    CreateEntity(AssertEntityInput),
+    /// Assert facts/hypotheses about an existing entity in one transaction.
+    AssertEntity(AssertEntityInput),
     /// List all entries in the fact log.
     ListLog,
 }
@@ -49,11 +55,28 @@ pub struct AttachProperty {
     pub property: String,
 }
 
-/// Input for creating an entity in the assertion log.
-pub struct CreateEntity {
-    pub entity_name: String,
-    pub entity_type: Option<String>,
-    pub context: serde_json::Value,
+/// Unified input for entity creation and assertion.
+pub struct AssertEntityInput {
+    /// Entity slug.
+    pub entity: String,
+    /// Entity description (only used during creation).
+    pub description: Option<String>,
+    /// Transaction-level reasoning: why this batch was made.
+    pub reasoning: serde_json::Value,
+    /// Facts — convergence points, at most one per property per entity type.
+    pub facts: Vec<AssertionItem>,
+    /// Hypotheses — tentative claims, no uniqueness constraint on properties.
+    pub hypotheses: Vec<AssertionItem>,
+}
+
+/// A single fact or hypothesis: entity type + properties + reasoning.
+pub struct AssertionItem {
+    /// Entity type slug (determines which properties are valid).
+    pub entity_type: String,
+    /// Property slug → typed value.
+    pub properties: HashMap<String, PropertyValue>,
+    /// Per-assertion reasoning: why this specific value.
+    pub reasoning: serde_json::Value,
 }
 
 /// Result of executing a command.
@@ -65,8 +88,12 @@ pub enum CommandResult {
     Properties(Vec<EntityProperty>),
     /// Properties attached; `count` is the number of attachments.
     Attached { count: usize },
-    /// Created entities (log entries).
-    Entities(Vec<LogEntry>),
+    /// Entity created/asserted with transaction and log entries.
+    Asserted {
+        transaction: Transaction,
+        facts: Vec<LogEntry>,
+        hypotheses: Vec<LogEntry>,
+    },
     /// Single entity type with its attached properties.
     EntityTypeDetail {
         entity_type: EntityType,
@@ -86,4 +113,16 @@ pub enum CommandError {
     /// Log storage error.
     #[error(transparent)]
     Log(#[from] LogError),
+
+    /// Entity operation error.
+    #[error(transparent)]
+    Entity(#[from] EntityError),
+
+    /// Assertion writer error.
+    #[error(transparent)]
+    Writer(#[from] WriterError),
+
+    /// Business logic error from assert-entity flow.
+    #[error(transparent)]
+    AssertEntity(#[from] AssertEntityError),
 }

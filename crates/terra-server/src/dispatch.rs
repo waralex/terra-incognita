@@ -40,14 +40,34 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_yaml::
             }
             serde_yaml::Value::Mapping(map)
         }
-        CommandResult::Entities(entries) => match shape {
-            ResponseShape::Single => serialize_log_entry(&entries[0]),
-            ResponseShape::Batch => {
+        CommandResult::Asserted {
+            transaction,
+            facts,
+            hypotheses,
+        } => {
+            let mut map = serde_yaml::Mapping::new();
+            map.insert(
+                serde_yaml::Value::String("tx_id".into()),
+                serde_yaml::to_value(&transaction.id).unwrap(),
+            );
+            if !facts.is_empty() {
                 let items: Vec<serde_yaml::Value> =
-                    entries.iter().map(serialize_log_entry).collect();
-                serde_yaml::to_value(&items).unwrap()
+                    facts.iter().map(serialize_log_entry).collect();
+                map.insert(
+                    serde_yaml::Value::String("facts".into()),
+                    serde_yaml::to_value(&items).unwrap(),
+                );
             }
-        },
+            if !hypotheses.is_empty() {
+                let items: Vec<serde_yaml::Value> =
+                    hypotheses.iter().map(serialize_log_entry).collect();
+                map.insert(
+                    serde_yaml::Value::String("hypotheses".into()),
+                    serde_yaml::to_value(&items).unwrap(),
+                );
+            }
+            serde_yaml::Value::Mapping(map)
+        }
         CommandResult::EntityTypeDetail {
             entity_type,
             properties,

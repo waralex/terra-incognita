@@ -65,6 +65,61 @@ impl From<CommandError> for ApiError {
                 kind: "storage_error".to_string(),
                 message: e.to_string(),
             },
+            CommandError::Entity(e) => {
+                use terra_core::assertion::EntityError;
+                let (status, kind) = match &e {
+                    EntityError::SlugExists(_) => (StatusCode::CONFLICT, "entity_already_exists"),
+                    EntityError::NotFound(_) | EntityError::SlugNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "entity_not_found")
+                    }
+                    EntityError::AlreadyInStatus(_, _) => {
+                        (StatusCode::CONFLICT, "entity_status_conflict")
+                    }
+                    EntityError::Storage(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "storage_error")
+                    }
+                };
+                Self {
+                    status,
+                    kind: kind.to_string(),
+                    message: e.to_string(),
+                }
+            }
+            CommandError::Writer(e) => Self {
+                status: StatusCode::BAD_REQUEST,
+                kind: "assertion_error".to_string(),
+                message: e.to_string(),
+            },
+            CommandError::AssertEntity(e) => {
+                use terra_core::command::AssertEntityError;
+                let (status, kind) = match &e {
+                    AssertEntityError::EntityNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "entity_not_found")
+                    }
+                    AssertEntityError::EntityAlreadyExists(_) => {
+                        (StatusCode::CONFLICT, "entity_already_exists")
+                    }
+                    AssertEntityError::ConflictingFacts { .. } => {
+                        (StatusCode::BAD_REQUEST, "conflicting_facts")
+                    }
+                    AssertEntityError::EntityTypeNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "entity_type_not_found")
+                    }
+                    AssertEntityError::PropertyNotFound { .. } => {
+                        (StatusCode::NOT_FOUND, "property_not_found")
+                    }
+                    AssertEntityError::Entity(_)
+                    | AssertEntityError::Writer(_)
+                    | AssertEntityError::Schema(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+                };
+                Self {
+                    status,
+                    kind: kind.to_string(),
+                    message: e.to_string(),
+                }
+            }
         }
     }
 }

@@ -124,7 +124,7 @@ impl<'a> AppendLog<'a> {
         Ok(entries)
     }
 
-    fn cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
+    pub(crate) fn cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
         self.db
             .cf_handle(self.cf_name)
             .ok_or_else(|| LogError::Storage(format!("missing column family: {}", self.cf_name)))
@@ -133,7 +133,7 @@ impl<'a> AppendLog<'a> {
 
 // Key layout: timestamp_us (8 BE) | entry_id (16) | entity_id (16) = 40 bytes
 
-fn encode_key(timestamp_us: i64, entry_id: &Uuid, entity_id: &Uuid) -> [u8; 40] {
+pub(crate) fn encode_key(timestamp_us: i64, entry_id: &Uuid, entity_id: &Uuid) -> [u8; 40] {
     let mut key = [0u8; 40];
     key[0..8].copy_from_slice(&timestamp_us.to_be_bytes());
     key[8..24].copy_from_slice(entry_id.as_bytes());

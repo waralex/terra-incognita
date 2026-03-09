@@ -90,7 +90,7 @@ impl<'a> Column<'a> {
         Ok(cells)
     }
 
-    fn cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
+    pub(crate) fn cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
         self.db
             .cf_handle(self.cf_name)
             .ok_or_else(|| LogError::Storage(format!("missing column family: {}", self.cf_name)))
@@ -99,7 +99,7 @@ impl<'a> Column<'a> {
 
 // Key: property_id(16) | timestamp_us(8 BE) | log_entry_id(16) | entity_id(16) = 56 bytes
 
-fn encode_key(cell: &ColumnCell) -> [u8; 56] {
+pub(crate) fn encode_key(cell: &ColumnCell) -> [u8; 56] {
     let mut key = [0u8; 56];
     key[0..16].copy_from_slice(cell.property_id.as_bytes());
     key[16..24].copy_from_slice(&cell.timestamp_us.to_be_bytes());

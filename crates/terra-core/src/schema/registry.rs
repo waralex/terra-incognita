@@ -552,6 +552,36 @@ impl SchemaRegistry {
                 other => SchemaError::Db(other),
             })?;
 
+        self.query_properties_by_type_id_bytes(&type_id)
+    }
+
+    /// Lists properties attached to an entity type identified by UUID.
+    pub fn list_properties_by_type_id(
+        &self,
+        entity_type_id: &Uuid,
+    ) -> Result<Vec<EntityProperty>, SchemaError> {
+        let type_id_bytes = entity_type_id.as_bytes().to_vec();
+
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM entity_types WHERE id = ?1)",
+                params![type_id_bytes],
+                |row| row.get(0),
+            )
+            .map_err(SchemaError::Db)?;
+
+        if !exists {
+            return Err(SchemaError::EntityTypeNotFound(entity_type_id.to_string()));
+        }
+
+        self.query_properties_by_type_id_bytes(&type_id_bytes)
+    }
+
+    fn query_properties_by_type_id_bytes(
+        &self,
+        type_id_bytes: &[u8],
+    ) -> Result<Vec<EntityProperty>, SchemaError> {
         let mut stmt = self.conn.prepare(
             "SELECT p.id, p.slug, p.description, p.value_type, p.created_at
              FROM entity_properties p
@@ -561,7 +591,7 @@ impl SchemaRegistry {
         )?;
 
         let props = stmt
-            .query_map(params![type_id], |row| {
+            .query_map(params![type_id_bytes], |row| {
                 let id_bytes: Vec<u8> = row.get(0)?;
                 let slug: String = row.get(1)?;
                 let description: Option<String> = row.get(2)?;

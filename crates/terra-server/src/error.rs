@@ -1,6 +1,5 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use terra_core::assertion::AssertionError;
 use terra_core::command::CommandError;
 use terra_core::schema::SchemaError;
 
@@ -57,38 +56,15 @@ impl From<SchemaError> for ApiError {
     }
 }
 
-impl From<AssertionError> for ApiError {
-    fn from(err: AssertionError) -> Self {
-        let (status, kind) = match &err {
-            AssertionError::InvalidName(_) => (StatusCode::BAD_REQUEST, "invalid_name"),
-            AssertionError::EntityTypeNotFound(_) => (StatusCode::NOT_FOUND, "entity_type_not_found"),
-            AssertionError::BatchItemError { source, .. } => {
-                let (inner_status, inner_kind) = match source.as_ref() {
-                    AssertionError::InvalidName(_) => (StatusCode::BAD_REQUEST, "invalid_name"),
-                    AssertionError::EntityTypeNotFound(_) => (StatusCode::NOT_FOUND, "entity_type_not_found"),
-                    _ => (StatusCode::INTERNAL_SERVER_ERROR, "storage_error"),
-                };
-                return Self {
-                    status: inner_status,
-                    kind: inner_kind.to_string(),
-                    message: err.to_string(),
-                };
-            }
-            AssertionError::Storage(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storage_error"),
-        };
-        Self {
-            status,
-            kind: kind.to_string(),
-            message: err.to_string(),
-        }
-    }
-}
-
 impl From<CommandError> for ApiError {
     fn from(err: CommandError) -> Self {
         match err {
             CommandError::Schema(e) => e.into(),
-            CommandError::Assertion(e) => e.into(),
+            CommandError::Log(e) => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                kind: "storage_error".to_string(),
+                message: e.to_string(),
+            },
         }
     }
 }

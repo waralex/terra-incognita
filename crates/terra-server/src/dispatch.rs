@@ -77,7 +77,11 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_yaml::
             );
             serde_yaml::Value::Mapping(map)
         }
-        CommandResult::LogEntries(entries) => serde_yaml::to_value(&entries).unwrap(),
+        CommandResult::LogEntries(entries) => {
+            let items: Vec<serde_yaml::Value> =
+                entries.iter().map(serialize_log_entry).collect();
+            serde_yaml::to_value(&items).unwrap()
+        }
     }
 }
 
@@ -95,15 +99,9 @@ fn serialize_log_entry(entry: &LogEntry) -> serde_yaml::Value {
         serde_yaml::Value::String("entity_id".into()),
         serde_yaml::to_value(&entry.entity_id).unwrap(),
     );
-    if let Some(ref et) = entry.entity_type {
-        map.insert(
-            serde_yaml::Value::String("entity_type".into()),
-            serde_yaml::Value::String(et.clone()),
-        );
-    }
     map.insert(
-        serde_yaml::Value::String("name".into()),
-        serde_yaml::Value::String(entry.name.clone()),
+        serde_yaml::Value::String("body".into()),
+        serde_yaml::to_value(&entry.body).unwrap(),
     );
     serde_yaml::Value::Mapping(map)
 }

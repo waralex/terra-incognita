@@ -1,4 +1,6 @@
-use crate::assertion::{AssertionStore, EntityInput};
+use uuid::Uuid;
+
+use crate::assertion::AssertionStore;
 use crate::schema::{AttachInput, EntityTypeInput, PropertyInput, SchemaRegistry};
 
 use super::{Command, CommandError, CommandResult};
@@ -7,7 +9,7 @@ use super::{Command, CommandError, CommandResult};
 pub fn execute(
     cmd: Command,
     registry: &mut SchemaRegistry,
-    assertions: &AssertionStore,
+    store: &AssertionStore,
 ) -> Result<CommandResult, CommandError> {
     match cmd {
         Command::CreateEntityTypes(items) => {
@@ -81,19 +83,23 @@ pub fn execute(
             Ok(CommandResult::Attached { count })
         }
         Command::CreateEntities(items) => {
-            let inputs: Vec<EntityInput<'_>> = items
+            let batch: Vec<(Uuid, serde_json::Value)> = items
                 .iter()
-                .map(|item| EntityInput {
-                    name: &item.entity_name,
-                    entity_type: item.entity_type.as_deref(),
-                    context: item.context.clone(),
+                .map(|item| {
+                    let entity_id = Uuid::now_v7();
+                    let body = serde_json::json!({
+                        "entity_name": item.entity_name,
+                        "entity_type": item.entity_type,
+                        "context": item.context,
+                    });
+                    (entity_id, body)
                 })
                 .collect();
-            let results = assertions.create_entities_batch(&inputs)?;
+            let results = store.refinements().append_batch(&batch)?;
             Ok(CommandResult::Entities(results))
         }
         Command::ListLog => {
-            let entries = assertions.list_log()?;
+            let entries = store.refinements().list()?;
             Ok(CommandResult::LogEntries(entries))
         }
     }
@@ -108,8 +114,8 @@ mod tests {
     fn setup() -> (SchemaRegistry, AssertionStore, tempfile::TempDir) {
         let registry = SchemaRegistry::open_in_memory().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let assertions = AssertionStore::open(dir.path()).unwrap();
-        (registry, assertions, dir)
+        let store = AssertionStore::open(dir.path()).unwrap();
+        (registry, store, dir)
     }
 
     #[test]
@@ -309,8 +315,8 @@ mod tests {
         match result {
             CommandResult::Entities(entries) => {
                 assert_eq!(entries.len(), 2);
-                assert_eq!(entries[0].name, "alpha");
-                assert_eq!(entries[1].name, "bravo");
+                assert_eq!(entries[0].body["entity_name"], "alpha");
+                assert_eq!(entries[1].body["entity_name"], "bravo");
             }
             _ => panic!("unexpected result"),
         }

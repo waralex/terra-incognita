@@ -2,9 +2,8 @@ mod execute;
 
 pub use execute::execute;
 
-use crate::assertion::AssertionError;
+use crate::assertion::{LogEntry, LogError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
-use crate::assertion::LogEntry;
 use crate::schema::SchemaError;
 
 /// Domain command — plain enum without serde. All mutating variants take `Vec`.
@@ -21,9 +20,9 @@ pub enum Command {
     ListProperties { entity_type: Option<String> },
     /// Attach existing properties to existing entity types.
     AttachProperties(Vec<AttachProperty>),
-    /// Create one or more entities in the assertion log.
+    /// Create one or more entities in the refinement log.
     CreateEntities(Vec<CreateEntity>),
-    /// List all entries in the assertion log.
+    /// List all entries in the refinement log.
     ListLog,
 }
 
@@ -84,7 +83,7 @@ pub enum CommandError {
     #[error(transparent)]
     Schema(#[from] SchemaError),
 
-    /// Assertion store error (validation, storage).
+    /// Log storage error.
     #[error(transparent)]
-    Assertion(#[from] AssertionError),
+    Log(#[from] LogError),
 }

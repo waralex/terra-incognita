@@ -1,494 +1,96 @@
 use std::path::Path;
 
-use chrono::Utc;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
-use uuid::Uuid;
 
-use crate::assertion::{AssertionError, AssertionKind, EntityInput, LogEntry};
-use crate::schema::slug::validate_slug;
-use crate::schema::SchemaError;
+use super::log::AppendLog;
+use super::LogError;
 
-const CF_ASSERTIONS: &str = "assertions";
+const CF_REFINEMENTS: &str = "assertions";
 const CF_HYPOTHESES: &str = "hypotheses";
 
-/// RocksDB-backed store for assertions and hypotheses.
+/// RocksDB-backed store owning two append-only logs: refinements and hypotheses.
 pub struct AssertionStore {
     db: DB,
 }
 
 impl AssertionStore {
-    /// Opens or creates an assertion store at the given path.
-    pub fn open(path: &Path) -> Result<Self, AssertionError> {
+    /// Opens or creates the store at the given path with both column families.
+    pub fn open(path: &Path) -> Result<Self, LogError> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
         let cfs = vec![
-            ColumnFamilyDescriptor::new(CF_ASSERTIONS, Options::default()),
+            ColumnFamilyDescriptor::new(CF_REFINEMENTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HYPOTHESES, Options::default()),
         ];
         let db = DB::open_cf_descriptors(&opts, path, cfs)
-            .map_err(|e| AssertionError::Storage(e.to_string()))?;
+            .map_err(|e| LogError::Storage(e.to_string()))?;
 
         Ok(Self { db })
     }
 
-    // -- Assertion log (refinements / definitive claims) --
-
-    /// Creates a single entity and writes it to the assertion log.
-    pub fn create_entity(
-        &self,
-        name: &str,
-        entity_type: Option<&str>,
-        context: serde_json::Value,
-    ) -> Result<LogEntry, AssertionError> {
-        self.write_entry(CF_ASSERTIONS, AssertionKind::Refinement, name, entity_type, context)
+    /// Refinement log — convergence points, definitive claims.
+    pub fn refinements(&self) -> AppendLog<'_> {
+        AppendLog::new(&self.db, CF_REFINEMENTS)
     }
 
-    /// Creates entities atomically via RocksDB WriteBatch. All-or-nothing.
-    pub fn create_entities_batch(
-        &self,
-        items: &[EntityInput<'_>],
-    ) -> Result<Vec<LogEntry>, AssertionError> {
-        self.write_entries_batch(CF_ASSERTIONS, AssertionKind::Refinement, items)
+    /// Hypothesis log — tentative claims under consideration.
+    pub fn hypotheses(&self) -> AppendLog<'_> {
+        AppendLog::new(&self.db, CF_HYPOTHESES)
     }
-
-    /// Returns all assertion log entries in reverse chronological order.
-    pub fn list_log(&self) -> Result<Vec<LogEntry>, AssertionError> {
-        self.read_entries(CF_ASSERTIONS)
-    }
-
-    // -- Hypothesis log (tentative claims) --
-
-    /// Creates a single hypothesis entry.
-    pub fn create_hypothesis(
-        &self,
-        name: &str,
-        entity_type: Option<&str>,
-        context: serde_json::Value,
-    ) -> Result<LogEntry, AssertionError> {
-        self.write_entry(CF_HYPOTHESES, AssertionKind::Hypothesis, name, entity_type, context)
-    }
-
-    /// Creates hypotheses atomically via RocksDB WriteBatch. All-or-nothing.
-    pub fn create_hypotheses_batch(
-        &self,
-        items: &[EntityInput<'_>],
-    ) -> Result<Vec<LogEntry>, AssertionError> {
-        self.write_entries_batch(CF_HYPOTHESES, AssertionKind::Hypothesis, items)
-    }
-
-    /// Returns all hypothesis log entries in reverse chronological order.
-    pub fn list_hypothesis_log(&self) -> Result<Vec<LogEntry>, AssertionError> {
-        self.read_entries(CF_HYPOTHESES)
-    }
-
-    // -- Private helpers --
-
-    fn write_entry(
-        &self,
-        cf_name: &str,
-        kind: AssertionKind,
-        name: &str,
-        entity_type: Option<&str>,
-        context: serde_json::Value,
-    ) -> Result<LogEntry, AssertionError> {
-        validate_slug(name).map_err(|e| match e {
-            SchemaError::InvalidSlug(s) => AssertionError::InvalidName(s),
-            _ => AssertionError::Storage(e.to_string()),
-        })?;
-
-        let now = Utc::now();
-        let timestamp_us = now.timestamp_micros();
-        let log_entry_id = Uuid::now_v7();
-        let entity_id = Uuid::now_v7();
-
-        let key = encode_key(timestamp_us, &log_entry_id, &entity_id, kind);
-
-        let value = serde_json::json!({
-            "entity_type": entity_type,
-            "name": name,
-            "context": context,
-        });
-        let value_bytes = serde_json::to_vec(&value)
-            .map_err(|e| AssertionError::Storage(e.to_string()))?;
-
-        let cf = self
-            .db
-            .cf_handle(cf_name)
-            .ok_or_else(|| AssertionError::Storage(format!("missing column family: {cf_name}")))?;
-
-        self.db
-            .put_cf(&cf, &key, &value_bytes)
-            .map_err(|e| AssertionError::Storage(e.to_string()))?;
-
-        Ok(LogEntry {
-            id: log_entry_id,
-            timestamp: now,
-            entity_id,
-            entity_type: entity_type.map(String::from),
-            name: name.to_string(),
-            context,
-        })
-    }
-
-    fn write_entries_batch(
-        &self,
-        cf_name: &str,
-        kind: AssertionKind,
-        items: &[EntityInput<'_>],
-    ) -> Result<Vec<LogEntry>, AssertionError> {
-        for (i, item) in items.iter().enumerate() {
-            validate_slug(item.name).map_err(|e| match e {
-                SchemaError::InvalidSlug(s) => AssertionError::BatchItemError {
-                    index: i,
-                    source: Box::new(AssertionError::InvalidName(s)),
-                },
-                _ => AssertionError::Storage(e.to_string()),
-            })?;
-        }
-
-        let cf = self
-            .db
-            .cf_handle(cf_name)
-            .ok_or_else(|| AssertionError::Storage(format!("missing column family: {cf_name}")))?;
-
-        let mut batch = rocksdb::WriteBatch::default();
-        let mut results = Vec::with_capacity(items.len());
-
-        for item in items {
-            let now = Utc::now();
-            let timestamp_us = now.timestamp_micros();
-            let log_entry_id = Uuid::now_v7();
-            let entity_id = Uuid::now_v7();
-
-            let key = encode_key(timestamp_us, &log_entry_id, &entity_id, kind);
-
-            let value = serde_json::json!({
-                "entity_type": item.entity_type,
-                "name": item.name,
-                "context": item.context,
-            });
-            let value_bytes = serde_json::to_vec(&value)
-                .map_err(|e| AssertionError::Storage(e.to_string()))?;
-
-            batch.put_cf(&cf, &key, &value_bytes);
-
-            results.push(LogEntry {
-                id: log_entry_id,
-                timestamp: now,
-                entity_id,
-                entity_type: item.entity_type.map(String::from),
-                name: item.name.to_string(),
-                context: item.context.clone(),
-            });
-        }
-
-        self.db
-            .write(batch)
-            .map_err(|e| AssertionError::Storage(e.to_string()))?;
-
-        Ok(results)
-    }
-
-    fn read_entries(&self, cf_name: &str) -> Result<Vec<LogEntry>, AssertionError> {
-        let cf = self
-            .db
-            .cf_handle(cf_name)
-            .ok_or_else(|| AssertionError::Storage(format!("missing column family: {cf_name}")))?;
-
-        let mut entries = Vec::new();
-        let iter = self.db.iterator_cf(&cf, rocksdb::IteratorMode::End);
-
-        for item in iter {
-            let (key, val) = item.map_err(|e| AssertionError::Storage(e.to_string()))?;
-            let (timestamp_us, log_entry_id, entity_id) = decode_key(&key)?;
-
-            let record: serde_json::Value = serde_json::from_slice(&val)
-                .map_err(|e| AssertionError::Storage(e.to_string()))?;
-
-            let timestamp = chrono::DateTime::from_timestamp_micros(timestamp_us)
-                .ok_or_else(|| AssertionError::Storage("invalid timestamp".into()))?;
-
-            entries.push(LogEntry {
-                id: log_entry_id,
-                timestamp,
-                entity_id,
-                entity_type: record.get("entity_type")
-                    .and_then(|v| v.as_str())
-                    .map(String::from),
-                name: record.get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                context: record.get("context")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null),
-            });
-        }
-
-        Ok(entries)
-    }
-}
-
-fn encode_key(timestamp_us: i64, log_entry_id: &Uuid, entity_id: &Uuid, kind: AssertionKind) -> [u8; 41] {
-    let mut key = [0u8; 41];
-    key[0..8].copy_from_slice(&timestamp_us.to_be_bytes());
-    key[8..24].copy_from_slice(log_entry_id.as_bytes());
-    key[24..40].copy_from_slice(entity_id.as_bytes());
-    key[40] = kind.as_byte();
-    key
-}
-
-fn decode_key(key: &[u8]) -> Result<(i64, Uuid, Uuid), AssertionError> {
-    if key.len() < 40 {
-        return Err(AssertionError::Storage("invalid key length".into()));
-    }
-    let timestamp_us = i64::from_be_bytes(
-        key[0..8].try_into().map_err(|_| AssertionError::Storage("bad timestamp".into()))?
-    );
-    let log_entry_id = Uuid::from_slice(&key[8..24])
-        .map_err(|e| AssertionError::Storage(e.to_string()))?;
-    let entity_id = Uuid::from_slice(&key[24..40])
-        .map_err(|e| AssertionError::Storage(e.to_string()))?;
-    Ok((timestamp_us, log_entry_id, entity_id))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     fn store(dir: &tempfile::TempDir) -> AssertionStore {
         AssertionStore::open(dir.path()).unwrap()
     }
 
-    // -- Assertion log tests --
-
     #[test]
-    fn create_entity_returns_log_entry() {
+    fn refinements_and_hypotheses_are_separate() {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
-        let entry = s
-            .create_entity("temperature-sensor-1", Some("sensor"), serde_json::json!({}))
+        let eid1 = Uuid::now_v7();
+        let eid2 = Uuid::now_v7();
+
+        s.refinements()
+            .append(eid1, serde_json::json!({"name": "alpha"}))
+            .unwrap();
+        s.hypotheses()
+            .append(eid2, serde_json::json!({"name": "beta"}))
             .unwrap();
 
-        assert_eq!(entry.entity_type.as_deref(), Some("sensor"));
-        assert_eq!(entry.name, "temperature-sensor-1");
-        assert_eq!(entry.id.get_version(), Some(uuid::Version::SortRand));
-        assert_eq!(entry.entity_id.get_version(), Some(uuid::Version::SortRand));
+        let refs = s.refinements().list().unwrap();
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].body["name"], "alpha");
+
+        let hyps = s.hypotheses().list().unwrap();
+        assert_eq!(hyps.len(), 1);
+        assert_eq!(hyps[0].body["name"], "beta");
     }
 
     #[test]
-    fn create_entity_without_type() {
+    fn batch_into_separate_logs() {
         let dir = tempfile::tempdir().unwrap();
         let s = store(&dir);
 
-        let entry = s
-            .create_entity("pressure-sensor-2", None, serde_json::json!({}))
-            .unwrap();
-
-        assert!(entry.entity_type.is_none());
-        assert_eq!(entry.name, "pressure-sensor-2");
-    }
-
-    #[test]
-    fn create_entity_with_context() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let ctx = serde_json::json!({"source": "manual entry"});
-        let entry = s
-            .create_entity("humidity-sensor-3", Some("sensor"), ctx.clone())
-            .unwrap();
-
-        assert_eq!(entry.context, ctx);
-    }
-
-    #[test]
-    fn reject_invalid_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let err = s
-            .create_entity("Invalid Name", Some("sensor"), serde_json::json!({}))
-            .unwrap_err();
-
-        assert!(matches!(err, AssertionError::InvalidName(_)));
-    }
-
-    #[test]
-    fn reject_empty_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let err = s
-            .create_entity("", Some("sensor"), serde_json::json!({}))
-            .unwrap_err();
-
-        assert!(matches!(err, AssertionError::InvalidName(_)));
-    }
-
-    #[test]
-    fn multiple_entities_get_unique_ids() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let e1 = s.create_entity("alpha", Some("unit"), serde_json::json!({})).unwrap();
-        let e2 = s.create_entity("bravo", Some("unit"), serde_json::json!({})).unwrap();
-
-        assert_ne!(e1.id, e2.id);
-        assert_ne!(e1.entity_id, e2.entity_id);
-    }
-
-    #[test]
-    fn list_log_returns_entries_reverse_chronological() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        s.create_entity("alpha", Some("unit"), serde_json::json!({})).unwrap();
-        s.create_entity("bravo", None, serde_json::json!({})).unwrap();
-
-        let log = s.list_log().unwrap();
-        assert_eq!(log.len(), 2);
-        assert_eq!(log[0].name, "bravo");
-        assert_eq!(log[1].name, "alpha");
-    }
-
-    #[test]
-    fn key_encoding_is_41_bytes() {
-        let id1 = Uuid::now_v7();
-        let id2 = Uuid::now_v7();
-        let key = encode_key(1_000_000, &id1, &id2, AssertionKind::Hypothesis);
-        assert_eq!(key.len(), 41);
-    }
-
-    #[test]
-    fn key_timestamp_sorts_lexicographically() {
-        let id = Uuid::now_v7();
-        let k1 = encode_key(100, &id, &id, AssertionKind::Hypothesis);
-        let k2 = encode_key(200, &id, &id, AssertionKind::Hypothesis);
-        assert!(k1 < k2);
-    }
-
-    #[test]
-    fn batch_create_entities() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let items = vec![
-            EntityInput { name: "alpha", entity_type: Some("unit"), context: serde_json::json!({}) },
-            EntityInput { name: "bravo", entity_type: None, context: serde_json::json!({"source": "test"}) },
+        let ref_items: Vec<(Uuid, serde_json::Value)> = vec![
+            (Uuid::now_v7(), serde_json::json!({"name": "r1"})),
+            (Uuid::now_v7(), serde_json::json!({"name": "r2"})),
         ];
-        let results = s.create_entities_batch(&items).unwrap();
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].name, "alpha");
-        assert_eq!(results[0].entity_type.as_deref(), Some("unit"));
-        assert_eq!(results[1].name, "bravo");
-        assert!(results[1].entity_type.is_none());
-        assert_ne!(results[0].entity_id, results[1].entity_id);
+        s.refinements().append_batch(&ref_items).unwrap();
 
-        let log = s.list_log().unwrap();
-        assert_eq!(log.len(), 2);
-    }
-
-    #[test]
-    fn batch_create_entities_invalid_name_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let items = vec![
-            EntityInput { name: "good-name", entity_type: None, context: serde_json::json!({}) },
-            EntityInput { name: "BAD NAME", entity_type: None, context: serde_json::json!({}) },
+        let hyp_items: Vec<(Uuid, serde_json::Value)> = vec![
+            (Uuid::now_v7(), serde_json::json!({"name": "h1"})),
         ];
-        let err = s.create_entities_batch(&items).unwrap_err();
-        assert!(matches!(
-            err,
-            AssertionError::BatchItemError { index: 1, ref source }
-            if matches!(source.as_ref(), AssertionError::InvalidName(_))
-        ));
+        s.hypotheses().append_batch(&hyp_items).unwrap();
 
-        // Nothing should be written due to validation failing before write
-        let log = s.list_log().unwrap();
-        assert!(log.is_empty());
-    }
-
-    // -- Hypothesis log tests --
-
-    #[test]
-    fn create_hypothesis_returns_log_entry() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let entry = s
-            .create_hypothesis("sensor-1", Some("sensor"), serde_json::json!({"confidence": 0.7}))
-            .unwrap();
-
-        assert_eq!(entry.name, "sensor-1");
-        assert_eq!(entry.entity_type.as_deref(), Some("sensor"));
-    }
-
-    #[test]
-    fn hypothesis_log_is_separate_from_assertion_log() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        s.create_entity("alpha", Some("unit"), serde_json::json!({})).unwrap();
-        s.create_hypothesis("beta", Some("unit"), serde_json::json!({})).unwrap();
-
-        let assertions = s.list_log().unwrap();
-        assert_eq!(assertions.len(), 1);
-        assert_eq!(assertions[0].name, "alpha");
-
-        let hypotheses = s.list_hypothesis_log().unwrap();
-        assert_eq!(hypotheses.len(), 1);
-        assert_eq!(hypotheses[0].name, "beta");
-    }
-
-    #[test]
-    fn batch_create_hypotheses() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let items = vec![
-            EntityInput { name: "alpha", entity_type: Some("unit"), context: serde_json::json!({}) },
-            EntityInput { name: "bravo", entity_type: None, context: serde_json::json!({}) },
-        ];
-        let results = s.create_hypotheses_batch(&items).unwrap();
-        assert_eq!(results.len(), 2);
-
-        let hypotheses = s.list_hypothesis_log().unwrap();
-        assert_eq!(hypotheses.len(), 2);
-
-        // Assertion log should be empty
-        let assertions = s.list_log().unwrap();
-        assert!(assertions.is_empty());
-    }
-
-    #[test]
-    fn hypothesis_rejects_invalid_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let err = s
-            .create_hypothesis("BAD NAME", None, serde_json::json!({}))
-            .unwrap_err();
-        assert!(matches!(err, AssertionError::InvalidName(_)));
-    }
-
-    #[test]
-    fn hypothesis_batch_invalid_name_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = store(&dir);
-
-        let items = vec![
-            EntityInput { name: "good", entity_type: None, context: serde_json::json!({}) },
-            EntityInput { name: "BAD", entity_type: None, context: serde_json::json!({}) },
-        ];
-        let err = s.create_hypotheses_batch(&items).unwrap_err();
-        assert!(matches!(err, AssertionError::BatchItemError { index: 1, .. }));
-
-        let hypotheses = s.list_hypothesis_log().unwrap();
-        assert!(hypotheses.is_empty());
+        assert_eq!(s.refinements().list().unwrap().len(), 2);
+        assert_eq!(s.hypotheses().list().unwrap().len(), 1);
     }
 }

@@ -6,6 +6,9 @@ mod property_value;
 mod store;
 pub(crate) mod writer;
 
+/// The default branch UUID (all zeros). All operations use this until branching is implemented.
+pub const MAIN_BRANCH: uuid::Uuid = uuid::Uuid::nil();
+
 pub use column::{Column, ColumnCell};
 pub use entity::EntityStore;
 pub use entity_io::{EntityRecord, EntityStatus};

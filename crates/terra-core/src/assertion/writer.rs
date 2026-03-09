@@ -110,7 +110,7 @@ impl AssertionWriter {
             }
             let body = serde_json::Value::Object(body_map);
 
-            let log_key = super::log::encode_key(timestamp_us, &log_entry_id, &input.entity_id);
+            let log_key = super::log::encode_key(&super::MAIN_BRANCH, timestamp_us, &log_entry_id, &input.entity_id);
             let log_val = serde_json::to_vec(&body)
                 .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
             batch.put_cf(&log_cf, &log_key, &log_val);
@@ -119,6 +119,7 @@ impl AssertionWriter {
             for (property_id, value) in &input.properties {
                 let vt = prop_types[property_id];
                 let col_key = column::encode_key(&ColumnCell {
+                    branch_id: super::MAIN_BRANCH,
                     property_id: *property_id,
                     timestamp_us,
                     log_entry_id,

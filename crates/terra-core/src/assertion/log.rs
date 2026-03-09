@@ -47,7 +47,7 @@ impl AppendLog {
         let timestamp_us = now.timestamp_micros();
         let entry_id = Uuid::now_v7();
 
-        let key = encode_key(timestamp_us, &entry_id, &entity_id);
+        let key = encode_key(&super::MAIN_BRANCH, timestamp_us, &entry_id, &entity_id);
         let value_bytes =
             serde_json::to_vec(&body).map_err(|e| LogError::Storage(e.to_string()))?;
 
@@ -78,7 +78,7 @@ impl AppendLog {
             let timestamp_us = now.timestamp_micros();
             let entry_id = Uuid::now_v7();
 
-            let key = encode_key(timestamp_us, &entry_id, entity_id);
+            let key = encode_key(&super::MAIN_BRANCH, timestamp_us, &entry_id, entity_id);
             let value_bytes =
                 serde_json::to_vec(body).map_err(|e| LogError::Storage(e.to_string()))?;
 
@@ -107,7 +107,7 @@ impl AppendLog {
 
         for item in iter {
             let (key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            let (timestamp_us, entry_id, entity_id) = decode_key(&key)?;
+            let (_branch_id, timestamp_us, entry_id, entity_id) = decode_key(&key)?;
 
             let body: serde_json::Value =
                 serde_json::from_slice(&val).map_err(|e| LogError::Storage(e.to_string()))?;
@@ -133,30 +133,33 @@ impl AppendLog {
     }
 }
 
-// Key layout: timestamp_us (8 BE) | entry_id (16) | entity_id (16) = 40 bytes
+// Key layout: branch_id (16) | timestamp_us (8 BE) | entry_id (16) | entity_id (16) = 56 bytes
 
-pub(crate) fn encode_key(timestamp_us: i64, entry_id: &Uuid, entity_id: &Uuid) -> [u8; 40] {
-    let mut key = [0u8; 40];
-    key[0..8].copy_from_slice(&timestamp_us.to_be_bytes());
-    key[8..24].copy_from_slice(entry_id.as_bytes());
-    key[24..40].copy_from_slice(entity_id.as_bytes());
+pub(crate) fn encode_key(branch_id: &Uuid, timestamp_us: i64, entry_id: &Uuid, entity_id: &Uuid) -> [u8; 56] {
+    let mut key = [0u8; 56];
+    key[0..16].copy_from_slice(branch_id.as_bytes());
+    key[16..24].copy_from_slice(&timestamp_us.to_be_bytes());
+    key[24..40].copy_from_slice(entry_id.as_bytes());
+    key[40..56].copy_from_slice(entity_id.as_bytes());
     key
 }
 
-fn decode_key(key: &[u8]) -> Result<(i64, Uuid, Uuid), LogError> {
-    if key.len() < 40 {
+fn decode_key(key: &[u8]) -> Result<(Uuid, i64, Uuid, Uuid), LogError> {
+    if key.len() < 56 {
         return Err(LogError::Storage("invalid key length".into()));
     }
+    let branch_id =
+        Uuid::from_slice(&key[0..16]).map_err(|e| LogError::Storage(e.to_string()))?;
     let timestamp_us = i64::from_be_bytes(
-        key[0..8]
+        key[16..24]
             .try_into()
             .map_err(|_| LogError::Storage("bad timestamp".into()))?,
     );
     let entry_id =
-        Uuid::from_slice(&key[8..24]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let entity_id =
         Uuid::from_slice(&key[24..40]).map_err(|e| LogError::Storage(e.to_string()))?;
-    Ok((timestamp_us, entry_id, entity_id))
+    let entity_id =
+        Uuid::from_slice(&key[40..56]).map_err(|e| LogError::Storage(e.to_string()))?;
+    Ok((branch_id, timestamp_us, entry_id, entity_id))
 }
 
 #[cfg(test)]
@@ -241,24 +244,27 @@ mod tests {
 
     #[test]
     fn key_encoding_roundtrip() {
+        let branch_id = Uuid::nil();
         let entry_id = Uuid::now_v7();
         let entity_id = Uuid::now_v7();
         let ts: i64 = 1_700_000_000_000_000;
 
-        let key = encode_key(ts, &entry_id, &entity_id);
-        assert_eq!(key.len(), 40);
+        let key = encode_key(&branch_id, ts, &entry_id, &entity_id);
+        assert_eq!(key.len(), 56);
 
-        let (ts2, eid2, entid2) = decode_key(&key).unwrap();
+        let (bid2, ts2, eid2, entid2) = decode_key(&key).unwrap();
+        assert_eq!(branch_id, bid2);
         assert_eq!(ts, ts2);
         assert_eq!(entry_id, eid2);
         assert_eq!(entity_id, entid2);
     }
 
     #[test]
-    fn keys_sort_by_timestamp() {
+    fn keys_sort_by_branch_then_timestamp() {
+        let branch = Uuid::nil();
         let id = Uuid::now_v7();
-        let k1 = encode_key(100, &id, &id);
-        let k2 = encode_key(200, &id, &id);
+        let k1 = encode_key(&branch, 100, &id, &id);
+        let k2 = encode_key(&branch, 200, &id, &id);
         assert!(k1 < k2);
     }
 }

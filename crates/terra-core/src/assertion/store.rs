@@ -34,7 +34,7 @@ impl AssertionStore {
         opts.create_missing_column_families(true);
 
         let mut col_opts = Options::default();
-        col_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
+        col_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(32));
 
         let mut entity_opts = Options::default();
         entity_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));

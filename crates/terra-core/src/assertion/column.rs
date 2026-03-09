@@ -9,6 +9,7 @@ use super::log::LogError;
 /// A single cell in a column: one property value for one entity at one point in time.
 #[derive(Debug, Clone, Serialize)]
 pub struct ColumnCell {
+    pub branch_id: Uuid,
     pub property_id: Uuid,
     pub timestamp_us: i64,
     pub log_entry_id: Uuid,
@@ -18,8 +19,8 @@ pub struct ColumnCell {
 
 /// Low-level columnar storage backed by a RocksDB column family.
 ///
-/// Key layout (56 bytes, big-endian where applicable):
-/// `property_id(16) | timestamp_us(8) | log_entry_id(16) | entity_id(16)`
+/// Key layout (72 bytes, big-endian where applicable):
+/// `branch_id(16) | property_id(16) | timestamp_us(8) | log_entry_id(16) | entity_id(16)`
 ///
 /// Value: arbitrary JSON bytes.
 pub struct Column {
@@ -61,10 +62,12 @@ impl Column {
             .map_err(|e| LogError::Storage(e.to_string()))
     }
 
-    /// Scans all cells for a given property, ordered by timestamp.
+    /// Scans all cells for a given property on the main branch, ordered by timestamp.
     pub fn scan_property(&self, property_id: Uuid) -> Result<Vec<ColumnCell>, LogError> {
         let cf = self.cf()?;
-        let prefix = property_id.as_bytes().to_vec();
+        let mut prefix = [0u8; 32];
+        prefix[0..16].copy_from_slice(super::MAIN_BRANCH.as_bytes());
+        prefix[16..32].copy_from_slice(property_id.as_bytes());
 
         let mut cells = Vec::new();
         let iter = self.db.prefix_iterator_cf(cf, &prefix);
@@ -76,11 +79,12 @@ impl Column {
                 break;
             }
 
-            let (pid, ts, lid, eid) = decode_key(&key)?;
+            let (bid, pid, ts, lid, eid) = decode_key(&key)?;
             let value: serde_json::Value = serde_json::from_slice(&val)
                 .map_err(|e| LogError::Storage(e.to_string()))?;
 
             cells.push(ColumnCell {
+                branch_id: bid,
                 property_id: pid,
                 timestamp_us: ts,
                 log_entry_id: lid,
@@ -99,33 +103,36 @@ impl Column {
     }
 }
 
-// Key: property_id(16) | timestamp_us(8 BE) | log_entry_id(16) | entity_id(16) = 56 bytes
+// Key: branch_id(16) | property_id(16) | timestamp_us(8 BE) | log_entry_id(16) | entity_id(16) = 72 bytes
 
-pub(crate) fn encode_key(cell: &ColumnCell) -> [u8; 56] {
-    let mut key = [0u8; 56];
-    key[0..16].copy_from_slice(cell.property_id.as_bytes());
-    key[16..24].copy_from_slice(&cell.timestamp_us.to_be_bytes());
-    key[24..40].copy_from_slice(cell.log_entry_id.as_bytes());
-    key[40..56].copy_from_slice(cell.entity_id.as_bytes());
+pub(crate) fn encode_key(cell: &ColumnCell) -> [u8; 72] {
+    let mut key = [0u8; 72];
+    key[0..16].copy_from_slice(cell.branch_id.as_bytes());
+    key[16..32].copy_from_slice(cell.property_id.as_bytes());
+    key[32..40].copy_from_slice(&cell.timestamp_us.to_be_bytes());
+    key[40..56].copy_from_slice(cell.log_entry_id.as_bytes());
+    key[56..72].copy_from_slice(cell.entity_id.as_bytes());
     key
 }
 
-fn decode_key(key: &[u8]) -> Result<(Uuid, i64, Uuid, Uuid), LogError> {
-    if key.len() < 56 {
+fn decode_key(key: &[u8]) -> Result<(Uuid, Uuid, i64, Uuid, Uuid), LogError> {
+    if key.len() < 72 {
         return Err(LogError::Storage("column key too short".into()));
     }
-    let property_id =
+    let branch_id =
         Uuid::from_slice(&key[0..16]).map_err(|e| LogError::Storage(e.to_string()))?;
+    let property_id =
+        Uuid::from_slice(&key[16..32]).map_err(|e| LogError::Storage(e.to_string()))?;
     let timestamp_us = i64::from_be_bytes(
-        key[16..24]
+        key[32..40]
             .try_into()
             .map_err(|_| LogError::Storage("bad timestamp".into()))?,
     );
     let log_entry_id =
-        Uuid::from_slice(&key[24..40]).map_err(|e| LogError::Storage(e.to_string()))?;
-    let entity_id =
         Uuid::from_slice(&key[40..56]).map_err(|e| LogError::Storage(e.to_string()))?;
-    Ok((property_id, timestamp_us, log_entry_id, entity_id))
+    let entity_id =
+        Uuid::from_slice(&key[56..72]).map_err(|e| LogError::Storage(e.to_string()))?;
+    Ok((branch_id, property_id, timestamp_us, log_entry_id, entity_id))
 }
 
 #[cfg(test)]
@@ -147,6 +154,7 @@ mod tests {
 
     fn cell(property_id: Uuid, ts: i64, value: serde_json::Value) -> ColumnCell {
         ColumnCell {
+            branch_id: Uuid::nil(),
             property_id,
             timestamp_us: ts,
             log_entry_id: Uuid::now_v7(),
@@ -229,9 +237,10 @@ mod tests {
     fn key_encoding_roundtrip() {
         let c = cell(Uuid::now_v7(), 1_700_000_000_000_000, serde_json::json!(null));
         let key = encode_key(&c);
-        assert_eq!(key.len(), 56);
+        assert_eq!(key.len(), 72);
 
-        let (pid, ts, lid, eid) = decode_key(&key).unwrap();
+        let (bid, pid, ts, lid, eid) = decode_key(&key).unwrap();
+        assert_eq!(bid, c.branch_id);
         assert_eq!(pid, c.property_id);
         assert_eq!(ts, c.timestamp_us);
         assert_eq!(lid, c.log_entry_id);
@@ -239,13 +248,14 @@ mod tests {
     }
 
     #[test]
-    fn keys_sort_by_property_then_timestamp() {
+    fn keys_sort_by_branch_property_timestamp() {
+        let branch = Uuid::nil();
         let prop = Uuid::now_v7();
         let lid = Uuid::now_v7();
         let eid = Uuid::now_v7();
 
-        let c1 = ColumnCell { property_id: prop, timestamp_us: 100, log_entry_id: lid, entity_id: eid, value: serde_json::json!(null) };
-        let c2 = ColumnCell { property_id: prop, timestamp_us: 200, log_entry_id: lid, entity_id: eid, value: serde_json::json!(null) };
+        let c1 = ColumnCell { branch_id: branch, property_id: prop, timestamp_us: 100, log_entry_id: lid, entity_id: eid, value: serde_json::json!(null) };
+        let c2 = ColumnCell { branch_id: branch, property_id: prop, timestamp_us: 200, log_entry_id: lid, entity_id: eid, value: serde_json::json!(null) };
 
         assert!(encode_key(&c1) < encode_key(&c2));
     }

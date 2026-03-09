@@ -40,7 +40,7 @@ impl EntityIo {
     /// Writes an entity record to the main CF.
     pub fn put(&self, record: &EntityRecord) -> Result<(), LogError> {
         let main = self.main_cf()?;
-        let key = encode_main_key(&record.id, record.timestamp.timestamp_micros());
+        let key = encode_main_key(&super::MAIN_BRANCH, &record.id, record.timestamp.timestamp_micros());
         let val = serde_json::json!({
             "slug": record.slug,
             "status": record.status,
@@ -59,7 +59,7 @@ impl EntityIo {
         let main = self.main_cf()?;
         let idx = self.slug_cf()?;
 
-        let key = encode_main_key(&record.id, record.timestamp.timestamp_micros());
+        let key = encode_main_key(&super::MAIN_BRANCH, &record.id, record.timestamp.timestamp_micros());
         let val = serde_json::json!({
             "slug": record.slug,
             "status": record.status,
@@ -70,7 +70,7 @@ impl EntityIo {
 
         let mut batch = rocksdb::WriteBatch::default();
         batch.put_cf(main, &key, &val_bytes);
-        batch.put_cf(idx, record.slug.as_bytes(), record.id.as_bytes());
+        batch.put_cf(idx, &encode_slug_key(&super::MAIN_BRANCH, &record.slug), record.id.as_bytes());
 
         self.db
             .write(batch)
@@ -80,7 +80,10 @@ impl EntityIo {
     /// Reads the latest record for an entity by UUID (last entry by timestamp).
     pub fn get_latest(&self, entity_id: &Uuid) -> Result<Option<EntityRecord>, LogError> {
         let main = self.main_cf()?;
-        let prefix = entity_id.as_bytes().to_vec();
+        // Prefix: branch(16) | entity(16) = 32 bytes
+        let mut prefix = [0u8; 32];
+        prefix[0..16].copy_from_slice(super::MAIN_BRANCH.as_bytes());
+        prefix[16..32].copy_from_slice(entity_id.as_bytes());
 
         let mut latest: Option<(i64, Vec<u8>)> = None;
         let iter = self.db.prefix_iterator_cf(main, &prefix);
@@ -90,7 +93,7 @@ impl EntityIo {
             if !key.starts_with(&prefix) {
                 break;
             }
-            let ts = decode_timestamp(&key)?;
+            let (_, _, ts) = decode_main_key(&key)?;
             match &latest {
                 Some((prev_ts, _)) if ts <= *prev_ts => {}
                 _ => latest = Some((ts, val.to_vec())),
@@ -109,7 +112,9 @@ impl EntityIo {
     /// Reads all records for an entity by UUID, ordered by timestamp.
     pub fn get_history(&self, entity_id: &Uuid) -> Result<Vec<EntityRecord>, LogError> {
         let main = self.main_cf()?;
-        let prefix = entity_id.as_bytes().to_vec();
+        let mut prefix = [0u8; 32];
+        prefix[0..16].copy_from_slice(super::MAIN_BRANCH.as_bytes());
+        prefix[16..32].copy_from_slice(entity_id.as_bytes());
 
         let mut records = Vec::new();
         let iter = self.db.prefix_iterator_cf(main, &prefix);
@@ -119,7 +124,7 @@ impl EntityIo {
             if !key.starts_with(&prefix) {
                 break;
             }
-            let ts = decode_timestamp(&key)?;
+            let (_, _, ts) = decode_main_key(&key)?;
             records.push(decode_record(entity_id, ts, &val)?);
         }
 
@@ -129,7 +134,8 @@ impl EntityIo {
     /// Looks up a UUID by slug from the index CF.
     pub fn get_uuid_by_slug(&self, slug: &str) -> Result<Option<Uuid>, LogError> {
         let idx = self.slug_cf()?;
-        match self.db.get_cf(idx, slug.as_bytes()) {
+        let key = encode_slug_key(&super::MAIN_BRANCH, slug);
+        match self.db.get_cf(idx, &key) {
             Ok(Some(bytes)) => {
                 let uuid = Uuid::from_slice(&bytes)
                     .map_err(|e| LogError::Storage(e.to_string()))?;
@@ -140,21 +146,23 @@ impl EntityIo {
         }
     }
 
-    /// Iterates all entries in the main CF. Returns all latest records.
+    /// Iterates all entries in the main CF on the main branch. Returns all latest records.
     pub fn scan_all_latest(&self) -> Result<Vec<EntityRecord>, LogError> {
         let main = self.main_cf()?;
+        let branch_prefix = super::MAIN_BRANCH.as_bytes().to_vec();
         let mut latest_map: std::collections::HashMap<Uuid, (i64, Vec<u8>)> =
             std::collections::HashMap::new();
 
-        let iter = self.db.iterator_cf(main, rocksdb::IteratorMode::Start);
+        let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
         for item in iter {
             let (key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            if key.len() < 24 {
+            if !key.starts_with(&branch_prefix) {
+                break;
+            }
+            if key.len() < 40 {
                 continue;
             }
-            let entity_id = Uuid::from_slice(&key[0..16])
-                .map_err(|e| LogError::Storage(e.to_string()))?;
-            let ts = decode_timestamp(&key)?;
+            let (_, entity_id, ts) = decode_main_key(&key)?;
 
             match latest_map.get(&entity_id) {
                 Some((prev_ts, _)) if ts <= *prev_ts => {}
@@ -182,24 +190,38 @@ impl EntityIo {
     }
 }
 
-// Key: entity_uuid(16) | timestamp_us(8 BE) = 24 bytes
+// Key: branch_id(16) | entity_uuid(16) | timestamp_us(8 BE) = 40 bytes
 
-fn encode_main_key(entity_id: &Uuid, timestamp_us: i64) -> [u8; 24] {
-    let mut key = [0u8; 24];
-    key[0..16].copy_from_slice(entity_id.as_bytes());
-    key[16..24].copy_from_slice(&timestamp_us.to_be_bytes());
+fn encode_main_key(branch_id: &Uuid, entity_id: &Uuid, timestamp_us: i64) -> [u8; 40] {
+    let mut key = [0u8; 40];
+    key[0..16].copy_from_slice(branch_id.as_bytes());
+    key[16..32].copy_from_slice(entity_id.as_bytes());
+    key[32..40].copy_from_slice(&timestamp_us.to_be_bytes());
     key
 }
 
-fn decode_timestamp(key: &[u8]) -> Result<i64, LogError> {
-    if key.len() < 24 {
+fn decode_main_key(key: &[u8]) -> Result<(Uuid, Uuid, i64), LogError> {
+    if key.len() < 40 {
         return Err(LogError::Storage("entity key too short".into()));
     }
-    Ok(i64::from_be_bytes(
-        key[16..24]
+    let branch_id = Uuid::from_slice(&key[0..16])
+        .map_err(|e| LogError::Storage(e.to_string()))?;
+    let entity_id = Uuid::from_slice(&key[16..32])
+        .map_err(|e| LogError::Storage(e.to_string()))?;
+    let ts = i64::from_be_bytes(
+        key[32..40]
             .try_into()
             .map_err(|_| LogError::Storage("bad timestamp".into()))?,
-    ))
+    );
+    Ok((branch_id, entity_id, ts))
+}
+
+// Slug index key: branch_id(16) | slug_bytes
+fn encode_slug_key(branch_id: &Uuid, slug: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(16 + slug.len());
+    key.extend_from_slice(branch_id.as_bytes());
+    key.extend_from_slice(slug.as_bytes());
+    key
 }
 
 fn decode_record(entity_id: &Uuid, timestamp_us: i64, val_bytes: &[u8]) -> Result<EntityRecord, LogError> {
@@ -356,11 +378,15 @@ mod tests {
 
     #[test]
     fn key_encoding_roundtrip() {
+        let branch = Uuid::nil();
         let id = Uuid::now_v7();
         let ts: i64 = 1_700_000_000_000_000;
-        let key = encode_main_key(&id, ts);
-        assert_eq!(key.len(), 24);
-        assert_eq!(&key[0..16], id.as_bytes());
-        assert_eq!(decode_timestamp(&key).unwrap(), ts);
+        let key = encode_main_key(&branch, &id, ts);
+        assert_eq!(key.len(), 40);
+
+        let (bid, eid, decoded_ts) = decode_main_key(&key).unwrap();
+        assert_eq!(bid, branch);
+        assert_eq!(eid, id);
+        assert_eq!(decoded_ts, ts);
     }
 }

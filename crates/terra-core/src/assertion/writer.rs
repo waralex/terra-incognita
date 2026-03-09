@@ -9,6 +9,7 @@ use crate::schema::{SchemaRegistry, ValueType};
 
 use super::column::{self, Column, ColumnCell};
 use super::log::{AppendLog, LogEntry, LogError};
+use super::property_value::PropertyValue;
 
 /// Input for a single assertion (or hypothesis) about an entity.
 pub struct AssertionInput {
@@ -16,8 +17,8 @@ pub struct AssertionInput {
     pub entity_id: Uuid,
     /// The entity type (used for property validation).
     pub entity_type_id: Uuid,
-    /// Property values: property_id → arbitrary JSON.
-    pub properties: HashMap<Uuid, serde_json::Value>,
+    /// Property values: property_id → typed value.
+    pub properties: HashMap<Uuid, PropertyValue>,
 }
 
 /// Errors from assertion writer operations.
@@ -28,6 +29,14 @@ pub enum WriterError {
     PropertyNotAttached {
         property_id: Uuid,
         entity_type_id: Uuid,
+    },
+
+    /// Property value type does not match schema (e.g. Set value for a Range property).
+    #[error("type mismatch for property {property_id}: expected {expected}, got {actual}")]
+    TypeMismatch {
+        property_id: Uuid,
+        expected: &'static str,
+        actual: &'static str,
     },
 
     /// Schema lookup failed.
@@ -69,8 +78,8 @@ impl AssertionWriter {
     /// Writes one or more assertions atomically.
     ///
     /// For each input:
-    /// 1. Validates all property_ids belong to the entity type (via SchemaRegistry).
-    /// 2. Appends a log entry (body = full property map).
+    /// 1. Validates all property_ids belong to the entity type and value types match.
+    /// 2. Appends a log entry (body = full property map as JSON).
     /// 3. Fans out each property value into the typed column (set/struct/range).
     ///
     /// Everything goes into a single RocksDB WriteBatch.
@@ -79,10 +88,8 @@ impl AssertionWriter {
         inputs: &[AssertionInput],
         registry: &SchemaRegistry,
     ) -> Result<Vec<LogEntry>, WriterError> {
-        // Phase 1: validate all inputs against schema
         let resolved = self.validate(inputs, registry)?;
 
-        // Phase 2: build one WriteBatch across log + column CFs
         let log_cf = self.log.cf().map_err(WriterError::Storage)?;
         let set_cf = self.col_set.cf().map_err(WriterError::Storage)?;
         let struct_cf = self.col_struct.cf().map_err(WriterError::Storage)?;
@@ -96,9 +103,12 @@ impl AssertionWriter {
             let timestamp_us = now.timestamp_micros();
             let log_entry_id = Uuid::now_v7();
 
-            // Log entry: body is the full property map
-            let body = serde_json::to_value(&input.properties)
-                .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
+            // Build log body: property_id → JSON representation of typed value
+            let mut body_map = serde_json::Map::new();
+            for (property_id, value) in &input.properties {
+                body_map.insert(property_id.to_string(), value.to_json()?);
+            }
+            let body = serde_json::Value::Object(body_map);
 
             let log_key = super::log::encode_key(timestamp_us, &log_entry_id, &input.entity_id);
             let log_val = serde_json::to_vec(&body)
@@ -113,10 +123,9 @@ impl AssertionWriter {
                     timestamp_us,
                     log_entry_id,
                     entity_id: input.entity_id,
-                    value: serde_json::Value::Null, // only key matters
+                    value: serde_json::Value::Null,
                 });
-                let col_val = serde_json::to_vec(value)
-                    .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
+                let col_val = value.to_bytes()?;
 
                 let cf = match vt {
                     ValueType::Set => &set_cf,
@@ -141,7 +150,7 @@ impl AssertionWriter {
         Ok(log_entries)
     }
 
-    /// Validates all inputs and returns a Vec of property_id → ValueType maps.
+    /// Validates all inputs: properties belong to entity type and value types match.
     fn validate(
         &self,
         inputs: &[AssertionInput],
@@ -156,11 +165,25 @@ impl AssertionWriter {
                 .map(|p| (p.id, p.value_type))
                 .collect();
 
-            for property_id in input.properties.keys() {
-                if !allowed.contains_key(property_id) {
-                    return Err(WriterError::PropertyNotAttached {
+            for (property_id, value) in &input.properties {
+                let expected_vt = allowed.get(property_id).ok_or(
+                    WriterError::PropertyNotAttached {
                         property_id: *property_id,
                         entity_type_id: input.entity_type_id,
+                    },
+                )?;
+
+                let actual_vt = value_type_name(value);
+                let expected_name = match expected_vt {
+                    ValueType::Set => "set",
+                    ValueType::Struct => "struct",
+                    ValueType::Range => "range",
+                };
+                if actual_vt != expected_name {
+                    return Err(WriterError::TypeMismatch {
+                        property_id: *property_id,
+                        expected: expected_name,
+                        actual: actual_vt,
                     });
                 }
             }
@@ -172,11 +195,21 @@ impl AssertionWriter {
     }
 }
 
+fn value_type_name(value: &PropertyValue) -> &'static str {
+    match value {
+        PropertyValue::Set(_) => "set",
+        PropertyValue::Struct(_) => "struct",
+        PropertyValue::Range(_) => "range",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assertion::property_value::{RangeValue, SetValue, StructValue};
     use crate::assertion::AssertionStore;
     use crate::schema::SchemaRegistry;
+    use serde_json::json;
 
     fn setup() -> (AssertionStore, SchemaRegistry, tempfile::TempDir) {
         let reg = SchemaRegistry::open_in_memory().unwrap();
@@ -202,6 +235,21 @@ mod tests {
         (et.id, p_bpm.id, p_cert.id, p_meta.id)
     }
 
+    fn range_eq(v: serde_json::Value) -> PropertyValue {
+        PropertyValue::Range(RangeValue::Eq(v))
+    }
+
+    fn set_contains(v: Vec<serde_json::Value>) -> PropertyValue {
+        PropertyValue::Set(SetValue {
+            contains: v,
+            not_contains: vec![],
+        })
+    }
+
+    fn struct_val(v: serde_json::Value) -> PropertyValue {
+        PropertyValue::Struct(StructValue(v))
+    }
+
     #[test]
     fn write_single_assertion() {
         let (store, reg, _dir) = setup();
@@ -209,9 +257,10 @@ mod tests {
         let writer = store.fact_writer();
 
         let entity_id = Uuid::now_v7();
-        let mut props = HashMap::new();
-        props.insert(p_bpm, serde_json::json!(120));
-        props.insert(p_cert, serde_json::json!("gold"));
+        let props = HashMap::from([
+            (p_bpm, range_eq(json!(120))),
+            (p_cert, set_contains(vec![json!("gold")])),
+        ]);
 
         let entries = writer
             .write(
@@ -227,7 +276,6 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].entity_id, entity_id);
 
-        // Log should have the entry
         let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 1);
     }
@@ -239,10 +287,11 @@ mod tests {
         let writer = store.fact_writer();
 
         let entity_id = Uuid::now_v7();
-        let mut props = HashMap::new();
-        props.insert(p_bpm, serde_json::json!(140));
-        props.insert(p_cert, serde_json::json!("platinum"));
-        props.insert(p_meta, serde_json::json!({"genre": "pop"}));
+        let props = HashMap::from([
+            (p_bpm, range_eq(json!(140))),
+            (p_cert, set_contains(vec![json!("platinum")])),
+            (p_meta, struct_val(json!({"genre": "pop"}))),
+        ]);
 
         writer
             .write(
@@ -255,21 +304,20 @@ mod tests {
             )
             .unwrap();
 
-        // Verify column data
         let range_col = store.fact_col_range();
         let range_cells = range_col.scan_property(p_bpm).unwrap();
         assert_eq!(range_cells.len(), 1);
-        assert_eq!(range_cells[0].value, serde_json::json!(140));
+        assert_eq!(range_cells[0].value, json!({"eq": 140}));
 
         let set_col = store.fact_col_set();
         let set_cells = set_col.scan_property(p_cert).unwrap();
         assert_eq!(set_cells.len(), 1);
-        assert_eq!(set_cells[0].value, serde_json::json!("platinum"));
+        assert_eq!(set_cells[0].value, json!({"contains": ["platinum"]}));
 
         let struct_col = store.fact_col_struct();
         let struct_cells = struct_col.scan_property(p_meta).unwrap();
         assert_eq!(struct_cells.len(), 1);
-        assert_eq!(struct_cells[0].value, serde_json::json!({"genre": "pop"}));
+        assert_eq!(struct_cells[0].value, json!({"genre": "pop"}));
     }
 
     #[test]
@@ -279,8 +327,7 @@ mod tests {
         let writer = store.fact_writer();
 
         let bogus_prop = Uuid::now_v7();
-        let mut props = HashMap::new();
-        props.insert(bogus_prop, serde_json::json!("nope"));
+        let props = HashMap::from([(bogus_prop, range_eq(json!(0)))]);
 
         let err = writer
             .write(
@@ -295,9 +342,31 @@ mod tests {
 
         assert!(matches!(err, WriterError::PropertyNotAttached { .. }));
 
-        // Nothing written
         let log = store.facts().list().unwrap();
         assert!(log.is_empty());
+    }
+
+    #[test]
+    fn rejects_type_mismatch() {
+        let (store, reg, _dir) = setup();
+        let (et_id, p_bpm, _p_cert, _p_meta) = create_schema(&reg);
+        let writer = store.fact_writer();
+
+        // p_bpm is Range, but we pass a Set value
+        let props = HashMap::from([(p_bpm, set_contains(vec![json!("wrong")]))]);
+
+        let err = writer
+            .write(
+                &[AssertionInput {
+                    entity_id: Uuid::now_v7(),
+                    entity_type_id: et_id,
+                    properties: props,
+                }],
+                &reg,
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, WriterError::TypeMismatch { .. }));
     }
 
     #[test]
@@ -312,12 +381,12 @@ mod tests {
                     AssertionInput {
                         entity_id: Uuid::now_v7(),
                         entity_type_id: et_id,
-                        properties: HashMap::from([(p_bpm, serde_json::json!(100))]),
+                        properties: HashMap::from([(p_bpm, range_eq(json!(100)))]),
                     },
                     AssertionInput {
                         entity_id: Uuid::now_v7(),
                         entity_type_id: et_id,
-                        properties: HashMap::from([(p_bpm, serde_json::json!(200))]),
+                        properties: HashMap::from([(p_bpm, range_eq(json!(200)))]),
                     },
                 ],
                 &reg,
@@ -347,7 +416,7 @@ mod tests {
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
-                    properties: HashMap::from([(p_bpm, serde_json::json!(120))]),
+                    properties: HashMap::from([(p_bpm, range_eq(json!(120)))]),
                 }],
                 &reg,
             )
@@ -358,7 +427,7 @@ mod tests {
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
-                    properties: HashMap::from([(p_bpm, serde_json::json!(130))]),
+                    properties: HashMap::from([(p_bpm, range_eq(json!(130)))]),
                 }],
                 &reg,
             )

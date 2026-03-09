@@ -3,6 +3,8 @@ use std::path::Path;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 
 use super::column::Column;
+use super::entity::EntityStore;
+use super::entity_io::EntityIo;
 use super::log::AppendLog;
 use super::writer::AssertionWriter;
 use super::LogError;
@@ -15,6 +17,8 @@ const CF_FACT_RANGE: &str = "fact_range";
 const CF_HYP_SET: &str = "hyp_set";
 const CF_HYP_STRUCT: &str = "hyp_struct";
 const CF_HYP_RANGE: &str = "hyp_range";
+const CF_ENTITY_MAIN: &str = "entity_main";
+const CF_ENTITY_SLUG: &str = "entity_slug";
 
 /// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
@@ -31,6 +35,9 @@ impl AssertionStore {
         let mut col_opts = Options::default();
         col_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
 
+        let mut entity_opts = Options::default();
+        entity_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
+
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_FACTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HYPOTHESES, Options::default()),
@@ -40,6 +47,8 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_HYP_SET, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_STRUCT, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_RANGE, col_opts),
+            ColumnFamilyDescriptor::new(CF_ENTITY_MAIN, entity_opts),
+            ColumnFamilyDescriptor::new(CF_ENTITY_SLUG, Options::default()),
         ];
         let db = DB::open_cf_descriptors(&opts, path, cfs)
             .map_err(|e| LogError::Storage(e.to_string()))?;
@@ -101,6 +110,13 @@ impl AssertionStore {
     /// Hypothesis range column.
     pub fn hypothesis_col_range(&self) -> Column<'_> {
         Column::new(&self.db, CF_HYP_RANGE)
+    }
+
+    // -- Entities --
+
+    /// Entity store for create/delete/restore/find operations.
+    pub fn entities(&self) -> EntityStore<'_> {
+        EntityStore::new(EntityIo::new(&self.db, CF_ENTITY_MAIN, CF_ENTITY_SLUG))
     }
 }
 

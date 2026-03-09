@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use rocksdb::DB;
 use serde::Serialize;
 use uuid::Uuid;
@@ -20,13 +22,13 @@ pub struct ColumnCell {
 /// `property_id(16) | timestamp_us(8) | log_entry_id(16) | entity_id(16)`
 ///
 /// Value: arbitrary JSON bytes.
-pub struct Column<'a> {
-    db: &'a DB,
+pub struct Column {
+    db: Arc<DB>,
     cf_name: &'static str,
 }
 
-impl<'a> Column<'a> {
-    pub(crate) fn new(db: &'a DB, cf_name: &'static str) -> Self {
+impl Column {
+    pub(crate) fn new(db: Arc<DB>, cf_name: &'static str) -> Self {
         Self { db, cf_name }
     }
 
@@ -133,14 +135,14 @@ mod tests {
 
     const TEST_CF: &str = "test_column";
 
-    fn open_db(dir: &tempfile::TempDir) -> DB {
+    fn open_db(dir: &tempfile::TempDir) -> Arc<DB> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
         let mut cf_opts = Options::default();
         cf_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
         let cf = ColumnFamilyDescriptor::new(TEST_CF, cf_opts);
-        DB::open_cf_descriptors(&opts, dir.path(), vec![cf]).unwrap()
+        Arc::new(DB::open_cf_descriptors(&opts, dir.path(), vec![cf]).unwrap())
     }
 
     fn cell(property_id: Uuid, ts: i64, value: serde_json::Value) -> ColumnCell {
@@ -157,7 +159,7 @@ mod tests {
     fn put_and_scan() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let col = Column::new(&db, TEST_CF);
+        let col = Column::new(Arc::clone(&db), TEST_CF);
 
         let prop = Uuid::now_v7();
         let c = cell(prop, 1000, serde_json::json!({"v": 42}));
@@ -173,7 +175,7 @@ mod tests {
     fn batch_put() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let col = Column::new(&db, TEST_CF);
+        let col = Column::new(Arc::clone(&db), TEST_CF);
 
         let prop = Uuid::now_v7();
         let cells = vec![
@@ -194,7 +196,7 @@ mod tests {
     fn scan_isolates_by_property() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let col = Column::new(&db, TEST_CF);
+        let col = Column::new(Arc::clone(&db), TEST_CF);
 
         let prop_a = Uuid::now_v7();
         let prop_b = Uuid::now_v7();
@@ -217,7 +219,7 @@ mod tests {
     fn scan_empty_property() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let col = Column::new(&db, TEST_CF);
+        let col = Column::new(Arc::clone(&db), TEST_CF);
 
         let cells = col.scan_property(Uuid::now_v7()).unwrap();
         assert!(cells.is_empty());

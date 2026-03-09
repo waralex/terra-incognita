@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
@@ -24,14 +26,14 @@ pub struct EntityRecord {
 }
 
 /// Low-level IO for entity storage: main CF (uuid+timestamp → body) and slug index CF (slug → uuid).
-pub struct EntityIo<'a> {
-    db: &'a DB,
+pub struct EntityIo {
+    db: Arc<DB>,
     main_cf: &'static str,
     slug_cf: &'static str,
 }
 
-impl<'a> EntityIo<'a> {
-    pub(crate) fn new(db: &'a DB, main_cf: &'static str, slug_cf: &'static str) -> Self {
+impl EntityIo {
+    pub(crate) fn new(db: Arc<DB>, main_cf: &'static str, slug_cf: &'static str) -> Self {
         Self { db, main_cf, slug_cf }
     }
 
@@ -239,7 +241,7 @@ mod tests {
     const MAIN_CF: &str = "entity_main";
     const SLUG_CF: &str = "entity_slug";
 
-    fn open_db(dir: &tempfile::TempDir) -> DB {
+    fn open_db(dir: &tempfile::TempDir) -> Arc<DB> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
@@ -251,7 +253,7 @@ mod tests {
             ColumnFamilyDescriptor::new(MAIN_CF, main_opts),
             ColumnFamilyDescriptor::new(SLUG_CF, Options::default()),
         ];
-        DB::open_cf_descriptors(&opts, dir.path(), cfs).unwrap()
+        Arc::new(DB::open_cf_descriptors(&opts, dir.path(), cfs).unwrap())
     }
 
     fn record(id: Uuid, slug: &str, status: EntityStatus) -> EntityRecord {
@@ -268,7 +270,7 @@ mod tests {
     fn put_and_get_latest() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(&db, MAIN_CF, SLUG_CF);
+        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
 
         let id = Uuid::now_v7();
         let rec = record(id, "alpha", EntityStatus::Active);
@@ -284,7 +286,7 @@ mod tests {
     fn get_latest_returns_none_for_unknown() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(&db, MAIN_CF, SLUG_CF);
+        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
 
         assert!(io.get_latest(&Uuid::now_v7()).unwrap().is_none());
     }
@@ -293,7 +295,7 @@ mod tests {
     fn put_with_index_and_lookup_by_slug() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(&db, MAIN_CF, SLUG_CF);
+        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
 
         let id = Uuid::now_v7();
         let rec = record(id, "bravo", EntityStatus::Active);
@@ -309,7 +311,7 @@ mod tests {
     fn history_tracks_status_changes() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(&db, MAIN_CF, SLUG_CF);
+        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
 
         let id = Uuid::now_v7();
         io.put(&record(id, "charlie", EntityStatus::Active)).unwrap();
@@ -332,7 +334,7 @@ mod tests {
     fn scan_all_latest() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(&db, MAIN_CF, SLUG_CF);
+        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
 
         let id1 = Uuid::now_v7();
         let id2 = Uuid::now_v7();

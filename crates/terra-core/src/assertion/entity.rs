@@ -29,12 +29,12 @@ pub enum EntityError {
 }
 
 /// Mid-level entity operations: create, delete, restore, find.
-pub struct EntityStore<'a> {
-    io: EntityIo<'a>,
+pub struct EntityStore {
+    io: EntityIo,
 }
 
-impl<'a> EntityStore<'a> {
-    pub(crate) fn new(io: EntityIo<'a>) -> Self {
+impl EntityStore {
+    pub(crate) fn new(io: EntityIo) -> Self {
         Self { io }
     }
 

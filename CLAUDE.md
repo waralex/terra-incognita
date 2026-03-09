@@ -122,6 +122,19 @@ Circular but tractable.
 **Hierarchical query performance.** Recursive traversal of dynamic relation-based
 hierarchies at scale. Open problem — do not optimize prematurely.
 
+## Ownership and Concurrency
+
+Assume multi-threaded and async context. Design all long-lived types accordingly.
+
+**No lifetimes on long-lived types.** Structs that persist beyond a single function
+call must not carry lifetime parameters. Use `Arc<T>` for shared ownership instead
+of `&'a T`. Lifetimes are acceptable only for short-lived borrows within a function
+scope (iterators, builders, closures).
+
+**No references for long-term storage.** Storing `&'a T` in a struct couples it to
+the lender's lifetime and makes the type unusable across threads and async boundaries.
+Use `Arc<T>` (or `Arc<Mutex<T>>` / `Arc<RwLock<T>>` when interior mutability is needed).
+
 ## Code Style
 
 Docstrings (`///`) on all public items (structs, enums, functions, methods, traits).

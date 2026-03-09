@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 
@@ -22,7 +23,7 @@ const CF_ENTITY_SLUG: &str = "entity_slug";
 
 /// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
-    db: DB,
+    db: Arc<DB>,
 }
 
 impl AssertionStore {
@@ -53,70 +54,70 @@ impl AssertionStore {
         let db = DB::open_cf_descriptors(&opts, path, cfs)
             .map_err(|e| LogError::Storage(e.to_string()))?;
 
-        Ok(Self { db })
+        Ok(Self { db: Arc::new(db) })
     }
 
     // -- Logs --
 
     /// Fact log — convergence points, definitive claims.
-    pub fn facts(&self) -> AppendLog<'_> {
-        AppendLog::new(&self.db, CF_FACTS)
+    pub fn facts(&self) -> AppendLog {
+        AppendLog::new(Arc::clone(&self.db), CF_FACTS)
     }
 
     /// Hypothesis log — tentative claims under consideration.
-    pub fn hypotheses(&self) -> AppendLog<'_> {
-        AppendLog::new(&self.db, CF_HYPOTHESES)
+    pub fn hypotheses(&self) -> AppendLog {
+        AppendLog::new(Arc::clone(&self.db), CF_HYPOTHESES)
     }
 
     // -- Writers (log + columns in one WriteBatch) --
 
     /// Writer for fact assertions.
-    pub fn fact_writer(&self) -> AssertionWriter<'_> {
-        AssertionWriter::new(&self.db, CF_FACTS, CF_FACT_SET, CF_FACT_STRUCT, CF_FACT_RANGE)
+    pub fn fact_writer(&self) -> AssertionWriter {
+        AssertionWriter::new(Arc::clone(&self.db), CF_FACTS, CF_FACT_SET, CF_FACT_STRUCT, CF_FACT_RANGE)
     }
 
     /// Writer for hypothesis assertions.
-    pub fn hypothesis_writer(&self) -> AssertionWriter<'_> {
-        AssertionWriter::new(&self.db, CF_HYPOTHESES, CF_HYP_SET, CF_HYP_STRUCT, CF_HYP_RANGE)
+    pub fn hypothesis_writer(&self) -> AssertionWriter {
+        AssertionWriter::new(Arc::clone(&self.db), CF_HYPOTHESES, CF_HYP_SET, CF_HYP_STRUCT, CF_HYP_RANGE)
     }
 
     // -- Column accessors (for reads) --
 
     /// Fact set column.
-    pub fn fact_col_set(&self) -> Column<'_> {
-        Column::new(&self.db, CF_FACT_SET)
+    pub fn fact_col_set(&self) -> Column {
+        Column::new(Arc::clone(&self.db), CF_FACT_SET)
     }
 
     /// Fact struct column.
-    pub fn fact_col_struct(&self) -> Column<'_> {
-        Column::new(&self.db, CF_FACT_STRUCT)
+    pub fn fact_col_struct(&self) -> Column {
+        Column::new(Arc::clone(&self.db), CF_FACT_STRUCT)
     }
 
     /// Fact range column.
-    pub fn fact_col_range(&self) -> Column<'_> {
-        Column::new(&self.db, CF_FACT_RANGE)
+    pub fn fact_col_range(&self) -> Column {
+        Column::new(Arc::clone(&self.db), CF_FACT_RANGE)
     }
 
     /// Hypothesis set column.
-    pub fn hypothesis_col_set(&self) -> Column<'_> {
-        Column::new(&self.db, CF_HYP_SET)
+    pub fn hypothesis_col_set(&self) -> Column {
+        Column::new(Arc::clone(&self.db), CF_HYP_SET)
     }
 
     /// Hypothesis struct column.
-    pub fn hypothesis_col_struct(&self) -> Column<'_> {
-        Column::new(&self.db, CF_HYP_STRUCT)
+    pub fn hypothesis_col_struct(&self) -> Column {
+        Column::new(Arc::clone(&self.db), CF_HYP_STRUCT)
     }
 
     /// Hypothesis range column.
-    pub fn hypothesis_col_range(&self) -> Column<'_> {
-        Column::new(&self.db, CF_HYP_RANGE)
+    pub fn hypothesis_col_range(&self) -> Column {
+        Column::new(Arc::clone(&self.db), CF_HYP_RANGE)
     }
 
     // -- Entities --
 
     /// Entity store for create/delete/restore/find operations.
-    pub fn entities(&self) -> EntityStore<'_> {
-        EntityStore::new(EntityIo::new(&self.db, CF_ENTITY_MAIN, CF_ENTITY_SLUG))
+    pub fn entities(&self) -> EntityStore {
+        EntityStore::new(EntityIo::new(Arc::clone(&self.db), CF_ENTITY_MAIN, CF_ENTITY_SLUG))
     }
 }
 

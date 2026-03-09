@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::Utc;
 use rocksdb::DB;
@@ -40,27 +41,27 @@ pub enum WriterError {
 
 /// Mid-level writer that validates against schema, writes to the append log,
 /// then fans out property values into typed columns — all in one WriteBatch.
-pub struct AssertionWriter<'a> {
-    db: &'a DB,
-    log: AppendLog<'a>,
-    col_set: Column<'a>,
-    col_struct: Column<'a>,
-    col_range: Column<'a>,
+pub struct AssertionWriter {
+    db: Arc<DB>,
+    log: AppendLog,
+    col_set: Column,
+    col_struct: Column,
+    col_range: Column,
 }
 
-impl<'a> AssertionWriter<'a> {
+impl AssertionWriter {
     pub(crate) fn new(
-        db: &'a DB,
+        db: Arc<DB>,
         log_cf: &'static str,
         set_cf: &'static str,
         struct_cf: &'static str,
         range_cf: &'static str,
     ) -> Self {
         Self {
-            db,
-            log: AppendLog::new(db, log_cf),
-            col_set: Column::new(db, set_cf),
-            col_struct: Column::new(db, struct_cf),
+            db: Arc::clone(&db),
+            log: AppendLog::new(Arc::clone(&db), log_cf),
+            col_set: Column::new(Arc::clone(&db), set_cf),
+            col_struct: Column::new(Arc::clone(&db), struct_cf),
             col_range: Column::new(db, range_cf),
         }
     }

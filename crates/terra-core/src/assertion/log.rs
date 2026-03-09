@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use rocksdb::DB;
 use serde::Serialize;
@@ -25,13 +27,13 @@ pub enum LogError {
 }
 
 /// Append-only log backed by a RocksDB column family.
-pub struct AppendLog<'a> {
-    db: &'a DB,
+pub struct AppendLog {
+    db: Arc<DB>,
     cf_name: &'static str,
 }
 
-impl<'a> AppendLog<'a> {
-    pub(crate) fn new(db: &'a DB, cf_name: &'static str) -> Self {
+impl AppendLog {
+    pub(crate) fn new(db: Arc<DB>, cf_name: &'static str) -> Self {
         Self { db, cf_name }
     }
 
@@ -164,19 +166,19 @@ mod tests {
 
     const TEST_CF: &str = "test_log";
 
-    fn open_db(dir: &tempfile::TempDir) -> DB {
+    fn open_db(dir: &tempfile::TempDir) -> Arc<DB> {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
         let cf = ColumnFamilyDescriptor::new(TEST_CF, Options::default());
-        DB::open_cf_descriptors(&opts, dir.path(), vec![cf]).unwrap()
+        Arc::new(DB::open_cf_descriptors(&opts, dir.path(), vec![cf]).unwrap())
     }
 
     #[test]
     fn append_and_read_back() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let log = AppendLog::new(&db, TEST_CF);
+        let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
         let entity_id = Uuid::now_v7();
         let body = serde_json::json!({"name": "alpha", "score": 42});
@@ -197,7 +199,7 @@ mod tests {
     fn append_batch_atomic() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let log = AppendLog::new(&db, TEST_CF);
+        let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
         let items: Vec<(Uuid, serde_json::Value)> = vec![
             (Uuid::now_v7(), serde_json::json!({"name": "first"})),
@@ -219,7 +221,7 @@ mod tests {
     fn list_empty_log() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let log = AppendLog::new(&db, TEST_CF);
+        let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
         let entries = log.list().unwrap();
         assert!(entries.is_empty());
@@ -229,7 +231,7 @@ mod tests {
     fn entries_have_unique_ids() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let log = AppendLog::new(&db, TEST_CF);
+        let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
         let e1 = log.append(Uuid::now_v7(), serde_json::json!({})).unwrap();
         let e2 = log.append(Uuid::now_v7(), serde_json::json!({})).unwrap();

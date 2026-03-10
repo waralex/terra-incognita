@@ -86,8 +86,8 @@ transaction and commit atomically.
 future rebase, cherry-pick.
 
 **Processing order** within a transaction:
-1. `entity_types` — create types
-2. `properties` — create properties
+1. `properties` — create properties
+2. `entity_types` — create types (may reference properties from step 1)
 3. `attach` — attach properties to types
 4. `hide` / `unhide` — visibility changes
 5. `introduce` — create entities with assertions

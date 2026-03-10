@@ -863,4 +863,46 @@ mod tests {
             _ => panic!("unexpected"),
         }
     }
+
+    #[test]
+    fn transaction_creates_properties_before_entity_types() {
+        let (reg, store, _dir) = setup();
+
+        // Single transaction: entity_types reference properties defined in the same transaction.
+        // Properties must be processed first even though entity_types appear first in the input.
+        let result = execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("bootstrap schema in one go"),
+                entity_types: vec![CreateEntityType {
+                    slug: "track".into(),
+                    description: None,
+                    properties: vec!["bpm".into()],
+                }],
+                properties: vec![CreateProperty {
+                    slug: "bpm".into(),
+                    value_type: ValueType::Range,
+                    description: None,
+                    entity_types: vec![],
+                }],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        );
+
+        assert!(result.is_ok(), "expected success but got: {:?}", result.err());
+        match result.unwrap() {
+            CommandResult::TransactionResult { entity_types, properties, .. } => {
+                assert_eq!(entity_types.len(), 1);
+                assert_eq!(entity_types[0].slug, "track");
+                assert_eq!(properties.len(), 1);
+                assert_eq!(properties[0].slug, "bpm");
+            }
+            _ => panic!("unexpected"),
+        }
+    }
 }

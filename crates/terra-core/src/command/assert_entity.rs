@@ -86,8 +86,8 @@ pub struct TransactionExecResult {
 /// entity introduction, and assertions — all in one command.
 ///
 /// Processing order:
-/// 1. Create entity types (committed via registry)
-/// 2. Create properties (committed via registry)
+/// 1. Create properties (committed via registry)
+/// 2. Create entity types (committed via registry) — may reference properties from step 1
 /// 3. Attach properties (committed via registry)
 /// 4. Build one WriteBatch for: Transaction record + visibility + assertions
 /// 5. Introduce new entities + write their assertions
@@ -98,27 +98,7 @@ pub fn execute_transaction(
     store: &AssertionStore,
 ) -> Result<TransactionExecResult, AssertEntityError> {
     // Phase 0: Schema operations (committed independently via registry)
-
-    let created_entity_types = if input.entity_types.is_empty() {
-        vec![]
-    } else {
-        let prop_strs: Vec<Vec<&str>> = input
-            .entity_types
-            .iter()
-            .map(|item| item.properties.iter().map(|s| s.as_str()).collect())
-            .collect();
-        let inputs: Vec<EntityTypeInput<'_>> = input
-            .entity_types
-            .iter()
-            .zip(prop_strs.iter())
-            .map(|(item, props)| EntityTypeInput {
-                slug: &item.slug,
-                description: item.description.as_deref(),
-                properties: props,
-            })
-            .collect();
-        registry.create_entity_types_batch(&inputs)?
-    };
+    // Properties first — entity types may reference them for inline attachment.
 
     let created_properties = if input.properties.is_empty() {
         vec![]
@@ -140,6 +120,27 @@ pub fn execute_transaction(
             })
             .collect();
         registry.create_properties_batch(&inputs)?
+    };
+
+    let created_entity_types = if input.entity_types.is_empty() {
+        vec![]
+    } else {
+        let prop_strs: Vec<Vec<&str>> = input
+            .entity_types
+            .iter()
+            .map(|item| item.properties.iter().map(|s| s.as_str()).collect())
+            .collect();
+        let inputs: Vec<EntityTypeInput<'_>> = input
+            .entity_types
+            .iter()
+            .zip(prop_strs.iter())
+            .map(|(item, props)| EntityTypeInput {
+                slug: &item.slug,
+                description: item.description.as_deref(),
+                properties: props,
+            })
+            .collect();
+        registry.create_entity_types_batch(&inputs)?
     };
 
     let attached_count = if input.attach.is_empty() {

@@ -83,7 +83,7 @@ pub struct AssertionItem {
 ///
 /// All write operations are expressed here: schema creation, property attachment,
 /// visibility changes, entity introduction, and assertions on existing entities.
-/// Processed in order: entity_types → properties → attach → hide/unhide → introduce → asserts.
+/// Processed in order: properties → entity_types → attach → hide/unhide → introduce → asserts.
 pub struct TransactionInput {
     /// Transaction-level reasoning: why this batch of operations.
     pub reasoning: serde_json::Value,

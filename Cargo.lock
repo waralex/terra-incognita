@@ -1535,19 +1535,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "terra-server"
+name = "terra-query"
 version = "0.1.0"
 dependencies = [
- "axum",
  "chrono",
  "serde",
  "serde_json",
  "serde_yaml",
  "terra-core",
+ "uuid",
+]
+
+[[package]]
+name = "terra-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_yaml",
+ "terra-core",
+ "terra-query",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

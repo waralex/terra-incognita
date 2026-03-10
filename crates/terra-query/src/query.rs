@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::error::ApiError;
+use crate::error::QueryError;
 use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
@@ -39,9 +39,9 @@ pub struct AttachItemDto {
 pub struct AssertionItemDto {
     pub entity_type: String,
     #[serde(default)]
-    pub properties: HashMap<String, serde_yaml::Value>,
-    #[serde(default = "default_null")]
-    pub reasoning: serde_yaml::Value,
+    pub properties: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub reasoning: serde_json::Value,
 }
 
 /// DTO for an introduce item in a transaction.
@@ -65,11 +65,7 @@ pub struct AssertItemDto {
     pub hypotheses: Vec<AssertionItemDto>,
 }
 
-fn default_null() -> serde_yaml::Value {
-    serde_yaml::Value::Null
-}
-
-/// Serde-tagged query DTO parsed from YAML. Normalized into a domain [`Command`] via [`into_command`](QueryDto::into_command).
+/// Serde-tagged query DTO. Normalized into a domain [`Command`] via [`into_command`](QueryDto::into_command).
 #[derive(Deserialize)]
 #[serde(tag = "command")]
 pub enum QueryDto {
@@ -106,8 +102,8 @@ pub enum QueryDto {
     CreateEntity {
         entity: String,
         description: Option<String>,
-        #[serde(default = "default_null")]
-        reasoning: serde_yaml::Value,
+        #[serde(default)]
+        reasoning: serde_json::Value,
         #[serde(default)]
         facts: Vec<AssertionItemDto>,
         #[serde(default)]
@@ -116,8 +112,8 @@ pub enum QueryDto {
     #[serde(rename = "entity.assert")]
     AssertEntity {
         entity: String,
-        #[serde(default = "default_null")]
-        reasoning: serde_yaml::Value,
+        #[serde(default)]
+        reasoning: serde_json::Value,
         #[serde(default)]
         facts: Vec<AssertionItemDto>,
         #[serde(default)]
@@ -132,8 +128,8 @@ pub enum QueryDto {
     },
     #[serde(rename = "transaction")]
     Transaction {
-        #[serde(default = "default_null")]
-        reasoning: serde_yaml::Value,
+        #[serde(default)]
+        reasoning: serde_json::Value,
         #[serde(default)]
         introduce: Vec<IntroduceItemDto>,
         #[serde(default)]
@@ -165,14 +161,8 @@ pub enum ResponseShape {
 }
 
 impl QueryDto {
-    /// Parses a YAML request body into a query DTO.
-    pub fn parse(body: &[u8]) -> Result<Self, ApiError> {
-        serde_yaml::from_slice(body)
-            .map_err(|e| ApiError::bad_request("parse_error", e.to_string()))
-    }
-
     /// Normalizes the DTO into a domain command and response shape.
-    pub fn into_command(self) -> Result<(Command, ResponseShape), ApiError> {
+    pub fn into_command(self) -> Result<(Command, ResponseShape), QueryError> {
         match self {
             QueryDto::CreateEntityType {
                 slug,
@@ -201,7 +191,7 @@ impl QueryDto {
                     ),
                     ResponseShape::Batch,
                 )),
-                _ => Err(ApiError::bad_request(
+                _ => Err(QueryError::bad_request(
                     "parse_error",
                     "provide either 'slug' for single creation or 'items' for batch creation, not both",
                 )),
@@ -221,7 +211,7 @@ impl QueryDto {
             } => match (slug, items) {
                 (Some(slug), None) => {
                     let value_type = value_type.ok_or_else(|| {
-                        ApiError::bad_request("parse_error", "value_type is required")
+                        QueryError::bad_request("parse_error", "value_type is required")
                     })?;
                     Ok((
                         Command::CreateProperties(vec![CreateProperty {
@@ -247,7 +237,7 @@ impl QueryDto {
                     ),
                     ResponseShape::Batch,
                 )),
-                _ => Err(ApiError::bad_request(
+                _ => Err(QueryError::bad_request(
                     "parse_error",
                     "provide either 'slug' for single creation or 'items' for batch creation, not both",
                 )),
@@ -280,7 +270,7 @@ impl QueryDto {
                     ),
                     ResponseShape::Batch,
                 )),
-                _ => Err(ApiError::bad_request(
+                _ => Err(QueryError::bad_request(
                     "parse_error",
                     "provide either 'entity_type'+'slug' for single attach or 'items' for batch, not both",
                 )),
@@ -295,7 +285,7 @@ impl QueryDto {
                 Command::CreateEntity(AssertEntityInput {
                     entity,
                     description,
-                    reasoning: yaml_to_json(reasoning),
+                    reasoning,
                     facts: convert_assertion_items(facts)?,
                     hypotheses: convert_assertion_items(hypotheses)?,
                 }),
@@ -310,7 +300,7 @@ impl QueryDto {
                 Command::AssertEntity(AssertEntityInput {
                     entity,
                     description: None,
-                    reasoning: yaml_to_json(reasoning),
+                    reasoning,
                     facts: convert_assertion_items(facts)?,
                     hypotheses: convert_assertion_items(hypotheses)?,
                 }),
@@ -344,7 +334,7 @@ impl QueryDto {
                             hypotheses: convert_assertion_items(item.hypotheses)?,
                         })
                     })
-                    .collect::<Result<Vec<_>, ApiError>>()?;
+                    .collect::<Result<Vec<_>, QueryError>>()?;
                 let assert_items = asserts
                     .into_iter()
                     .map(|item| {
@@ -354,10 +344,10 @@ impl QueryDto {
                             hypotheses: convert_assertion_items(item.hypotheses)?,
                         })
                     })
-                    .collect::<Result<Vec<_>, ApiError>>()?;
+                    .collect::<Result<Vec<_>, QueryError>>()?;
                 Ok((
                     Command::Transaction(TransactionInput {
-                        reasoning: yaml_to_json(reasoning),
+                        reasoning,
                         introduce: introduce_items,
                         asserts: assert_items,
                     }),
@@ -389,50 +379,48 @@ impl QueryDto {
 
 fn convert_assertion_items(
     items: Vec<AssertionItemDto>,
-) -> Result<Vec<AssertionItem>, ApiError> {
+) -> Result<Vec<AssertionItem>, QueryError> {
     items
         .into_iter()
         .map(|item| {
             let properties = item
                 .properties
                 .into_iter()
-                .map(|(slug, yaml_val)| {
-                    let pv = parse_property_value(yaml_val)?;
+                .map(|(slug, val)| {
+                    let pv = parse_property_value(val)?;
                     Ok((slug, pv))
                 })
-                .collect::<Result<HashMap<_, _>, ApiError>>()?;
+                .collect::<Result<HashMap<_, _>, QueryError>>()?;
 
             Ok(AssertionItem {
                 entity_type: item.entity_type,
                 properties,
-                reasoning: yaml_to_json(item.reasoning),
+                reasoning: item.reasoning,
             })
         })
         .collect()
 }
 
-/// Parses a YAML property value into a typed PropertyValue.
+/// Parses a JSON property value into a typed PropertyValue.
 ///
 /// Expected formats:
 /// - Set: `{contains: [...], not_contains: [...]}`
 /// - Range: `{eq: V}`, `{from: V, to: V}`, `{from: V}`, `{to: V}`
 /// - Struct: any other mapping or scalar
-fn parse_property_value(yaml: serde_yaml::Value) -> Result<PropertyValue, ApiError> {
-    if let serde_yaml::Value::Mapping(ref map) = yaml {
-        // Check for set markers
-        let has_contains = map.contains_key(&serde_yaml::Value::String("contains".into()));
-        let has_not_contains =
-            map.contains_key(&serde_yaml::Value::String("not_contains".into()));
+fn parse_property_value(val: serde_json::Value) -> Result<PropertyValue, QueryError> {
+    if let serde_json::Value::Object(ref map) = val {
+        let has_contains = map.contains_key("contains");
+        let has_not_contains = map.contains_key("not_contains");
         if has_contains || has_not_contains {
             let contains = map
-                .get(&serde_yaml::Value::String("contains".into()))
-                .and_then(|v| v.as_sequence())
-                .map(|seq| seq.iter().map(yaml_to_json_val).collect())
+                .get("contains")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.clone())
                 .unwrap_or_default();
             let not_contains = map
-                .get(&serde_yaml::Value::String("not_contains".into()))
-                .and_then(|v| v.as_sequence())
-                .map(|seq| seq.iter().map(yaml_to_json_val).collect())
+                .get("not_contains")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.clone())
                 .unwrap_or_default();
             return Ok(PropertyValue::Set(SetValue {
                 contains,
@@ -440,85 +428,28 @@ fn parse_property_value(yaml: serde_yaml::Value) -> Result<PropertyValue, ApiErr
             }));
         }
 
-        // Check for range markers
-        let has_eq = map.contains_key(&serde_yaml::Value::String("eq".into()));
-        let has_from = map.contains_key(&serde_yaml::Value::String("from".into()));
-        let has_to = map.contains_key(&serde_yaml::Value::String("to".into()));
+        let has_eq = map.contains_key("eq");
+        let has_from = map.contains_key("from");
+        let has_to = map.contains_key("to");
 
         if has_eq {
-            let val = map
-                .get(&serde_yaml::Value::String("eq".into()))
-                .map(yaml_to_json_val)
-                .unwrap_or(serde_json::Value::Null);
+            let val = map.get("eq").cloned().unwrap_or(serde_json::Value::Null);
             return Ok(PropertyValue::Range(RangeValue::Eq(val)));
         }
         if has_from && has_to {
-            let from = map
-                .get(&serde_yaml::Value::String("from".into()))
-                .map(yaml_to_json_val)
-                .unwrap_or(serde_json::Value::Null);
-            let to = map
-                .get(&serde_yaml::Value::String("to".into()))
-                .map(yaml_to_json_val)
-                .unwrap_or(serde_json::Value::Null);
+            let from = map.get("from").cloned().unwrap_or(serde_json::Value::Null);
+            let to = map.get("to").cloned().unwrap_or(serde_json::Value::Null);
             return Ok(PropertyValue::Range(RangeValue::Between { from, to }));
         }
         if has_from {
-            let val = map
-                .get(&serde_yaml::Value::String("from".into()))
-                .map(yaml_to_json_val)
-                .unwrap_or(serde_json::Value::Null);
+            let val = map.get("from").cloned().unwrap_or(serde_json::Value::Null);
             return Ok(PropertyValue::Range(RangeValue::From(val)));
         }
         if has_to {
-            let val = map
-                .get(&serde_yaml::Value::String("to".into()))
-                .map(yaml_to_json_val)
-                .unwrap_or(serde_json::Value::Null);
+            let val = map.get("to").cloned().unwrap_or(serde_json::Value::Null);
             return Ok(PropertyValue::Range(RangeValue::To(val)));
         }
     }
 
-    // Default: treat as struct
-    Ok(PropertyValue::Struct(StructValue(yaml_to_json(yaml))))
-}
-
-fn yaml_to_json(yaml: serde_yaml::Value) -> serde_json::Value {
-    yaml_to_json_val(&yaml)
-}
-
-fn yaml_to_json_val(yaml: &serde_yaml::Value) -> serde_json::Value {
-    match yaml {
-        serde_yaml::Value::Null => serde_json::Value::Null,
-        serde_yaml::Value::Bool(b) => serde_json::Value::Bool(*b),
-        serde_yaml::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                serde_json::Value::Number(i.into())
-            } else if let Some(u) = n.as_u64() {
-                serde_json::Value::Number(u.into())
-            } else if let Some(f) = n.as_f64() {
-                serde_json::json!(f)
-            } else {
-                serde_json::Value::Null
-            }
-        }
-        serde_yaml::Value::String(s) => serde_json::Value::String(s.clone()),
-        serde_yaml::Value::Sequence(seq) => {
-            serde_json::Value::Array(seq.iter().map(yaml_to_json_val).collect())
-        }
-        serde_yaml::Value::Mapping(map) => {
-            let obj: serde_json::Map<String, serde_json::Value> = map
-                .iter()
-                .filter_map(|(k, v)| {
-                    let key = match k {
-                        serde_yaml::Value::String(s) => s.clone(),
-                        other => serde_json::to_string(other).ok()?,
-                    };
-                    Some((key, yaml_to_json_val(v)))
-                })
-                .collect();
-            serde_json::Value::Object(obj)
-        }
-        serde_yaml::Value::Tagged(tagged) => yaml_to_json_val(&tagged.value),
-    }
+    Ok(PropertyValue::Struct(StructValue(val)))
 }

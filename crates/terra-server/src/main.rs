@@ -1,13 +1,13 @@
 mod config;
-mod dispatch;
 mod error;
-mod query;
-mod response;
+mod format;
 mod state;
 
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::{Router, routing::post};
 use std::sync::{Arc, Mutex};
 use terra_core::assertion::AssertionStore;
@@ -15,27 +15,28 @@ use terra_core::schema::SchemaRegistry;
 use tracing::info;
 
 use crate::config::Config;
-use crate::dispatch::dispatch;
-use crate::query::QueryDto;
+use crate::error::error_kind_to_status;
+use crate::format::content_format_from_headers;
 use crate::state::AppState;
 
-async fn handle_query(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
-    let dto = match QueryDto::parse(&body) {
-        Ok(dto) => dto,
-        Err(e) => return e.into_response(),
-    };
-
-    match dispatch(dto, &state) {
-        Ok(val) => {
-            let yaml = serde_yaml::to_string(&val).unwrap();
-            (
-                axum::http::StatusCode::OK,
-                [("content-type", "application/yaml")],
-                yaml,
-            )
-                .into_response()
+async fn handle_query(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let format = content_format_from_headers(&headers);
+    let ct = format.content_type_header();
+    let mut inner = state.lock().unwrap();
+    let crate::state::Inner {
+        ref mut registry,
+        ref assertions,
+    } = *inner;
+    match terra_query::dispatch(&body, format, registry, assertions) {
+        Ok(bytes) => (StatusCode::OK, [(CONTENT_TYPE, ct)], bytes).into_response(),
+        Err(e) => {
+            let status = error_kind_to_status(&e.kind);
+            (status, [(CONTENT_TYPE, ct)], e.serialize(format)).into_response()
         }
-        Err(e) => e.into_response(),
     }
 }
 
@@ -55,10 +56,14 @@ async fn main() {
     let registry = SchemaRegistry::open(&db_path).expect("failed to open schema registry");
 
     let assertions_path = config.assertions_db_path();
-    let assertions = AssertionStore::open(&assertions_path).expect("failed to open assertion store");
+    let assertions =
+        AssertionStore::open(&assertions_path).expect("failed to open assertion store");
     info!("assertions_db: {}", assertions_path.display());
 
-    let state: AppState = Arc::new(Mutex::new(crate::state::Inner { registry, assertions }));
+    let state: AppState = Arc::new(Mutex::new(crate::state::Inner {
+        registry,
+        assertions,
+    }));
 
     let app = Router::new()
         .route("/query", post(handle_query))

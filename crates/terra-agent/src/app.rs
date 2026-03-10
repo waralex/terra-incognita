@@ -130,7 +130,12 @@ impl App {
         );
 
         match result {
-            Ok(LlmResult { answer, transaction_json }) => {
+            Ok(LlmResult { answer, transaction_json, usage }) => {
+                let token_info = match &usage {
+                    Some(u) => format!(" [{}+{}={}tok]", u.prompt_tokens, u.completion_tokens, u.total_tokens),
+                    None => String::new(),
+                };
+
                 // Show answer immediately
                 if !answer.is_empty() {
                     self.messages.push(Message {
@@ -144,13 +149,13 @@ impl App {
                     Ok(yaml) => {
                         self.messages.push(Message {
                             role: Role::System,
-                            text: format!("tx committed\n{}", yaml.trim()),
+                            text: format!("tx committed{token_info}\n{}", yaml.trim()),
                         });
                     }
                     Err(e) => {
                         self.messages.push(Message {
                             role: Role::System,
-                            text: format!("tx failed: {e}"),
+                            text: format!("tx failed{token_info}: {e}"),
                         });
                     }
                 }

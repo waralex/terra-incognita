@@ -46,6 +46,8 @@ pub struct ChatMessage {
 #[derive(Deserialize)]
 struct ChatResponse {
     choices: Vec<Choice>,
+    #[serde(default)]
+    usage: Option<Usage>,
 }
 
 #[derive(Deserialize)]
@@ -58,11 +60,36 @@ struct ChoiceMessage {
     content: String,
 }
 
+#[derive(Deserialize, Clone)]
+struct Usage {
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
+}
+
+/// Token usage from the LLM API response.
+#[derive(Clone)]
+pub struct TokenUsage {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+}
+
 /// Result from an LLM call: the answer text and the raw transaction JSON.
 pub struct LlmResult {
     pub answer: String,
     pub transaction_json: String,
+    pub usage: Option<TokenUsage>,
 }
+
+/// Rough token estimate: ~4 chars per token for English/mixed content.
+fn estimate_tokens(text: &str) -> usize {
+    (text.len() + 3) / 4
+}
+
+/// Max tokens we allow in a single request payload (input side).
+/// ~120k chars ≈ 30k tokens — safe margin for most models.
+const MAX_PAYLOAD_BYTES: usize = 120_000;
 
 /// Calls the LLM API and extracts answer + transaction from the response.
 ///
@@ -96,10 +123,25 @@ pub fn call_llm(
     };
 
     let body = serde_json::to_string(&request).map_err(|e| e.to_string())?;
+
+    if body.len() > MAX_PAYLOAD_BYTES {
+        let tokens = estimate_tokens(&body);
+        return Err(format!(
+            "payload too large: ~{tokens} tokens ({} bytes). Reduce history or branch state.",
+            body.len()
+        ));
+    }
+
     let response_body = http_post(&config.base_url, "/chat/completions", &config.api_key, &body)?;
 
     let resp: ChatResponse = serde_json::from_str(&response_body)
         .map_err(|e| format!("failed to parse LLM response: {e}\nbody: {response_body}"))?;
+
+    let usage = resp.usage.map(|u| TokenUsage {
+        prompt_tokens: u.prompt_tokens,
+        completion_tokens: u.completion_tokens,
+        total_tokens: u.total_tokens,
+    });
 
     let content = resp.choices.into_iter()
         .next()
@@ -127,10 +169,13 @@ pub fn call_llm(
     Ok(LlmResult {
         answer,
         transaction_json: transaction_yaml,
+        usage,
     })
 }
 
 /// Retries LLM call up to `max_retries` times, feeding back errors.
+///
+/// Bounded: exactly `max_retries + 1` attempts max. No infinite loop.
 pub fn call_llm_with_retry(
     config: &LlmConfig,
     system_prompt: &str,
@@ -140,17 +185,11 @@ pub fn call_llm_with_retry(
     max_retries: usize,
 ) -> Result<LlmResult, String> {
     let mut last_error = String::new();
-    let mut messages_with_retries: Vec<ChatMessage> = history.to_vec();
-    messages_with_retries.push(ChatMessage {
-        role: "user".into(),
-        content: user_message.into(),
-    });
 
     for attempt in 0..=max_retries {
         let msgs = if attempt == 0 {
             history.to_vec()
         } else {
-            // Feed back the error as context
             let mut m = history.to_vec();
             m.push(ChatMessage {
                 role: "user".into(),
@@ -163,9 +202,7 @@ pub fn call_llm_with_retry(
             m
         };
 
-        let user_msg = if attempt == 0 { user_message } else { user_message };
-
-        match call_llm(config, system_prompt, branch_state, &msgs, user_msg) {
+        match call_llm(config, system_prompt, branch_state, &msgs, user_message) {
             Ok(result) => return Ok(result),
             Err(e) => {
                 last_error = e;

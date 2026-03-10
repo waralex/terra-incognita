@@ -1,4 +1,4 @@
-use crate::assertion::AssertionStore;
+use crate::assertion::{AssertionStore, ItemKind};
 use crate::schema::BranchSchemaRegistry;
 
 use super::{Command, CommandError, CommandResult};
@@ -15,11 +15,27 @@ pub fn execute(
     match cmd {
         Command::ListEntityTypes => {
             let types = registry.list_entity_types()?;
+            let vis = store.visibility();
+            let ancestry = registry.ancestry();
+            let types = types
+                .into_iter()
+                .filter(|t| vis.is_visible(ancestry, ItemKind::EntityType, t.id).unwrap_or(true))
+                .collect();
             Ok(CommandResult::EntityTypes(types))
         }
         Command::GetEntityType { slug } => {
             let entity_type = registry.get_entity_type(&slug)?;
+            let vis = store.visibility();
+            if !vis.is_visible(registry.ancestry(), ItemKind::EntityType, entity_type.id)? {
+                return Err(CommandError::Schema(
+                    crate::schema::SchemaError::EntityTypeNotFound(slug),
+                ));
+            }
             let properties = registry.list_properties(&slug)?;
+            let properties = properties
+                .into_iter()
+                .filter(|p| vis.is_visible(registry.ancestry(), ItemKind::Property, p.id).unwrap_or(true))
+                .collect();
             Ok(CommandResult::EntityTypeDetail {
                 entity_type,
                 properties,
@@ -29,12 +45,24 @@ pub fn execute(
             entity_type: None,
         } => {
             let props = registry.list_all_properties()?;
+            let vis = store.visibility();
+            let ancestry = registry.ancestry();
+            let props = props
+                .into_iter()
+                .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+                .collect();
             Ok(CommandResult::Properties(props))
         }
         Command::ListProperties {
             entity_type: Some(et),
         } => {
             let props = registry.list_properties(&et)?;
+            let vis = store.visibility();
+            let ancestry = registry.ancestry();
+            let props = props
+                .into_iter()
+                .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+                .collect();
             Ok(CommandResult::Properties(props))
         }
         Command::Transaction(input) => {
@@ -50,12 +78,27 @@ pub fn execute(
         }
         Command::ListEntities => {
             let entities = store.entities().list_active()?;
+            let vis = store.visibility();
+            let ancestry = registry.ancestry();
+            let entities = entities
+                .into_iter()
+                .filter(|e| vis.is_visible(ancestry, ItemKind::Entity, e.id).unwrap_or(true))
+                .collect();
             Ok(CommandResult::EntityList(entities))
         }
         Command::GetEntity {
             entity,
             entity_type,
         } => {
+            // Check entity visibility before projecting
+            if let Some(rec) = store.entities().get_by_slug(&entity)? {
+                let vis = store.visibility();
+                if !vis.is_visible(registry.ancestry(), ItemKind::Entity, rec.id)? {
+                    return Err(CommandError::Log(
+                        crate::assertion::LogError::Storage(format!("entity not found: {}", entity)),
+                    ));
+                }
+            }
             let projection = query_entity::project_entity(&entity, &entity_type, registry, store)?;
             Ok(CommandResult::EntityDetail(projection))
         }
@@ -263,6 +306,163 @@ mod tests {
         match result {
             CommandResult::EntityList(entities) => {
                 assert_eq!(entities.len(), 1);
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn hidden_entity_type_excluded_from_list() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // Hide entity type "track"
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("hide track"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput {
+                    entities: vec![],
+                    entity_types: vec!["track".into()],
+                    properties: vec![],
+                },
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        )
+        .unwrap();
+
+        // ListEntityTypes should not include "track"
+        let result = execute(Command::ListEntityTypes, &reg, &store).unwrap();
+        match result {
+            CommandResult::EntityTypes(types) => {
+                assert!(types.iter().all(|t| t.slug != "track"));
+            }
+            _ => panic!("unexpected result"),
+        }
+
+        // GetEntityType should fail for hidden type
+        let err = execute(
+            Command::GetEntityType { slug: "track".into() },
+            &reg,
+            &store,
+        )
+        .unwrap_err();
+        assert!(matches!(err, CommandError::Schema(_)));
+    }
+
+    #[test]
+    fn hidden_property_excluded_from_list() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // Hide property "bpm"
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("hide bpm"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput {
+                    entities: vec![],
+                    entity_types: vec![],
+                    properties: vec!["bpm".into()],
+                },
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        )
+        .unwrap();
+
+        // ListProperties for "track" should not include "bpm"
+        let result = execute(
+            Command::ListProperties { entity_type: Some("track".into()) },
+            &reg,
+            &store,
+        )
+        .unwrap();
+        match result {
+            CommandResult::Properties(props) => {
+                assert_eq!(props.len(), 1);
+                assert_eq!(props[0].slug, "certification");
+            }
+            _ => panic!("unexpected result"),
+        }
+
+        // ListProperties (all) should also exclude "bpm"
+        let result = execute(
+            Command::ListProperties { entity_type: None },
+            &reg,
+            &store,
+        )
+        .unwrap();
+        match result {
+            CommandResult::Properties(props) => {
+                assert!(props.iter().all(|p| p.slug != "bpm"));
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn hidden_entity_excluded_from_list() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // Create two entities
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!(null),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![
+                    IntroduceItem { entity: "alpha".into(), description: None, facts: vec![], hypotheses: vec![] },
+                    IntroduceItem { entity: "beta".into(), description: None, facts: vec![], hypotheses: vec![] },
+                ],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        )
+        .unwrap();
+
+        // Hide "alpha"
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("hide alpha"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput {
+                    entities: vec!["alpha".into()],
+                    entity_types: vec![],
+                    properties: vec![],
+                },
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        )
+        .unwrap();
+
+        let result = execute(Command::ListEntities, &reg, &store).unwrap();
+        match result {
+            CommandResult::EntityList(entities) => {
+                assert_eq!(entities.len(), 1);
+                assert_eq!(entities[0].slug, "beta");
             }
             _ => panic!("unexpected result"),
         }

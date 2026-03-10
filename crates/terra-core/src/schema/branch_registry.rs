@@ -100,6 +100,11 @@ impl BranchSchemaRegistry {
         Self { db, branch_id, ancestry }
     }
 
+    /// Returns the ancestry chain for this branch.
+    pub fn ancestry(&self) -> &[(Uuid, Uuid)] {
+        &self.ancestry
+    }
+
     // -- Entity Types --
 
     /// Creates a single entity type in the current branch.

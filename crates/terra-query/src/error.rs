@@ -125,9 +125,12 @@ impl From<CommandError> for QueryError {
                 let kind = match &e {
                     AssertEntityError::EntityNotFound(_) => "entity_not_found",
                     AssertEntityError::EntityAlreadyExists(_) => "entity_already_exists",
+                    AssertEntityError::EntityHidden(_) => "entity_hidden",
                     AssertEntityError::ConflictingFacts { .. } => "conflicting_facts",
                     AssertEntityError::EntityTypeNotFound(_) => "entity_type_not_found",
+                    AssertEntityError::EntityTypeHidden(_) => "entity_type_hidden",
                     AssertEntityError::PropertyNotFound { .. } => "property_not_found",
+                    AssertEntityError::PropertyHidden { .. } => "property_hidden",
                     AssertEntityError::Entity(_)
                     | AssertEntityError::Writer(_)
                     | AssertEntityError::Schema(_) => "internal_error",

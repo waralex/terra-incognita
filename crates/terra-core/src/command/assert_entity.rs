@@ -21,6 +21,10 @@ pub enum AssertEntityError {
     #[error("entity already exists: {0}")]
     EntityAlreadyExists(String),
 
+    /// Entity exists but is hidden on this branch.
+    #[error("entity \"{0}\" exists but is hidden on this branch — use unhide to bring it into scope")]
+    EntityHidden(String),
+
     /// Two facts in the same transaction assert the same property on the same entity type.
     #[error(
         "conflicting facts: property \"{property}\" on entity type \"{entity_type}\" \
@@ -36,9 +40,20 @@ pub enum AssertEntityError {
     #[error("entity type not found: {0}")]
     EntityTypeNotFound(String),
 
+    /// Entity type exists but is hidden on this branch.
+    #[error("entity type \"{0}\" exists but is hidden on this branch — use unhide to bring it into scope")]
+    EntityTypeHidden(String),
+
     /// Referenced property not found or not attached to entity type.
     #[error("property \"{property}\" not found on entity type \"{entity_type}\"")]
     PropertyNotFound {
+        entity_type: String,
+        property: String,
+    },
+
+    /// Property exists but is hidden on this branch.
+    #[error("property \"{property}\" on entity type \"{entity_type}\" exists but is hidden on this branch — use unhide to bring it into scope")]
+    PropertyHidden {
         entity_type: String,
         property: String,
     },
@@ -144,14 +159,20 @@ pub fn execute_transaction(
     // Phase 1: Validate assertions before any entity mutation
 
     let entities = store.entities();
+    let vis = store.visibility();
+    let ancestry = registry.ancestry();
 
     let mut intro_resolved: Vec<(String, Option<String>, Vec<AssertionInput>, Vec<AssertionInput>)> =
         Vec::with_capacity(input.introduce.len());
     for item in &input.introduce {
         validate_no_conflicting_facts(&item.facts)?;
-        let facts = resolve_items(&item.facts, Uuid::nil(), registry)?;
-        let hyps = resolve_items(&item.hypotheses, Uuid::nil(), registry)?;
-        if entities.get_by_slug(&item.entity)?.is_some() {
+        let facts = resolve_items(&item.facts, Uuid::nil(), registry, &vis)?;
+        let hyps = resolve_items(&item.hypotheses, Uuid::nil(), registry, &vis)?;
+        if let Some(record) = entities.get_by_slug(&item.entity)? {
+            if !vis.is_visible(ancestry, ItemKind::Entity, record.id)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))? {
+                return Err(AssertEntityError::EntityHidden(item.entity.clone()));
+            }
             return Err(AssertEntityError::EntityAlreadyExists(item.entity.clone()));
         }
         intro_resolved.push((
@@ -174,10 +195,14 @@ pub fn execute_transaction(
         Vec::with_capacity(input.asserts.len());
     for item in &input.asserts {
         validate_no_conflicting_facts(&item.facts)?;
-        let facts = resolve_items(&item.facts, Uuid::nil(), registry)?;
-        let hyps = resolve_items(&item.hypotheses, Uuid::nil(), registry)?;
+        let facts = resolve_items(&item.facts, Uuid::nil(), registry, &vis)?;
+        let hyps = resolve_items(&item.hypotheses, Uuid::nil(), registry, &vis)?;
 
         if let Some(record) = entities.get_by_slug(&item.entity)? {
+            if !vis.is_visible(ancestry, ItemKind::Entity, record.id)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))? {
+                return Err(AssertEntityError::EntityHidden(item.entity.clone()));
+            }
             assert_resolved.push((record.id, item.entity.clone(), facts, hyps));
         } else if input.introduce.iter().any(|i| i.entity == item.entity) {
             assert_resolved.push((Uuid::nil(), item.entity.clone(), facts, hyps));
@@ -233,7 +258,6 @@ pub fn execute_transaction(
         .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
 
     // Visibility: hide
-    let vis = store.visibility();
     resolve_and_write_visibility(
         &mut batch,
         &vis,
@@ -404,11 +428,14 @@ fn validate_no_conflicting_facts(
 }
 
 /// Resolves slug-based AssertionItems into UUID-based AssertionInputs.
+/// Checks visibility for entity types and properties — hidden items produce specific errors.
 fn resolve_items(
     items: &[super::AssertionItem],
     entity_id: Uuid,
     registry: &BranchSchemaRegistry,
+    vis: &crate::assertion::VisibilityStore,
 ) -> Result<Vec<AssertionInput>, AssertEntityError> {
+    let ancestry = registry.ancestry();
     let mut result = Vec::with_capacity(items.len());
 
     for item in items {
@@ -421,6 +448,11 @@ fn resolve_items(
             }
         })?;
 
+        if !vis.is_visible(ancestry, ItemKind::EntityType, entity_type.id)
+            .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))? {
+            return Err(AssertEntityError::EntityTypeHidden(item.entity_type.clone()));
+        }
+
         let attached_props = registry.list_properties_by_type_id(&entity_type.id)?;
         let prop_map: HashMap<&str, (Uuid, crate::schema::ValueType)> = attached_props
             .iter()
@@ -430,11 +462,29 @@ fn resolve_items(
         let mut properties = HashMap::with_capacity(item.properties.len());
         for (slug, value) in &item.properties {
             let (prop_id, _vt) = prop_map.get(slug.as_str()).ok_or_else(|| {
+                // Check if property exists but is hidden
+                if let Ok(prop) = registry.get_property_by_slug(slug) {
+                    if !vis.is_visible(ancestry, ItemKind::Property, prop.id).unwrap_or(true) {
+                        return AssertEntityError::PropertyHidden {
+                            entity_type: item.entity_type.clone(),
+                            property: slug.clone(),
+                        };
+                    }
+                }
                 AssertEntityError::PropertyNotFound {
                     entity_type: item.entity_type.clone(),
                     property: slug.clone(),
                 }
             })?;
+
+            if !vis.is_visible(ancestry, ItemKind::Property, *prop_id)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))? {
+                return Err(AssertEntityError::PropertyHidden {
+                    entity_type: item.entity_type.clone(),
+                    property: slug.clone(),
+                });
+            }
+
             properties.insert(*prop_id, value.clone());
         }
 
@@ -1163,5 +1213,167 @@ mod tests {
         assert_eq!(result.attached_count, 1);
         assert_eq!(result.introduced.len(), 1);
         assert_eq!(result.introduced[0].facts.len(), 1);
+    }
+
+    #[test]
+    fn hidden_entity_type_rejected_in_assertion() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg);
+
+        // Hide entity type "track"
+        let tx = Transaction {
+            id: Uuid::now_v7(),
+            branch_id: MAIN_BRANCH,
+            reasoning: json!("hide track"),
+            timestamp: chrono::Utc::now(),
+        };
+        let mut batch = rocksdb::WriteBatch::default();
+        store.transactions().put_to_batch(&mut batch, &tx).unwrap();
+        let et = reg.get_entity_type("track").unwrap();
+        store.visibility().hide_to_batch(
+            &mut batch, MAIN_BRANCH, tx.id, ItemKind::EntityType, &[et.id],
+        ).unwrap();
+        store.write_batch(batch).unwrap();
+
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "song".into(),
+                    description: None,
+                    facts: vec![make_item("track", "bpm", PropertyValue::Range(RangeValue::Eq(json!(120))))],
+                    hypotheses: vec![],
+                }],
+                vec![],
+            ),
+            &reg,
+            &store,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AssertEntityError::EntityTypeHidden(_)));
+        assert!(err.to_string().contains("hidden"));
+    }
+
+    #[test]
+    fn hidden_property_rejected_in_assertion() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg);
+
+        // Hide property "bpm"
+        let tx = Transaction {
+            id: Uuid::now_v7(),
+            branch_id: MAIN_BRANCH,
+            reasoning: json!("hide bpm"),
+            timestamp: chrono::Utc::now(),
+        };
+        let mut batch = rocksdb::WriteBatch::default();
+        store.transactions().put_to_batch(&mut batch, &tx).unwrap();
+        let prop = reg.get_property_by_slug("bpm").unwrap();
+        store.visibility().hide_to_batch(
+            &mut batch, MAIN_BRANCH, tx.id, ItemKind::Property, &[prop.id],
+        ).unwrap();
+        store.write_batch(batch).unwrap();
+
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "song".into(),
+                    description: None,
+                    facts: vec![make_item("track", "bpm", PropertyValue::Range(RangeValue::Eq(json!(120))))],
+                    hypotheses: vec![],
+                }],
+                vec![],
+            ),
+            &reg,
+            &store,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AssertEntityError::PropertyHidden { .. }));
+        assert!(err.to_string().contains("hidden"));
+    }
+
+    #[test]
+    fn hidden_entity_rejected_in_assert() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg);
+
+        store.entities().create("song", None).unwrap();
+
+        // Hide entity "song"
+        let entity_rec = store.entities().get_by_slug("song").unwrap().unwrap();
+        let tx = Transaction {
+            id: Uuid::now_v7(),
+            branch_id: MAIN_BRANCH,
+            reasoning: json!("hide entity"),
+            timestamp: chrono::Utc::now(),
+        };
+        let mut batch = rocksdb::WriteBatch::default();
+        store.transactions().put_to_batch(&mut batch, &tx).unwrap();
+        store.visibility().hide_to_batch(
+            &mut batch, MAIN_BRANCH, tx.id, ItemKind::Entity, &[entity_rec.id],
+        ).unwrap();
+        store.write_batch(batch).unwrap();
+
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![],
+                vec![super::super::AssertItem {
+                    entity: "song".into(),
+                    facts: vec![],
+                    hypotheses: vec![],
+                }],
+            ),
+            &reg,
+            &store,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AssertEntityError::EntityHidden(_)));
+        assert!(err.to_string().contains("hidden"));
+    }
+
+    #[test]
+    fn hidden_entity_rejected_in_introduce() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg);
+
+        // Create and hide entity
+        store.entities().create("taken", None).unwrap();
+        let entity_rec = store.entities().get_by_slug("taken").unwrap().unwrap();
+        let tx = Transaction {
+            id: Uuid::now_v7(),
+            branch_id: MAIN_BRANCH,
+            reasoning: json!("hide entity"),
+            timestamp: chrono::Utc::now(),
+        };
+        let mut batch = rocksdb::WriteBatch::default();
+        store.transactions().put_to_batch(&mut batch, &tx).unwrap();
+        store.visibility().hide_to_batch(
+            &mut batch, MAIN_BRANCH, tx.id, ItemKind::Entity, &[entity_rec.id],
+        ).unwrap();
+        store.write_batch(batch).unwrap();
+
+        // Trying to introduce entity with same slug — should get EntityHidden, not EntityAlreadyExists
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "taken".into(),
+                    description: None,
+                    facts: vec![],
+                    hypotheses: vec![],
+                }],
+                vec![],
+            ),
+            &reg,
+            &store,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, AssertEntityError::EntityHidden(_)));
     }
 }

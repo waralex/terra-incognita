@@ -47,10 +47,11 @@ pub enum Command {
     ListBranches,
     /// List all entries in the fact log.
     ListLog,
-    /// Full branch state snapshot.
+    /// Full branch state snapshot. Optional `at_tx` for time travel.
     BranchState {
         slug: String,
         last_transactions: usize,
+        at_tx: Option<Uuid>,
     },
 }
 

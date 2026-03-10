@@ -146,6 +146,12 @@ impl EntityStore {
         Ok(records)
     }
 
+    /// Lists active entities as of the given transaction.
+    pub fn list_active_at(&self, upper_bound: Uuid) -> Result<Vec<EntityRecord>, EntityError> {
+        let all = self.io.scan_all_latest_at(upper_bound)?;
+        Ok(all.into_iter().filter(|r| r.status == EntityStatus::Active).collect())
+    }
+
     fn require_entity(&self, entity_id: &Uuid) -> Result<EntityRecord, EntityError> {
         self.io.get_latest(entity_id)?
             .ok_or_else(|| EntityError::NotFound(*entity_id))

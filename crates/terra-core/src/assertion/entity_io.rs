@@ -180,6 +180,41 @@ impl EntityIo {
         Ok(records)
     }
 
+    /// Like `scan_all_latest` but only considers records where tx_id <= upper_bound.
+    pub fn scan_all_latest_at(&self, upper_bound: Uuid) -> Result<Vec<EntityRecord>, LogError> {
+        let main = self.main_cf()?;
+        let branch_prefix = EntityKey::prefix_branch(&super::MAIN_BRANCH);
+        let bound = *upper_bound.as_bytes();
+        let mut latest_map: std::collections::HashMap<Uuid, (Uuid, Vec<u8>)> =
+            std::collections::HashMap::new();
+
+        let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
+        for item in iter {
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&branch_prefix) {
+                break;
+            }
+            if raw_key.len() < EntityKey::SIZE {
+                continue;
+            }
+            let k = EntityKey::decode(&raw_key)?;
+            if *k.tx_id.as_bytes() > bound {
+                continue;
+            }
+
+            match latest_map.get(&k.entity_id) {
+                Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
+                _ => { latest_map.insert(k.entity_id, (k.tx_id, val.to_vec())); }
+            }
+        }
+
+        let mut records = Vec::with_capacity(latest_map.len());
+        for (entity_id, (tx_id, val_bytes)) in latest_map {
+            records.push(decode_record(&entity_id, tx_id, &val_bytes)?);
+        }
+        Ok(records)
+    }
+
     fn main_cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
         self.db
             .cf_handle(self.main_cf)

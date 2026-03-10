@@ -121,38 +121,45 @@ pub enum BranchStateError {
 }
 
 /// Builds a complete branch state snapshot.
+///
+/// When `at_tx` is `Some`, returns state as of that transaction (time travel).
+/// When `None`, returns current HEAD state.
 pub fn build_state(
     slug: &str,
     last_transactions: usize,
+    at_tx: Option<Uuid>,
     registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<BranchState, BranchStateError> {
-    // 1. Resolve branch
     let branch_info = resolve_branch(slug, store)?;
     let branch_id = branch_info.id;
+    let bound = at_tx.unwrap_or(Uuid::max());
+
+    // Cap ancestry so schema registry and visibility only see items up to bound
+    let capped = cap_ancestry(registry.ancestry(), bound);
+    let schema_reg = store.schema_registry(registry.branch_id(), capped.clone());
 
     let vis = store.visibility();
-    let ancestry = registry.ancestry();
 
     // 2. Schema snapshot
-    let all_types = registry.list_entity_types()?;
+    let all_types = schema_reg.list_entity_types()?;
     let visible_types: Vec<_> = all_types
         .into_iter()
-        .filter(|t| vis.is_visible(ancestry, ItemKind::EntityType, t.id).unwrap_or(true))
+        .filter(|t| vis.is_visible(&capped, ItemKind::EntityType, t.id).unwrap_or(true))
         .collect();
 
-    let all_props = registry.list_all_properties()?;
+    let all_props = schema_reg.list_all_properties()?;
     let visible_props: Vec<_> = all_props
         .into_iter()
-        .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+        .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
         .collect();
 
     let mut entity_type_snapshots = Vec::new();
     for et in &visible_types {
-        let attached = registry.list_properties_by_type_id(&et.id)?;
+        let attached = schema_reg.list_properties_by_type_id(&et.id)?;
         let prop_slugs: Vec<String> = attached
             .iter()
-            .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+            .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
             .map(|p| p.slug.clone())
             .collect();
         entity_type_snapshots.push(EntityTypeSnapshot {
@@ -179,10 +186,10 @@ pub fn build_state(
     };
 
     // 3. Entity states
-    let entities = store.entities().list_active()?;
+    let entities = store.entities().list_active_at(bound)?;
     let visible_entities: Vec<_> = entities
         .into_iter()
-        .filter(|e| vis.is_visible(ancestry, ItemKind::Entity, e.id).unwrap_or(true))
+        .filter(|e| vis.is_visible(&capped, ItemKind::Entity, e.id).unwrap_or(true))
         .collect();
 
     let mut entity_states = Vec::new();
@@ -190,17 +197,17 @@ pub fn build_state(
         let mut type_states = Vec::new();
 
         for et in &visible_types {
-            let attached = registry.list_properties_by_type_id(&et.id)?;
+            let attached = schema_reg.list_properties_by_type_id(&et.id)?;
             let visible_attached: Vec<_> = attached
                 .into_iter()
-                .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+                .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
                 .collect();
 
             let mut prop_states = Vec::new();
             let mut has_any_data = false;
 
             for prop in &visible_attached {
-                let pfs = resolve_property_full_state(entity.id, prop, store)?;
+                let pfs = resolve_property_full_state(entity.id, prop, bound, store)?;
                 if pfs.fact.is_some() || !pfs.hypotheses.is_empty() {
                     has_any_data = true;
                 }
@@ -224,7 +231,7 @@ pub fn build_state(
     }
 
     // 4. Recent transactions
-    let mut txns = store.transactions().list_by_branch(&branch_id)?;
+    let mut txns = store.transactions().list_by_branch_at(&branch_id, &bound)?;
     txns.reverse(); // newest first
     txns.truncate(last_transactions);
 
@@ -243,6 +250,17 @@ pub fn build_state(
         entities: entity_states,
         recent_transactions,
     })
+}
+
+/// Caps the first ancestry element's branch_point_tx to min(current, bound).
+fn cap_ancestry(ancestry: &[(Uuid, Uuid)], bound: Uuid) -> Vec<(Uuid, Uuid)> {
+    let mut capped = ancestry.to_vec();
+    if let Some(first) = capped.first_mut() {
+        if *bound.as_bytes() < *first.1.as_bytes() {
+            first.1 = bound;
+        }
+    }
+    capped
 }
 
 fn resolve_branch(slug: &str, store: &AssertionStore) -> Result<BranchInfo, BranchStateError> {
@@ -269,6 +287,7 @@ fn resolve_branch(slug: &str, store: &AssertionStore) -> Result<BranchInfo, Bran
 fn resolve_property_full_state(
     entity_id: Uuid,
     prop: &EntityProperty,
+    bound: Uuid,
     store: &AssertionStore,
 ) -> Result<PropertyFullState, BranchStateError> {
     let fact_col = match prop.value_type {
@@ -282,7 +301,7 @@ fn resolve_property_full_state(
         ValueType::Range => store.hypothesis_col_range(),
     };
 
-    let latest_fact = fact_col.latest_for_entity(prop.id, entity_id)?;
+    let latest_fact = fact_col.latest_for_entity_at(prop.id, entity_id, bound)?;
 
     let fact_snapshot = match &latest_fact {
         Some(cell) => {
@@ -308,7 +327,7 @@ fn resolve_property_full_state(
         .as_ref()
         .map(|c| c.log_entry_id)
         .unwrap_or(Uuid::nil());
-    let hyp_cells = hyp_col.list_after(prop.id, entity_id, after_id)?;
+    let hyp_cells = hyp_col.list_after_at(prop.id, entity_id, after_id, bound)?;
 
     let hypotheses = hyp_cells
         .into_iter()

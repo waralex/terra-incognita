@@ -151,6 +151,52 @@ impl TransactionStore {
         Ok(results)
     }
 
+    /// Lists transactions for a branch where tx_id <= upper_bound.
+    pub fn list_by_branch_at(
+        &self,
+        branch_id: &Uuid,
+        upper_bound: &Uuid,
+    ) -> Result<Vec<Transaction>, LogError> {
+        let cf = self.cf()?;
+        let prefix = TransactionKey::prefix_branch(branch_id);
+        let bound = *upper_bound.as_bytes();
+        let mut results = Vec::new();
+
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        for item in iter {
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+
+            let k = TransactionKey::decode(&raw_key)?;
+            if *k.tx_id.as_bytes() > bound {
+                break; // keys sorted by tx_id within branch — no more matches
+            }
+
+            let parsed: serde_json::Value = serde_json::from_slice(&val)
+                .map_err(|e| LogError::Storage(e.to_string()))?;
+
+            let reasoning = parsed.get("reasoning").cloned()
+                .unwrap_or(serde_json::Value::Null);
+
+            let timestamp = parsed.get("timestamp")
+                .and_then(|v| v.as_str())
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&Utc))
+                .ok_or_else(|| LogError::Storage("missing timestamp in transaction".into()))?;
+
+            results.push(Transaction {
+                id: k.tx_id,
+                branch_id: k.branch_id,
+                reasoning,
+                timestamp,
+            });
+        }
+
+        Ok(results)
+    }
+
     fn cf(&self) -> Result<&rocksdb::ColumnFamily, LogError> {
         self.db
             .cf_handle(self.cf_name)

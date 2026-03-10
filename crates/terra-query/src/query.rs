@@ -132,6 +132,7 @@ pub enum QueryDto {
         slug: String,
         #[serde(default = "default_last_transactions")]
         last_transactions: usize,
+        transaction_id: Option<String>,
     },
 }
 
@@ -276,10 +277,16 @@ impl QueryDto {
             }
             QueryDto::ListBranches => Ok((Command::ListBranches, ResponseShape::Batch)),
             QueryDto::ListLog => Ok((Command::ListLog, ResponseShape::Batch)),
-            QueryDto::BranchState { slug, last_transactions } => Ok((
-                Command::BranchState { slug, last_transactions },
-                ResponseShape::Single,
-            )),
+            QueryDto::BranchState { slug, last_transactions, transaction_id } => {
+                let at_tx = transaction_id
+                    .map(|s| uuid::Uuid::parse_str(&s))
+                    .transpose()
+                    .map_err(|e| QueryError::bad_request("parse_error", format!("invalid transaction_id UUID: {e}")))?;
+                Ok((
+                    Command::BranchState { slug, last_transactions, at_tx },
+                    ResponseShape::Single,
+                ))
+            }
         }
     }
 }

@@ -130,6 +130,82 @@ impl Column {
         Ok(latest)
     }
 
+    /// Returns the latest cell for a given property+entity where tx_id <= upper_bound.
+    pub fn latest_for_entity_at(
+        &self,
+        property_id: Uuid,
+        entity_id: Uuid,
+        upper_bound: Uuid,
+    ) -> Result<Option<ColumnCell>, LogError> {
+        let cf = self.cf()?;
+        let prefix = ColumnKey::prefix_branch_property(&super::MAIN_BRANCH, &property_id);
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        let bound = *upper_bound.as_bytes();
+
+        let mut latest: Option<ColumnCell> = None;
+        for item in iter {
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+            let k = ColumnKey::decode(&raw_key)?;
+            if k.entity_id != entity_id || *k.tx_id.as_bytes() > bound {
+                continue;
+            }
+            let value: serde_json::Value =
+                serde_json::from_slice(&val).map_err(|e| LogError::Storage(e.to_string()))?;
+            latest = Some(ColumnCell {
+                branch_id: k.branch_id,
+                property_id: k.property_id,
+                tx_id: k.tx_id,
+                log_entry_id: k.log_entry_id,
+                entity_id: k.entity_id,
+                value,
+            });
+        }
+        Ok(latest)
+    }
+
+    /// Returns cells for a given property+entity where log_entry_id > threshold and tx_id <= upper_bound.
+    pub fn list_after_at(
+        &self,
+        property_id: Uuid,
+        entity_id: Uuid,
+        after_log_entry_id: Uuid,
+        upper_bound: Uuid,
+    ) -> Result<Vec<ColumnCell>, LogError> {
+        let cf = self.cf()?;
+        let prefix = ColumnKey::prefix_branch_property(&super::MAIN_BRANCH, &property_id);
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        let threshold = *after_log_entry_id.as_bytes();
+        let bound = *upper_bound.as_bytes();
+
+        let mut cells = Vec::new();
+        for item in iter {
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+            let k = ColumnKey::decode(&raw_key)?;
+            if k.entity_id == entity_id
+                && *k.log_entry_id.as_bytes() > threshold
+                && *k.tx_id.as_bytes() <= bound
+            {
+                let value: serde_json::Value = serde_json::from_slice(&val)
+                    .map_err(|e| LogError::Storage(e.to_string()))?;
+                cells.push(ColumnCell {
+                    branch_id: k.branch_id,
+                    property_id: k.property_id,
+                    tx_id: k.tx_id,
+                    log_entry_id: k.log_entry_id,
+                    entity_id: k.entity_id,
+                    value,
+                });
+            }
+        }
+        Ok(cells)
+    }
+
     /// Returns cells for a given property+entity where log_entry_id > the given threshold.
     pub fn list_after(
         &self,

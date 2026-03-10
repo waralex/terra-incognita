@@ -100,6 +100,11 @@ impl BranchSchemaRegistry {
         Self { db, branch_id, ancestry }
     }
 
+    /// Returns the branch ID.
+    pub fn branch_id(&self) -> Uuid {
+        self.branch_id
+    }
+
     /// Returns the ancestry chain for this branch.
     pub fn ancestry(&self) -> &[(Uuid, Uuid)] {
         &self.ancestry

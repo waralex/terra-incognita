@@ -118,8 +118,8 @@ pub fn execute(
             let entries = store.facts().list()?;
             Ok(CommandResult::LogEntries(entries))
         }
-        Command::BranchState { slug, last_transactions } => {
-            let state = super::branch_state::build_state(&slug, last_transactions, registry, store)?;
+        Command::BranchState { slug, last_transactions, at_tx } => {
+            let state = super::branch_state::build_state(&slug, last_transactions, at_tx, registry, store)?;
             Ok(CommandResult::BranchState(state))
         }
     }
@@ -494,7 +494,7 @@ mod tests {
         setup_schema(&reg, &store);
 
         let result = execute(
-            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: None },
             &reg,
             &store,
         ).unwrap();
@@ -545,7 +545,7 @@ mod tests {
         ).unwrap();
 
         let result = execute(
-            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: None },
             &reg,
             &store,
         ).unwrap();
@@ -641,7 +641,7 @@ mod tests {
         ).unwrap();
 
         let result = execute(
-            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: None },
             &reg,
             &store,
         ).unwrap();
@@ -707,7 +707,7 @@ mod tests {
         ).unwrap();
 
         let result = execute(
-            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: None },
             &reg,
             &store,
         ).unwrap();
@@ -768,7 +768,7 @@ mod tests {
         ).unwrap();
 
         let result = execute(
-            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: None },
             &reg,
             &store,
         ).unwrap();
@@ -809,7 +809,7 @@ mod tests {
 
         // Get with limit 2
         let result = execute(
-            Command::BranchState { slug: "main".into(), last_transactions: 2 },
+            Command::BranchState { slug: "main".into(), last_transactions: 2, at_tx: None },
             &reg,
             &store,
         ).unwrap();
@@ -822,6 +822,105 @@ mod tests {
                 assert_eq!(state.recent_transactions[1].reasoning, serde_json::json!("tx-1"));
             }
             _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn branch_state_at_tx_time_travel() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // TX1: introduce entity with a fact
+        let result = execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("first measurement"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![IntroduceItem {
+                    entity: "song-tt".into(),
+                    description: None,
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
+                        )]),
+                        reasoning: serde_json::json!("initial"),
+                    }],
+                    hypotheses: vec![],
+                }],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        let tx1_id = match &result {
+            CommandResult::TransactionResult { transaction, .. } => transaction.id,
+            _ => panic!("unexpected"),
+        };
+
+        // TX2: update the fact
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("corrected measurement"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![crate::command::AssertItem {
+                    entity: "song-tt".into(),
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(serde_json::json!(125))),
+                        )]),
+                        reasoning: serde_json::json!("corrected"),
+                    }],
+                    hypotheses: vec![],
+                }],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        // State at HEAD — should see bpm=125
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: None },
+            &reg,
+            &store,
+        ).unwrap();
+        match &result {
+            CommandResult::BranchState(state) => {
+                let bpm = &state.entities[0].types[0].properties.iter()
+                    .find(|p| p.slug == "bpm").unwrap();
+                assert_eq!(bpm.fact.as_ref().unwrap().value, serde_json::json!({"eq": 125}));
+            }
+            _ => panic!("unexpected"),
+        }
+
+        // State at TX1 — should see bpm=120
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10, at_tx: Some(tx1_id) },
+            &reg,
+            &store,
+        ).unwrap();
+        match &result {
+            CommandResult::BranchState(state) => {
+                let bpm = &state.entities[0].types[0].properties.iter()
+                    .find(|p| p.slug == "bpm").unwrap();
+                assert_eq!(bpm.fact.as_ref().unwrap().value, serde_json::json!({"eq": 120}));
+                assert_eq!(bpm.fact.as_ref().unwrap().reasoning, serde_json::json!("initial"));
+                // TX2 should not be in recent transactions
+                assert!(state.recent_transactions.iter().all(|t| t.reasoning != serde_json::json!("corrected measurement")));
+            }
+            _ => panic!("unexpected"),
         }
     }
 }

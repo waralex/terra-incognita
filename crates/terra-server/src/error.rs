@@ -109,6 +109,42 @@ impl From<CommandError> for ApiError {
                     message: e.to_string(),
                 }
             }
+            CommandError::Session(e) => {
+                use terra_core::command::SessionCommandError;
+                let (status, kind) = match &e {
+                    SessionCommandError::SessionNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "session_not_found")
+                    }
+                    SessionCommandError::EntityTypeNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "entity_type_not_found")
+                    }
+                    SessionCommandError::EntityNotFound(_) => {
+                        (StatusCode::NOT_FOUND, "entity_not_found")
+                    }
+                    SessionCommandError::Session(se) => {
+                        use terra_core::assertion::SessionError;
+                        match se {
+                            SessionError::SlugExists(_) => {
+                                (StatusCode::CONFLICT, "session_already_exists")
+                            }
+                            SessionError::SlugNotFound(_) | SessionError::NotFound(_) => {
+                                (StatusCode::NOT_FOUND, "session_not_found")
+                            }
+                            SessionError::Storage(_) => {
+                                (StatusCode::INTERNAL_SERVER_ERROR, "storage_error")
+                            }
+                        }
+                    }
+                    SessionCommandError::Schema(_) | SessionCommandError::Entity(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
+                    }
+                };
+                Self {
+                    status,
+                    kind: kind.to_string(),
+                    message: e.to_string(),
+                }
+            }
             CommandError::AssertEntity(e) => {
                 use terra_core::command::AssertEntityError;
                 let (status, kind) = match &e {

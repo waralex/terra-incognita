@@ -129,6 +129,116 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_yaml::
             }
             serde_yaml::Value::Mapping(map)
         }
+        CommandResult::Session(detail) => {
+            let mut map = serde_yaml::Mapping::new();
+            map.insert(
+                serde_yaml::Value::String("id".into()),
+                serde_yaml::to_value(&detail.id).unwrap(),
+            );
+            map.insert(
+                serde_yaml::Value::String("slug".into()),
+                serde_yaml::Value::String(detail.slug),
+            );
+            if let Some(desc) = detail.description {
+                map.insert(
+                    serde_yaml::Value::String("description".into()),
+                    serde_yaml::Value::String(desc),
+                );
+            }
+            let et_list: Vec<serde_yaml::Value> = detail
+                .entity_types
+                .iter()
+                .map(|et| {
+                    let mut m = serde_yaml::Mapping::new();
+                    m.insert(
+                        serde_yaml::Value::String("slug".into()),
+                        serde_yaml::Value::String(et.slug.clone()),
+                    );
+                    serde_yaml::Value::Mapping(m)
+                })
+                .collect();
+            map.insert(
+                serde_yaml::Value::String("entity_types".into()),
+                serde_yaml::to_value(&et_list).unwrap(),
+            );
+            let seed_list: Vec<serde_yaml::Value> = detail
+                .seed_entities
+                .iter()
+                .map(|e| {
+                    let mut m = serde_yaml::Mapping::new();
+                    m.insert(
+                        serde_yaml::Value::String("slug".into()),
+                        serde_yaml::Value::String(e.slug.clone()),
+                    );
+                    m.insert(
+                        serde_yaml::Value::String("id".into()),
+                        serde_yaml::to_value(&e.id).unwrap(),
+                    );
+                    serde_yaml::Value::Mapping(m)
+                })
+                .collect();
+            map.insert(
+                serde_yaml::Value::String("seed_entities".into()),
+                serde_yaml::to_value(&seed_list).unwrap(),
+            );
+            let intro_list: Vec<serde_yaml::Value> = detail
+                .introduced_entities
+                .iter()
+                .map(|e| {
+                    let mut m = serde_yaml::Mapping::new();
+                    m.insert(
+                        serde_yaml::Value::String("slug".into()),
+                        serde_yaml::Value::String(e.slug.clone()),
+                    );
+                    m.insert(
+                        serde_yaml::Value::String("id".into()),
+                        serde_yaml::to_value(&e.id).unwrap(),
+                    );
+                    serde_yaml::Value::Mapping(m)
+                })
+                .collect();
+            map.insert(
+                serde_yaml::Value::String("introduced_entities".into()),
+                serde_yaml::to_value(&intro_list).unwrap(),
+            );
+            serde_yaml::Value::Mapping(map)
+        }
+        CommandResult::SessionList(sessions) => {
+            let items: Vec<serde_yaml::Value> = sessions
+                .iter()
+                .map(|s| {
+                    let mut map = serde_yaml::Mapping::new();
+                    map.insert(
+                        serde_yaml::Value::String("id".into()),
+                        serde_yaml::to_value(&s.id).unwrap(),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("slug".into()),
+                        serde_yaml::Value::String(s.slug.clone()),
+                    );
+                    if let Some(ref desc) = s.description {
+                        map.insert(
+                            serde_yaml::Value::String("description".into()),
+                            serde_yaml::Value::String(desc.clone()),
+                        );
+                    }
+                    map.insert(
+                        serde_yaml::Value::String("entity_type_count".into()),
+                        serde_yaml::Value::Number(serde_yaml::Number::from(s.entity_type_count as u64)),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("seed_count".into()),
+                        serde_yaml::Value::Number(serde_yaml::Number::from(s.seed_count as u64)),
+                    );
+                    map.insert(
+                        serde_yaml::Value::String("introduced_count".into()),
+                        serde_yaml::Value::Number(serde_yaml::Number::from(s.introduced_count as u64)),
+                    );
+                    serde_yaml::Value::Mapping(map)
+                })
+                .collect();
+            serde_yaml::to_value(&items).unwrap()
+        }
         CommandResult::EntityList(entities) => {
             let items: Vec<serde_yaml::Value> = entities
                 .iter()

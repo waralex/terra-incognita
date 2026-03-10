@@ -278,6 +278,34 @@ impl SchemaRegistry {
             .collect()
     }
 
+    /// Retrieves a single entity type by UUID.
+    pub fn get_entity_type_by_id(&self, id: &Uuid) -> Result<EntityType, SchemaError> {
+        let (slug, description, created_at_str): (String, Option<String>, String) = self
+            .conn
+            .query_row(
+                "SELECT slug, description, created_at FROM entity_types WHERE id = ?1",
+                params![id.as_bytes().as_slice()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    SchemaError::EntityTypeNotFound(id.to_string())
+                }
+                other => SchemaError::Db(other),
+            })?;
+
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .map_err(|e| SchemaError::Db(rusqlite::Error::InvalidParameterName(e.to_string())))?;
+
+        Ok(EntityType {
+            id: *id,
+            slug,
+            description,
+            created_at,
+        })
+    }
+
     /// Retrieves a single entity type by slug.
     pub fn get_entity_type(&self, slug: &str) -> Result<EntityType, SchemaError> {
         let (id_bytes, description, created_at_str): (Vec<u8>, Option<String>, String) = self

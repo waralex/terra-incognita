@@ -7,6 +7,8 @@ use super::column::Column;
 use super::entity::EntityStore;
 use super::entity_io::EntityIo;
 use super::log::AppendLog;
+use super::session::SessionStore;
+use super::session_io::SessionIo;
 use super::transaction::TransactionStore;
 use super::writer::AssertionWriter;
 use super::LogError;
@@ -22,6 +24,8 @@ const CF_HYP_RANGE: &str = "hyp_range";
 const CF_TRANSACTIONS: &str = "transactions";
 const CF_ENTITY_MAIN: &str = "entity_main";
 const CF_ENTITY_SLUG: &str = "entity_slug";
+const CF_SESSION_MAIN: &str = "session_main";
+const CF_SESSION_SLUG: &str = "session_slug";
 
 /// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
@@ -51,8 +55,10 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_HYP_STRUCT, col_opts.clone()),
             ColumnFamilyDescriptor::new(CF_HYP_RANGE, col_opts),
             ColumnFamilyDescriptor::new(CF_TRANSACTIONS, Options::default()),
-            ColumnFamilyDescriptor::new(CF_ENTITY_MAIN, entity_opts),
+            ColumnFamilyDescriptor::new(CF_ENTITY_MAIN, entity_opts.clone()),
             ColumnFamilyDescriptor::new(CF_ENTITY_SLUG, Options::default()),
+            ColumnFamilyDescriptor::new(CF_SESSION_MAIN, entity_opts),
+            ColumnFamilyDescriptor::new(CF_SESSION_SLUG, Options::default()),
         ];
         let db = DB::open_cf_descriptors(&opts, path, cfs)
             .map_err(|e| LogError::Storage(e.to_string()))?;
@@ -135,6 +141,13 @@ impl AssertionStore {
     /// Entity store for create/delete/restore/find operations.
     pub fn entities(&self) -> EntityStore {
         EntityStore::new(EntityIo::new(Arc::clone(&self.db), CF_ENTITY_MAIN, CF_ENTITY_SLUG))
+    }
+
+    // -- Sessions --
+
+    /// Session store for creating and managing reasoning sessions.
+    pub fn sessions(&self) -> SessionStore {
+        SessionStore::new(SessionIo::new(Arc::clone(&self.db), CF_SESSION_MAIN, CF_SESSION_SLUG))
     }
 }
 

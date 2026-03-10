@@ -1,10 +1,12 @@
 mod assert_entity;
 mod execute;
 mod query_entity;
+pub(crate) mod session;
 
 pub use assert_entity::AssertEntityError;
 pub use execute::execute;
 pub use query_entity::{EntityProjection, ProjectionError, PropertyState};
+pub use session::{SessionCommandError, SessionDetail, SessionSummary};
 
 use crate::assertion::{EntityError, EntityRecord, LogEntry, LogError, PropertyValue, Transaction, WriterError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
@@ -40,6 +42,12 @@ pub enum Command {
         entity: String,
         entity_type: String,
     },
+    /// Create a new session scoped to entity types and seed entities.
+    CreateSession(CreateSessionInput),
+    /// Get session by slug with resolved references.
+    GetSession { slug: String },
+    /// List all sessions.
+    ListSessions,
     /// List all entries in the fact log.
     ListLog,
 }
@@ -132,6 +140,16 @@ pub struct TransactionEntityResult {
     pub hypotheses: Vec<LogEntry>,
 }
 
+/// Input for creating a session.
+pub struct CreateSessionInput {
+    pub slug: String,
+    pub description: Option<String>,
+    /// Entity type slugs — limits what types are valid in this session.
+    pub entity_types: Vec<String>,
+    /// Entity slugs — seed entities added at creation.
+    pub entities: Vec<String>,
+}
+
 /// Result of executing a command.
 #[derive(Debug)]
 pub enum CommandResult {
@@ -162,6 +180,10 @@ pub enum CommandResult {
     EntityList(Vec<EntityRecord>),
     /// Entity projected onto an entity type.
     EntityDetail(EntityProjection),
+    /// Session created or retrieved with resolved references.
+    Session(SessionDetail),
+    /// List of session summaries.
+    SessionList(Vec<SessionSummary>),
     /// Full assertion log.
     LogEntries(Vec<LogEntry>),
 }
@@ -192,4 +214,8 @@ pub enum CommandError {
     /// Projection error from entity query.
     #[error(transparent)]
     Projection(#[from] ProjectionError),
+
+    /// Session command error.
+    #[error(transparent)]
+    Session(#[from] SessionCommandError),
 }

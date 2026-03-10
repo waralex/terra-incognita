@@ -5,7 +5,7 @@ use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
     AssertEntityInput, AssertItem, AssertionItem, AttachProperty, Command, CreateEntityType,
-    CreateProperty, IntroduceItem, TransactionInput,
+    CreateProperty, CreateSessionInput, IntroduceItem, TransactionInput,
 };
 
 /// DTO for batch entity type creation items.
@@ -139,6 +139,19 @@ pub enum QueryDto {
         #[serde(default)]
         asserts: Vec<AssertItemDto>,
     },
+    #[serde(rename = "session.create")]
+    CreateSession {
+        slug: String,
+        description: Option<String>,
+        #[serde(default)]
+        entity_types: Vec<String>,
+        #[serde(default)]
+        entities: Vec<String>,
+    },
+    #[serde(rename = "session.get")]
+    GetSession { slug: String },
+    #[serde(rename = "session.list")]
+    ListSessions,
     #[serde(rename = "log.list")]
     ListLog,
 }
@@ -351,6 +364,24 @@ impl QueryDto {
                     ResponseShape::Single,
                 ))
             }
+            QueryDto::CreateSession {
+                slug,
+                description,
+                entity_types,
+                entities,
+            } => Ok((
+                Command::CreateSession(CreateSessionInput {
+                    slug,
+                    description,
+                    entity_types,
+                    entities,
+                }),
+                ResponseShape::Single,
+            )),
+            QueryDto::GetSession { slug } => {
+                Ok((Command::GetSession { slug }, ResponseShape::Single))
+            }
+            QueryDto::ListSessions => Ok((Command::ListSessions, ResponseShape::Batch)),
             QueryDto::ListLog => Ok((Command::ListLog, ResponseShape::Batch)),
         }
     }

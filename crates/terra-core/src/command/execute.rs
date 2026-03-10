@@ -4,6 +4,7 @@ use crate::schema::{AttachInput, EntityTypeInput, PropertyInput, SchemaRegistry}
 use super::{Command, CommandError, CommandResult};
 use super::assert_entity;
 use super::query_entity;
+use super::session;
 
 /// Executes a domain command against the schema registry and assertion store.
 pub fn execute(
@@ -116,6 +117,18 @@ pub fn execute(
         } => {
             let projection = query_entity::project_entity(&entity, &entity_type, registry, store)?;
             Ok(CommandResult::EntityDetail(projection))
+        }
+        Command::CreateSession(input) => {
+            let detail = session::create_session(input, registry, store)?;
+            Ok(CommandResult::Session(detail))
+        }
+        Command::GetSession { slug } => {
+            let detail = session::get_session(&slug, registry, store)?;
+            Ok(CommandResult::Session(detail))
+        }
+        Command::ListSessions => {
+            let list = session::list_sessions(store)?;
+            Ok(CommandResult::SessionList(list))
         }
         Command::ListLog => {
             let entries = store.facts().list()?;

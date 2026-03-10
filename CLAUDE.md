@@ -39,15 +39,17 @@ Automatic schema creation on insert is forbidden. It leads to chaos.
 
 Three concerns, kept separate:
 
-**Schema registry** — what entity types exist, what attributes are allowed for each type,
-what value types those attributes carry. This is the contract. Strict. Explicit.
+**Schema registry** — what entity types exist, what properties are allowed for each type,
+what value types those properties carry (Set, Range, Struct). This is the contract.
+Strict. Explicit. Branch-local — each branch can extend the schema independently,
+inheriting from its parent at the time of branching.
 
 **Sources** — the raw origin of knowledge. Immutable after insert. A source said what it
 said. If extraction was wrong, re-extract from the same source and replace the assertions.
 Never modify the source itself.
 
-**Assertions** — atomic claims about entities, each tied to a source, carrying a confidence
-value and a timestamp. The working layer. Queries go here.
+**Assertions** — atomic claims about entities, each tied to a transaction, carrying
+reasoning and a timestamp. The working layer. Queries go here.
 
 **Relations** — connections between entities, stored as assertions. Hierarchies are dynamic
 and emerge from relations — there is no separate hierarchy structure. An entity can belong
@@ -72,6 +74,23 @@ of reasoning.
 the requested time interval, plus all hypotheses that follow it. This gives the caller
 the current best understanding together with open questions. If no fact exists,
 all hypotheses are returned.
+
+## Branches
+
+Branches are the unit of isolated exploration. A branch inherits schema, entities, and
+assertions from its parent at the moment of creation (`branch_point_us`), then evolves
+independently. No physical copying — reads walk the ancestry chain with temporal filtering.
+
+**Main branch** (`Uuid::nil()`) is implicit, always exists, has no record stored.
+
+**Ancestry chain**: `[self, parent, ..., main]` — precomputed at creation. Max depth: 8.
+
+**Schema inheritance**: A child branch sees all schema items created in ancestors before
+its `branch_point_us`. Writes always go to the current branch. Slug uniqueness is checked
+across the entire ancestry chain.
+
+**Seed entities**: Entities selected at branch creation as the working set.
+**Introduced entities**: New entities created within the branch.
 
 ## Query Model
 
@@ -148,10 +167,16 @@ no "utils.rs", no bags of loosely related things.
 ## Stack
 
 - Rust — core, API, validation layer
-- SQLite — schema registry
-- RocksDB — assertions and sources
-- rusqlite — SQLite client
+- RocksDB — single storage engine for everything (schema, assertions, branches, entities)
 - serde + serde_json — serialization
+- axum + tokio — HTTP server (terra-server)
+
+## Crate Structure
+
+- **terra-core** — domain logic: schema registry, assertion store, command execution
+- **terra-query** — transport-agnostic query dispatcher (bytes in → bytes out)
+- **terra-server** — HTTP wrapper around terra-query (`POST /query`, YAML/JSON)
+- **terra-cli** — minimal stdin-to-HTTP client
 
 ## Deployment
 
@@ -160,6 +185,17 @@ Single binary. Zero infrastructure. No Docker, no containers, no network service
 **When PostgreSQL** — when the server scenario arrives: multiple agents, shared memory,
 network access. Migration is cheap. That is v2. Not now.
 
+## API Commands
+
+Commands are sent as YAML or JSON with a `command` field:
+
+- **Schema**: `entity-type.create`, `entity-type.list`, `entity-type.get`,
+  `property.create`, `property.list`, `property.attach`
+- **Entities**: `entity.create`, `entity.assert`, `entity.list`, `entity.get`
+- **Transactions**: `transaction` (multi-entity atomic operations)
+- **Branches**: `branch.create`, `branch.get`, `branch.list`
+- **Log**: `log.list`
+
 ## Non-Goals for v1
 
 - Distributed deployment
@@ -167,7 +203,6 @@ network access. Migration is cheap. That is v2. Not now.
 - Automatic conflict resolution
 - Probabilistic query evaluation
 - Inference engine
-- Web API — internal library first
 
 ## Naming
 

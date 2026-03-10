@@ -18,6 +18,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
         }
+        (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+            app.wants_switch_session = true;
+        }
         (KeyCode::Enter, _) => app.submit_input(),
         (KeyCode::Tab, _) => app.toggle_panel(),
         (KeyCode::Up, _) => app.scroll_up(),

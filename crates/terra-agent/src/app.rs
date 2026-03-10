@@ -35,6 +35,7 @@ pub struct App {
     pub show_side_panel: bool,
     pub side_panel_content: String,
     pub should_quit: bool,
+    pub wants_switch_session: bool,
     pub scroll_offset: usize,
     store: StoreHandle,
     mode: Mode,
@@ -43,23 +44,24 @@ pub struct App {
 }
 
 impl App {
-    /// Creates a new App with the given store handle and mode.
-    pub fn new(store: StoreHandle, mode: Mode) -> Self {
+    /// Creates a new App with the given store handle, mode, and branch.
+    pub fn new(store: StoreHandle, mode: Mode, branch: String) -> Self {
         let welcome = match &mode {
-            Mode::Direct => "Direct mode. Type YAML commands and press Enter.",
-            Mode::Llm(_) => "LLM mode. Type natural language, agent will create transactions.",
+            Mode::Direct => format!("Direct mode · branch: {branch}. Type YAML commands and press Enter."),
+            Mode::Llm(_) => format!("LLM mode · branch: {branch}. Type natural language, agent will create transactions."),
         };
         Self {
             messages: vec![Message {
                 role: Role::System,
-                text: welcome.into(),
+                text: welcome,
             }],
             input: String::new(),
             cursor_pos: 0,
-            branch: "main".into(),
+            branch,
             show_side_panel: false,
             side_panel_content: String::new(),
             should_quit: false,
+            wants_switch_session: false,
             scroll_offset: 0,
             store,
             mode,
@@ -233,6 +235,20 @@ impl App {
     pub fn delete(&mut self) {
         if self.cursor_pos < self.input.len() {
             self.input.remove(self.cursor_pos);
+        }
+    }
+
+    /// Switches to a different branch (session).
+    pub fn switch_branch(&mut self, branch: String) {
+        self.branch = branch.clone();
+        self.messages.push(Message {
+            role: Role::System,
+            text: format!("Switched to session: {branch}"),
+        });
+        self.llm_history.clear();
+        self.scroll_offset = 0;
+        if self.show_side_panel {
+            self.refresh_side_panel();
         }
     }
 

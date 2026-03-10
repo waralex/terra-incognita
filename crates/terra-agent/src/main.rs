@@ -1,6 +1,7 @@
 mod app;
 mod event;
 mod llm;
+mod session;
 mod store;
 mod ui;
 
@@ -17,6 +18,7 @@ use ratatui::backend::CrosstermBackend;
 
 use crate::app::{App, Mode};
 use crate::llm::LlmConfig;
+use crate::session::SessionChoice;
 use crate::store::StoreHandle;
 
 const CONFIG_FILENAME: &str = "terra-incognita.yml";
@@ -60,14 +62,6 @@ fn main() -> io::Result<()> {
 
     let store = StoreHandle::open(&db_path);
 
-    // Detect mode: if TERRA_LLM_API_KEY is set, use LLM mode
-    let mode = match LlmConfig::from_env() {
-        Some(config) => Mode::Llm(config),
-        None => Mode::Direct,
-    };
-
-    let mut app = App::new(store, mode);
-
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -75,10 +69,53 @@ fn main() -> io::Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Main loop
-    let result = run_loop(&mut terminal, &mut app);
+    // Session picker
+    let branch = match session::pick_session(&mut terminal, &store)? {
+        SessionChoice::Selected(slug) => slug,
+        SessionChoice::Quit => {
+            cleanup_terminal(&mut terminal)?;
+            return Ok(());
+        }
+    };
 
-    // Restore terminal
+    // Detect mode
+    let mode = match LlmConfig::from_env() {
+        Some(config) => Mode::Llm(config),
+        None => Mode::Direct,
+    };
+
+    let mut app = App::new(store.clone(), mode, branch);
+
+    // Main loop
+    let result = run_loop(&mut terminal, &mut app, &store);
+
+    cleanup_terminal(&mut terminal)?;
+    result
+}
+
+fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    store: &StoreHandle,
+) -> io::Result<()> {
+    while !app.should_quit {
+        if app.wants_switch_session {
+            app.wants_switch_session = false;
+            match session::pick_session(terminal, store)? {
+                SessionChoice::Selected(slug) => app.switch_branch(slug),
+                SessionChoice::Quit => app.should_quit = true,
+            }
+            continue;
+        }
+        terminal.draw(|frame| ui::draw(frame, app))?;
+        event::handle_events(app)?;
+    }
+    Ok(())
+}
+
+fn cleanup_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -86,17 +123,5 @@ fn main() -> io::Result<()> {
         DisableMouseCapture
     )?;
     terminal.show_cursor()?;
-
-    result
-}
-
-fn run_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> io::Result<()> {
-    while !app.should_quit {
-        terminal.draw(|frame| ui::draw(frame, app))?;
-        event::handle_events(app)?;
-    }
     Ok(())
 }

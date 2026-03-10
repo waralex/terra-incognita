@@ -93,11 +93,15 @@ pub struct HypothesisSnapshot {
     pub tx_id: Uuid,
 }
 
-/// Recent transaction with reasoning.
+/// Recent transaction with reasoning, question, and answer.
 #[derive(Debug, Serialize)]
 pub struct TransactionSnapshot {
     pub id: Uuid,
     pub reasoning: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -240,6 +244,8 @@ pub fn build_state(
         .map(|tx| TransactionSnapshot {
             id: tx.id,
             reasoning: tx.reasoning,
+            question: tx.question,
+            answer: tx.answer,
             timestamp: tx.timestamp,
         })
         .collect();

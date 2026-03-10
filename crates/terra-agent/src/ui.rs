@@ -55,6 +55,10 @@ fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
                 "you> ",
                 Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ),
+            Role::Agent => (
+                "agent> ",
+                Style::default().fg(Color::Cyan),
+            ),
             Role::System => (
                 "sys> ",
                 Style::default().fg(Color::DarkGray),

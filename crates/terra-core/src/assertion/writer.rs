@@ -189,6 +189,8 @@ impl AssertionWriter {
             id: Uuid::now_v7(),
             branch_id: super::MAIN_BRANCH,
             reasoning: tx_reasoning,
+            question: None,
+            answer: None,
             timestamp: chrono::Utc::now(),
         };
         self.tx_store.put_to_batch(&mut batch, &tx)?;

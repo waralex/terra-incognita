@@ -13,6 +13,10 @@ use super::{TransactionEntityResult, TransactionInput};
 /// Errors specific to the transaction business logic.
 #[derive(Debug, thiserror::Error)]
 pub enum AssertEntityError {
+    /// Empty transaction without reasoning.
+    #[error("empty transaction: if no data changes are needed, reasoning is required to explain why")]
+    EmptyTransaction,
+
     /// Entity must exist for assertion but was not found.
     #[error("entity not found: {0}")]
     EntityNotFound(String),
@@ -97,6 +101,22 @@ pub fn execute_transaction(
     registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<TransactionExecResult, AssertEntityError> {
+    // Validate: empty transactions (no mutations) require reasoning.
+    let is_empty = input.entity_types.is_empty()
+        && input.properties.is_empty()
+        && input.attach.is_empty()
+        && input.hide.entities.is_empty()
+        && input.hide.entity_types.is_empty()
+        && input.hide.properties.is_empty()
+        && input.unhide.entities.is_empty()
+        && input.unhide.entity_types.is_empty()
+        && input.unhide.properties.is_empty()
+        && input.introduce.is_empty()
+        && input.asserts.is_empty();
+    if is_empty && (input.reasoning.is_null() || input.reasoning == serde_json::Value::String(String::new())) {
+        return Err(AssertEntityError::EmptyTransaction);
+    }
+
     // Phase 0: Schema operations (committed independently via registry)
     // Properties first — entity types may reference them for inline attachment.
 
@@ -249,6 +269,8 @@ pub fn execute_transaction(
         id: Uuid::now_v7(),
         branch_id: crate::assertion::MAIN_BRANCH,
         reasoning: input.reasoning,
+        question: input.question,
+        answer: input.answer,
         timestamp: chrono::Utc::now(),
     };
 
@@ -530,6 +552,8 @@ mod tests {
     ) -> TransactionInput {
         TransactionInput {
             reasoning,
+            question: None,
+            answer: None,
             entity_types: vec![],
             properties: vec![],
             attach: vec![],
@@ -1177,6 +1201,8 @@ mod tests {
         let result = execute_transaction(
             TransactionInput {
                 reasoning: json!("bootstrap schema and data"),
+                question: None,
+                answer: None,
                 entity_types: vec![super::super::CreateEntityType {
                     slug: "track".into(),
                     description: None,
@@ -1226,6 +1252,8 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id: MAIN_BRANCH,
             reasoning: json!("hide track"),
+            question: None,
+            answer: None,
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();
@@ -1266,6 +1294,8 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id: MAIN_BRANCH,
             reasoning: json!("hide bpm"),
+            question: None,
+            answer: None,
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();
@@ -1309,6 +1339,8 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id: MAIN_BRANCH,
             reasoning: json!("hide entity"),
+            question: None,
+            answer: None,
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();
@@ -1349,6 +1381,8 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id: MAIN_BRANCH,
             reasoning: json!("hide entity"),
+            question: None,
+            answer: None,
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();

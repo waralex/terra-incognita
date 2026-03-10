@@ -113,6 +113,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![
                     CreateProperty {
@@ -142,6 +144,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![CreateEntityType {
                     slug: "track".into(),
                     description: None,
@@ -167,6 +171,8 @@ mod tests {
         let result = execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![CreateEntityType {
                     slug: "unit".into(),
                     description: Some("Research project".into()),
@@ -207,6 +213,8 @@ mod tests {
         let result = execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("initial setup"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -253,6 +261,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -289,6 +299,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("hide track"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -325,6 +337,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("hide bpm"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -381,6 +395,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -401,6 +417,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("hide alpha"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -460,6 +478,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("initial analysis"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -519,6 +539,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("initial"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -547,6 +569,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("re-analysis"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -611,6 +635,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -630,6 +656,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("hide stuff"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -679,6 +707,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!(null),
+                question: None,
+                answer: None,
                 entity_types: vec![CreateEntityType {
                     slug: "album".into(),
                     description: None,
@@ -734,6 +764,8 @@ mod tests {
             execute(
                 Command::Transaction(TransactionInput {
                     reasoning: serde_json::json!(format!("tx-{}", i)),
+                    question: None,
+                    answer: None,
                     entity_types: vec![],
                     properties: vec![],
                     attach: vec![],
@@ -774,6 +806,8 @@ mod tests {
         let result = execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("first measurement"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -807,6 +841,8 @@ mod tests {
         execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("corrected measurement"),
+                question: None,
+                answer: None,
                 entity_types: vec![],
                 properties: vec![],
                 attach: vec![],
@@ -873,6 +909,8 @@ mod tests {
         let result = execute(
             Command::Transaction(TransactionInput {
                 reasoning: serde_json::json!("bootstrap schema in one go"),
+                question: None,
+                answer: None,
                 entity_types: vec![CreateEntityType {
                     slug: "track".into(),
                     description: None,

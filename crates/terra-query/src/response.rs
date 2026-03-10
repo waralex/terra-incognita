@@ -12,6 +12,8 @@ fn is_zero(v: &usize) -> bool {
 #[derive(Serialize)]
 pub struct TransactionResultResponse {
     pub tx_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub entity_types: Vec<EntityType>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

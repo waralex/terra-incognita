@@ -28,6 +28,12 @@ pub struct Transaction {
     pub id: Uuid,
     pub branch_id: Uuid,
     pub reasoning: serde_json::Value,
+    /// The user's question or input that triggered this transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub question: Option<String>,
+    /// The agent's answer or explanation for this transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer: Option<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -45,11 +51,18 @@ impl TransactionStore {
     }
 
     fn serialize_tx(tx: &Transaction) -> serde_json::Value {
-        serde_json::json!({
+        let mut val = serde_json::json!({
             "branch_id": tx.branch_id.to_string(),
             "reasoning": tx.reasoning,
             "timestamp": tx.timestamp.to_rfc3339(),
-        })
+        });
+        if let Some(ref q) = tx.question {
+            val["question"] = serde_json::Value::String(q.clone());
+        }
+        if let Some(ref a) = tx.answer {
+            val["answer"] = serde_json::Value::String(a.clone());
+        }
+        val
     }
 
     /// Writes a transaction record.
@@ -85,6 +98,19 @@ impl TransactionStore {
         Ok(())
     }
 
+    fn deserialize_tx(val: &serde_json::Value, branch_id: Uuid, tx_id: Uuid) -> Result<Transaction, LogError> {
+        let reasoning = val.get("reasoning").cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let question = val.get("question").and_then(|v| v.as_str()).map(String::from);
+        let answer = val.get("answer").and_then(|v| v.as_str()).map(String::from);
+        let timestamp = val.get("timestamp")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .ok_or_else(|| LogError::Storage("missing timestamp in transaction".into()))?;
+        Ok(Transaction { id: tx_id, branch_id, reasoning, question, answer, timestamp })
+    }
+
     /// Reads a transaction by branch and ID.
     pub fn get(&self, branch_id: &Uuid, tx_id: &Uuid) -> Result<Option<Transaction>, LogError> {
         let cf = self.cf()?;
@@ -96,17 +122,7 @@ impl TransactionStore {
             Ok(Some(bytes)) => {
                 let val: serde_json::Value = serde_json::from_slice(&bytes)
                     .map_err(|e| LogError::Storage(e.to_string()))?;
-
-                let reasoning = val.get("reasoning").cloned()
-                    .unwrap_or(serde_json::Value::Null);
-
-                let timestamp = val.get("timestamp")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .ok_or_else(|| LogError::Storage("missing timestamp in transaction".into()))?;
-
-                Ok(Some(Transaction { id: *tx_id, branch_id: *branch_id, reasoning, timestamp }))
+                Ok(Some(Self::deserialize_tx(&val, *branch_id, *tx_id)?))
             }
             Ok(None) => Ok(None),
             Err(e) => Err(LogError::Storage(e.to_string())),
@@ -127,25 +143,9 @@ impl TransactionStore {
             }
 
             let k = TransactionKey::decode(&raw_key)?;
-
             let parsed: serde_json::Value = serde_json::from_slice(&val)
                 .map_err(|e| LogError::Storage(e.to_string()))?;
-
-            let reasoning = parsed.get("reasoning").cloned()
-                .unwrap_or(serde_json::Value::Null);
-
-            let timestamp = parsed.get("timestamp")
-                .and_then(|v| v.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .ok_or_else(|| LogError::Storage("missing timestamp in transaction".into()))?;
-
-            results.push(Transaction {
-                id: k.tx_id,
-                branch_id: k.branch_id,
-                reasoning,
-                timestamp,
-            });
+            results.push(Self::deserialize_tx(&parsed, k.branch_id, k.tx_id)?);
         }
 
         Ok(results)
@@ -171,27 +171,12 @@ impl TransactionStore {
 
             let k = TransactionKey::decode(&raw_key)?;
             if *k.tx_id.as_bytes() > bound {
-                break; // keys sorted by tx_id within branch — no more matches
+                break;
             }
 
             let parsed: serde_json::Value = serde_json::from_slice(&val)
                 .map_err(|e| LogError::Storage(e.to_string()))?;
-
-            let reasoning = parsed.get("reasoning").cloned()
-                .unwrap_or(serde_json::Value::Null);
-
-            let timestamp = parsed.get("timestamp")
-                .and_then(|v| v.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc))
-                .ok_or_else(|| LogError::Storage("missing timestamp in transaction".into()))?;
-
-            results.push(Transaction {
-                id: k.tx_id,
-                branch_id: k.branch_id,
-                reasoning,
-                timestamp,
-            });
+            results.push(Self::deserialize_tx(&parsed, k.branch_id, k.tx_id)?);
         }
 
         Ok(results)
@@ -236,6 +221,8 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id,
             reasoning: serde_json::json!("narrowed hypothesis space based on spectral analysis"),
+            question: None,
+            answer: None,
             timestamp: Utc::now(),
         };
 
@@ -267,6 +254,8 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id,
             reasoning: serde_json::Value::Null,
+            question: None,
+            answer: None,
             timestamp: Utc::now(),
         };
 
@@ -288,18 +277,24 @@ mod tests {
             id: Uuid::now_v7(),
             branch_id: branch_a,
             reasoning: serde_json::json!("first"),
+            question: None,
+            answer: None,
             timestamp: Utc::now(),
         };
         let tx2 = Transaction {
             id: Uuid::now_v7(),
             branch_id: branch_a,
             reasoning: serde_json::json!("second"),
+            question: None,
+            answer: None,
             timestamp: Utc::now(),
         };
         let tx3 = Transaction {
             id: Uuid::now_v7(),
             branch_id: branch_b,
             reasoning: serde_json::json!("other branch"),
+            question: None,
+            answer: None,
             timestamp: Utc::now(),
         };
 

@@ -87,6 +87,10 @@ pub struct AssertionItem {
 pub struct TransactionInput {
     /// Transaction-level reasoning: why this batch of operations.
     pub reasoning: serde_json::Value,
+    /// The user's question or input that triggered this transaction.
+    pub question: Option<String>,
+    /// The agent's answer or explanation for this transaction.
+    pub answer: Option<String>,
     /// Entity types to create (processed first).
     pub entity_types: Vec<CreateEntityType>,
     /// Properties to create (processed second).

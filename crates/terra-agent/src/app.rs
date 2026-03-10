@@ -1,9 +1,13 @@
+use crate::llm::{self, ChatMessage, LlmConfig, LlmResult};
 use crate::store::StoreHandle;
+
+const MAX_RETRIES: usize = 2;
 
 /// Message role in the chat log.
 #[derive(Clone)]
 pub enum Role {
     User,
+    Agent,
     System,
 }
 
@@ -12,6 +16,14 @@ pub enum Role {
 pub struct Message {
     pub role: Role,
     pub text: String,
+}
+
+/// Operating mode.
+pub enum Mode {
+    /// Direct YAML command dispatch (no LLM).
+    Direct,
+    /// LLM-assisted: user types natural language, LLM returns transactions.
+    Llm(LlmConfig),
 }
 
 /// Application state.
@@ -25,15 +37,22 @@ pub struct App {
     pub should_quit: bool,
     pub scroll_offset: usize,
     store: StoreHandle,
+    mode: Mode,
+    /// Conversation history for LLM context (last N exchanges).
+    llm_history: Vec<ChatMessage>,
 }
 
 impl App {
-    /// Creates a new App with the given store handle.
-    pub fn new(store: StoreHandle) -> Self {
+    /// Creates a new App with the given store handle and mode.
+    pub fn new(store: StoreHandle, mode: Mode) -> Self {
+        let welcome = match &mode {
+            Mode::Direct => "Direct mode. Type YAML commands and press Enter.",
+            Mode::Llm(_) => "LLM mode. Type natural language, agent will create transactions.",
+        };
         Self {
             messages: vec![Message {
                 role: Role::System,
-                text: "Welcome to terra-agent. Type YAML commands and press Enter.".into(),
+                text: welcome.into(),
             }],
             input: String::new(),
             cursor_pos: 0,
@@ -43,10 +62,12 @@ impl App {
             should_quit: false,
             scroll_offset: 0,
             store,
+            mode,
+            llm_history: Vec::new(),
         }
     }
 
-    /// Submits the current input as a YAML command.
+    /// Submits the current input.
     pub fn submit_input(&mut self) {
         let input = self.input.trim().to_string();
         if input.is_empty() {
@@ -57,24 +78,100 @@ impl App {
             role: Role::User,
             text: input.clone(),
         });
-
-        let response = match self.store.dispatch(&input, &self.branch) {
-            Ok(yaml) => yaml,
-            Err(e) => e,
-        };
-
-        self.messages.push(Message {
-            role: Role::System,
-            text: response.trim().to_string(),
-        });
-
         self.input.clear();
         self.cursor_pos = 0;
         self.scroll_offset = 0;
 
-        // Auto-refresh side panel if visible
+        match &self.mode {
+            Mode::Direct => self.dispatch_direct(&input),
+            Mode::Llm(_) => self.dispatch_llm(&input),
+        }
+
         if self.show_side_panel {
             self.refresh_side_panel();
+        }
+    }
+
+    /// Direct mode: dispatch YAML command as-is.
+    fn dispatch_direct(&mut self, input: &str) {
+        let response = match self.store.dispatch(input, &self.branch) {
+            Ok(yaml) => yaml,
+            Err(e) => e,
+        };
+        self.messages.push(Message {
+            role: Role::System,
+            text: response.trim().to_string(),
+        });
+    }
+
+    /// LLM mode: send to LLM, extract answer, dispatch transaction.
+    fn dispatch_llm(&mut self, input: &str) {
+        // Grab config reference - need to clone for borrow checker
+        let config = match &self.mode {
+            Mode::Llm(c) => LlmConfig {
+                api_key: c.api_key.clone(),
+                base_url: c.base_url.clone(),
+                model: c.model.clone(),
+            },
+            _ => unreachable!(),
+        };
+
+        let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
+
+        let result = llm::call_llm_with_retry(
+            &config,
+            system_prompt(),
+            &branch_state,
+            &self.llm_history,
+            input,
+            MAX_RETRIES,
+        );
+
+        match result {
+            Ok(LlmResult { answer, transaction_json }) => {
+                // Show answer immediately
+                if !answer.is_empty() {
+                    self.messages.push(Message {
+                        role: Role::Agent,
+                        text: answer.clone(),
+                    });
+                }
+
+                // Dispatch transaction
+                match self.store.dispatch(&transaction_json, &self.branch) {
+                    Ok(yaml) => {
+                        self.messages.push(Message {
+                            role: Role::System,
+                            text: format!("tx committed\n{}", yaml.trim()),
+                        });
+                    }
+                    Err(e) => {
+                        self.messages.push(Message {
+                            role: Role::System,
+                            text: format!("tx failed: {e}"),
+                        });
+                    }
+                }
+
+                // Update history (keep last 10 exchanges)
+                self.llm_history.push(ChatMessage {
+                    role: "user".into(),
+                    content: input.into(),
+                });
+                self.llm_history.push(ChatMessage {
+                    role: "assistant".into(),
+                    content: answer,
+                });
+                if self.llm_history.len() > 20 {
+                    self.llm_history.drain(..2);
+                }
+            }
+            Err(e) => {
+                self.messages.push(Message {
+                    role: Role::System,
+                    text: format!("LLM error: {e}"),
+                });
+            }
         }
     }
 
@@ -145,4 +242,61 @@ impl App {
             Err(e) => e,
         };
     }
+}
+
+/// System prompt placeholder — instructs the LLM on how to use terra-incognita.
+fn system_prompt() -> &'static str {
+    // TODO: write a comprehensive system prompt with terra-incognita API docs,
+    // examples, and response format requirements.
+    r#"You are a knowledge management agent backed by terra-incognita, an append-only epistemic store.
+
+Your EVERY response MUST be a valid JSON object that is a terra-incognita transaction.
+The transaction MUST contain:
+- "answer": your text response to the user (required)
+- "reasoning": why you are making these changes (required)
+
+The transaction MAY also contain data operations:
+- "entity_types": create new entity types
+- "properties": create new properties
+- "attach": attach properties to entity types
+- "introduce": create new entities with assertions
+- "asserts": make assertions on existing entities
+- "hide" / "unhide": visibility changes
+
+Property value formats:
+- Set: {"contains": [...], "not_contains": [...]}
+- Range: {"eq": value} or {"from": v1, "to": v2}
+- Struct: any JSON value
+
+Example response (creating a person):
+{
+  "answer": "Created person entity for John with age and city.",
+  "reasoning": "User described a person, decomposing into structured data.",
+  "entity_types": [{"slug": "person"}],
+  "properties": [
+    {"slug": "name", "value_type": "set"},
+    {"slug": "age", "value_type": "range"},
+    {"slug": "city", "value_type": "set"}
+  ],
+  "attach": [
+    {"entity_type": "person", "slug": "name"},
+    {"entity_type": "person", "slug": "age"},
+    {"entity_type": "person", "slug": "city"}
+  ],
+  "introduce": [{
+    "entity": "john",
+    "facts": [{
+      "entity_type": "person",
+      "properties": {
+        "name": {"contains": ["John"]},
+        "age": {"eq": 30},
+        "city": {"contains": ["Moscow"]}
+      },
+      "reasoning": "User stated these facts directly."
+    }]
+  }]
+}
+
+If no data changes are needed, you MUST still provide reasoning explaining why.
+The current branch state is provided below — use it to understand what already exists."#
 }

@@ -132,6 +132,7 @@ CommandError::Branch(e) => {
                     AssertEntityError::EntityTypeHidden(_) => "entity_type_hidden",
                     AssertEntityError::PropertyNotFound { .. } => "property_not_found",
                     AssertEntityError::PropertyHidden { .. } => "property_hidden",
+                    AssertEntityError::EmptyTransaction => "empty_transaction",
                     AssertEntityError::Entity(_)
                     | AssertEntityError::Writer(_)
                     | AssertEntityError::Schema(_) => "internal_error",

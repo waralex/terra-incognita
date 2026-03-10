@@ -91,6 +91,10 @@ pub enum QueryDto {
         #[serde(default)]
         reasoning: serde_json::Value,
         #[serde(default)]
+        question: Option<String>,
+        #[serde(default)]
+        answer: Option<String>,
+        #[serde(default)]
         entity_types: Vec<EntityTypeItemDto>,
         #[serde(default)]
         properties: Vec<PropertyItemDto>,
@@ -157,6 +161,8 @@ QueryDto::ListProperties { entity_type } => Ok((
             }
 QueryDto::Transaction {
                 reasoning,
+                question,
+                answer,
                 entity_types,
                 properties,
                 attach,
@@ -213,6 +219,8 @@ QueryDto::Transaction {
                 Ok((
                     Command::Transaction(TransactionInput {
                         reasoning,
+                        question,
+                        answer,
                         entity_types: entity_type_items,
                         properties: property_items,
                         attach: attach_items,

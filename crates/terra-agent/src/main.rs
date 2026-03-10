@@ -1,5 +1,6 @@
 mod app;
 mod event;
+mod llm;
 mod store;
 mod ui;
 
@@ -14,7 +15,8 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::app::App;
+use crate::app::{App, Mode};
+use crate::llm::LlmConfig;
 use crate::store::StoreHandle;
 
 const CONFIG_FILENAME: &str = "terra-incognita.yml";
@@ -52,13 +54,19 @@ fn main() -> io::Result<()> {
     let data_dir = load_data_dir();
     let db_path = data_dir.join("assertions");
 
-    // Ensure data directory exists
     if !data_dir.exists() {
         std::fs::create_dir_all(&data_dir)?;
     }
 
     let store = StoreHandle::open(&db_path);
-    let mut app = App::new(store);
+
+    // Detect mode: if TERRA_LLM_API_KEY is set, use LLM mode
+    let mode = match LlmConfig::from_env() {
+        Some(config) => Mode::Llm(config),
+        None => Mode::Direct,
+    };
+
+    let mut app = App::new(store, mode);
 
     // Setup terminal
     enable_raw_mode()?;

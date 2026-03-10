@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -10,22 +9,18 @@ use super::log::LogError;
 /// Maximum branch ancestry depth.
 pub const MAX_BRANCH_DEPTH: usize = 8;
 
-/// A branch record: represents a branch (formerly session) in the epistemic store.
+/// A branch record: represents a branch in the epistemic store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BranchRecord {
     pub id: Uuid,
     pub slug: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Parent branch ID. `Uuid::nil()` for branches forked from main.
-    pub parent_id: Uuid,
-    /// Microsecond timestamp of the parent at branching time.
-    pub branch_point_us: i64,
-    /// Precomputed ancestry: `[self, parent, ..., main]`.
-    pub ancestry: Vec<Uuid>,
-    pub seed_entities: Vec<Uuid>,
-    pub introduced_entities: Vec<Uuid>,
-    pub timestamp: DateTime<Utc>,
+    /// Why this branch was created.
+    pub reasoning: serde_json::Value,
+    /// Transaction from which this branch was created. `Uuid::nil()` = genesis (branch from empty main).
+    pub created_from_tx: Uuid,
+    /// Precomputed ancestry: `[(branch_id, branch_point_tx)]`.
+    /// First entry is self with `Uuid::max()`, last is main.
+    pub ancestry: Vec<(Uuid, Uuid)>,
 }
 
 /// Low-level IO for branch storage: main CF (branch_id → body) and slug index CF (slug → branch_id).
@@ -58,6 +53,7 @@ impl BranchIo {
     }
 
     /// Writes a branch record to the main CF (no slug index update).
+    #[allow(dead_code)]
     pub fn put(&self, record: &BranchRecord) -> Result<(), LogError> {
         let main = self.main_cf()?;
         let val_bytes = serde_json::to_vec(record)
@@ -146,13 +142,9 @@ mod tests {
         BranchRecord {
             id,
             slug: slug.into(),
-            description: None,
-            parent_id: Uuid::nil(),
-            branch_point_us: 0,
-            ancestry: vec![id, Uuid::nil()],
-            seed_entities: vec![],
-            introduced_entities: vec![],
-            timestamp: Utc::now(),
+            reasoning: serde_json::Value::Null,
+            created_from_tx: Uuid::nil(),
+            ancestry: vec![(id, Uuid::max()), (Uuid::nil(), Uuid::max())],
         }
     }
 
@@ -169,7 +161,7 @@ mod tests {
         let loaded = io.get(&id).unwrap().unwrap();
         assert_eq!(loaded.id, id);
         assert_eq!(loaded.slug, "my-branch");
-        assert_eq!(loaded.ancestry, vec![id, Uuid::nil()]);
+        assert_eq!(loaded.ancestry, vec![(id, Uuid::max()), (Uuid::nil(), Uuid::max())]);
     }
 
     #[test]

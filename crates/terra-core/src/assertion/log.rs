@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use rocksdb::DB;
 use serde::Serialize;
 use uuid::Uuid;
@@ -12,13 +11,10 @@ use super::key::{storage_key, StorageKey};
 pub struct LogEntry {
     /// Unique ID of this log entry (UUIDv7).
     pub id: Uuid,
-    /// When this entry was recorded.
-    pub timestamp: DateTime<Utc>,
     /// The entity this entry refers to.
     pub entity_id: Uuid,
-    /// Transaction that groups this entry with related assertions.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tx_id: Option<Uuid>,
+    /// Transaction that produced this entry.
+    pub tx_id: Uuid,
     /// Property assertions: property_id → typed value.
     pub properties: serde_json::Value,
     /// Why this assertion was made — free-form JSON (string, structured chain, references, etc.).
@@ -44,20 +40,19 @@ impl AppendLog {
         Self { db, cf_name }
     }
 
-    /// Appends a single entry. Generates timestamp and entry ID automatically.
+    /// Appends a single entry with a given tx_id.
     pub fn append(
         &self,
+        tx_id: Uuid,
         entity_id: Uuid,
         properties: serde_json::Value,
         reasoning: serde_json::Value,
     ) -> Result<LogEntry, LogError> {
-        let now = Utc::now();
-        let timestamp_us = now.timestamp_micros();
         let entry_id = Uuid::now_v7();
 
         let key = LogKey {
             branch_id: super::MAIN_BRANCH,
-            timestamp_us,
+            tx_id,
             entry_id,
             entity_id,
         };
@@ -75,9 +70,8 @@ impl AppendLog {
 
         Ok(LogEntry {
             id: entry_id,
-            timestamp: now,
             entity_id,
-            tx_id: None,
+            tx_id,
             properties,
             reasoning,
         })
@@ -86,6 +80,7 @@ impl AppendLog {
     /// Appends multiple entries atomically via WriteBatch.
     pub fn append_batch(
         &self,
+        tx_id: Uuid,
         items: &[(Uuid, serde_json::Value, serde_json::Value)],
     ) -> Result<Vec<LogEntry>, LogError> {
         let cf = self.cf()?;
@@ -93,13 +88,11 @@ impl AppendLog {
         let mut results = Vec::with_capacity(items.len());
 
         for (entity_id, properties, reasoning) in items {
-            let now = Utc::now();
-            let timestamp_us = now.timestamp_micros();
             let entry_id = Uuid::now_v7();
 
             let key = LogKey {
                 branch_id: super::MAIN_BRANCH,
-                timestamp_us,
+                tx_id,
                 entry_id,
                 entity_id: *entity_id,
             };
@@ -114,9 +107,8 @@ impl AppendLog {
 
             results.push(LogEntry {
                 id: entry_id,
-                timestamp: now,
                 entity_id: *entity_id,
-                tx_id: None,
+                tx_id,
                 properties: properties.clone(),
                 reasoning: reasoning.clone(),
             });
@@ -142,20 +134,13 @@ impl AppendLog {
             let stored: serde_json::Value =
                 serde_json::from_slice(&val).map_err(|e| LogError::Storage(e.to_string()))?;
 
-            let timestamp = DateTime::from_timestamp_micros(k.timestamp_us)
-                .ok_or_else(|| LogError::Storage("invalid timestamp".into()))?;
-
             let properties = stored.get("properties").cloned().unwrap_or(serde_json::Value::Null);
             let reasoning = stored.get("reasoning").cloned().unwrap_or(serde_json::Value::Null);
-            let tx_id = stored.get("tx_id")
-                .and_then(|v| v.as_str())
-                .and_then(|s| Uuid::parse_str(s).ok());
 
             entries.push(LogEntry {
                 id: k.entry_id,
-                timestamp,
                 entity_id: k.entity_id,
-                tx_id,
+                tx_id: k.tx_id,
                 properties,
                 reasoning,
             });
@@ -172,9 +157,9 @@ impl AppendLog {
 }
 
 storage_key! {
-    pub(crate) struct LogKey(56) {
+    pub(crate) struct LogKey(64) {
         branch_id: Uuid,
-        timestamp_us: i64,
+        tx_id: Uuid,
         entry_id: Uuid,
         entity_id: Uuid,
     }
@@ -201,12 +186,14 @@ mod tests {
         let db = open_db(&dir);
         let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
+        let tx_id = Uuid::now_v7();
         let entity_id = Uuid::now_v7();
         let props = serde_json::json!({"name": "alpha", "score": 42});
         let reasoning = serde_json::json!("initial observation");
 
-        let entry = log.append(entity_id, props.clone(), reasoning.clone()).unwrap();
+        let entry = log.append(tx_id, entity_id, props.clone(), reasoning.clone()).unwrap();
         assert_eq!(entry.entity_id, entity_id);
+        assert_eq!(entry.tx_id, tx_id);
         assert_eq!(entry.properties, props);
         assert_eq!(entry.reasoning, reasoning);
         assert_eq!(entry.id.get_version(), Some(uuid::Version::SortRand));
@@ -215,6 +202,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, entry.id);
         assert_eq!(entries[0].entity_id, entity_id);
+        assert_eq!(entries[0].tx_id, tx_id);
         assert_eq!(entries[0].properties, props);
         assert_eq!(entries[0].reasoning, reasoning);
     }
@@ -225,13 +213,14 @@ mod tests {
         let db = open_db(&dir);
         let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
+        let tx_id = Uuid::now_v7();
         let items: Vec<(Uuid, serde_json::Value, serde_json::Value)> = vec![
             (Uuid::now_v7(), serde_json::json!({"name": "first"}), serde_json::json!(null)),
             (Uuid::now_v7(), serde_json::json!({"name": "second"}), serde_json::json!(null)),
             (Uuid::now_v7(), serde_json::json!({"name": "third"}), serde_json::json!("batch reason")),
         ];
 
-        let results = log.append_batch(&items).unwrap();
+        let results = log.append_batch(tx_id, &items).unwrap();
         assert_eq!(results.len(), 3);
 
         let entries = log.list().unwrap();
@@ -258,8 +247,9 @@ mod tests {
         let db = open_db(&dir);
         let log = AppendLog::new(Arc::clone(&db), TEST_CF);
 
-        let e1 = log.append(Uuid::now_v7(), serde_json::json!({}), serde_json::json!(null)).unwrap();
-        let e2 = log.append(Uuid::now_v7(), serde_json::json!({}), serde_json::json!(null)).unwrap();
+        let tx_id = Uuid::now_v7();
+        let e1 = log.append(tx_id, Uuid::now_v7(), serde_json::json!({}), serde_json::json!(null)).unwrap();
+        let e2 = log.append(tx_id, Uuid::now_v7(), serde_json::json!({}), serde_json::json!(null)).unwrap();
 
         assert_ne!(e1.id, e2.id);
     }
@@ -268,7 +258,7 @@ mod tests {
     fn key_encoding_roundtrip() {
         let key = LogKey {
             branch_id: Uuid::nil(),
-            timestamp_us: 1_700_000_000_000_000,
+            tx_id: Uuid::now_v7(),
             entry_id: Uuid::now_v7(),
             entity_id: Uuid::now_v7(),
         };
@@ -280,11 +270,13 @@ mod tests {
     }
 
     #[test]
-    fn keys_sort_by_branch_then_timestamp() {
+    fn keys_sort_by_branch_then_tx() {
         let branch = Uuid::nil();
         let id = Uuid::now_v7();
-        let k1 = LogKey { branch_id: branch, timestamp_us: 100, entry_id: id, entity_id: id };
-        let k2 = LogKey { branch_id: branch, timestamp_us: 200, entry_id: id, entity_id: id };
+        let tx1 = Uuid::from_u128(100);
+        let tx2 = Uuid::from_u128(200);
+        let k1 = LogKey { branch_id: branch, tx_id: tx1, entry_id: id, entity_id: id };
+        let k2 = LogKey { branch_id: branch, tx_id: tx2, entry_id: id, entity_id: id };
         assert!(k1.encode() < k2.encode());
     }
 }

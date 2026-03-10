@@ -106,7 +106,6 @@ impl From<CommandError> for QueryError {
                 use terra_core::assertion::BranchError;
                 let kind = match &e {
                     BranchCommandError::BranchNotFound(_) => "branch_not_found",
-                    BranchCommandError::EntityNotFound(_) => "entity_not_found",
                     BranchCommandError::Branch(be) => match be {
                         BranchError::SlugExists(_) => "branch_already_exists",
                         BranchError::SlugNotFound(_) | BranchError::NotFound(_) => {
@@ -116,7 +115,6 @@ impl From<CommandError> for QueryError {
                         BranchError::MaxDepthExceeded(_) => "max_depth_exceeded",
                         BranchError::Storage(_) => "storage_error",
                     },
-                    BranchCommandError::Entity(_) => "internal_error",
                 };
                 Self {
                     kind: kind.to_string(),

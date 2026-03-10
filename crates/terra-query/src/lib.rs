@@ -13,11 +13,12 @@ mod tests {
     use super::*;
     use terra_core::assertion::{AssertionStore, MAIN_BRANCH};
     use terra_core::schema::BranchSchemaRegistry;
+    use uuid::Uuid;
 
     fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
-        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
         (registry, store, dir)
     }
 
@@ -34,29 +35,9 @@ mod tests {
     fn entity_list_returns_created_entities() {
         let (reg, store, _dir) = setup();
 
-        // Setup schema
+        // Setup schema and create entity via unified transaction
         dispatch_yaml(
-            "command: entity-type.create\nslug: track\n",
-            &reg,
-            &store,
-        )
-        .unwrap();
-        dispatch_yaml(
-            "command: property.create\nslug: bpm\nvalue_type: range\n",
-            &reg,
-            &store,
-        )
-        .unwrap();
-        dispatch_yaml(
-            "command: property.attach\nentity_type: track\nslug: bpm\n",
-            &reg,
-            &store,
-        )
-        .unwrap();
-
-        // Create entity
-        dispatch_yaml(
-            "command: entity.create\nentity: song-1\n",
+            "command: transaction\nentity_types:\n  - slug: track\nproperties:\n  - slug: bpm\n    value_type: range\nattach:\n  - entity_type: track\n    slug: bpm\nintroduce:\n  - entity: song-1\n",
             &reg,
             &store,
         )
@@ -79,9 +60,9 @@ mod tests {
     fn json_format_roundtrip() {
         let (reg, store, _dir) = setup();
 
-        let input = br#"{"command": "entity-type.create", "slug": "track"}"#;
+        let input = br#"{"command": "transaction", "entity_types": [{"slug": "track"}]}"#;
         let bytes = dispatch(input, ContentFormat::Json, &reg, &store).unwrap();
         let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(val["slug"], "track");
+        assert_eq!(val["entity_types"][0]["slug"], "track");
     }
 }

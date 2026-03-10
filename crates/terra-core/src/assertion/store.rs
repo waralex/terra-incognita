@@ -33,6 +33,7 @@ const CF_SCHEMA_TYPE_SLUG: &str = "schema_type_slug";
 const CF_SCHEMA_PROPS: &str = "schema_props";
 const CF_SCHEMA_PROP_SLUG: &str = "schema_prop_slug";
 const CF_SCHEMA_ATTACHMENTS: &str = "schema_attachments";
+const CF_VISIBILITY: &str = "visibility";
 
 /// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
@@ -75,8 +76,9 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_SCHEMA_TYPES, schema_type_opts.clone()),
             ColumnFamilyDescriptor::new(CF_SCHEMA_TYPE_SLUG, entity_opts.clone()),
             ColumnFamilyDescriptor::new(CF_SCHEMA_PROPS, schema_type_opts),
-            ColumnFamilyDescriptor::new(CF_SCHEMA_PROP_SLUG, entity_opts),
+            ColumnFamilyDescriptor::new(CF_SCHEMA_PROP_SLUG, entity_opts.clone()),
             ColumnFamilyDescriptor::new(CF_SCHEMA_ATTACHMENTS, schema_attach_opts),
+            ColumnFamilyDescriptor::new(CF_VISIBILITY, entity_opts),
         ];
         let db = DB::open_cf_descriptors(&opts, path, cfs)
             .map_err(|e| LogError::Storage(e.to_string()))?;
@@ -168,10 +170,17 @@ impl AssertionStore {
         BranchStore::new(BranchIo::new(Arc::clone(&self.db), CF_BRANCH_MAIN, CF_BRANCH_SLUG))
     }
 
+    // -- Visibility --
+
+    /// Visibility store for hide/unhide operations.
+    pub fn visibility(&self) -> super::visibility::VisibilityStore {
+        super::visibility::VisibilityStore::new(Arc::clone(&self.db), CF_VISIBILITY)
+    }
+
     // -- Schema --
 
     /// Creates a branch-scoped schema registry.
-    pub fn schema_registry(&self, branch_id: Uuid, ancestry: Vec<(Uuid, i64)>) -> BranchSchemaRegistry {
+    pub fn schema_registry(&self, branch_id: Uuid, ancestry: Vec<(Uuid, Uuid)>) -> BranchSchemaRegistry {
         BranchSchemaRegistry::new(Arc::clone(&self.db), branch_id, ancestry)
     }
 }
@@ -193,10 +202,10 @@ mod tests {
         let eid2 = Uuid::now_v7();
 
         s.facts()
-            .append(eid1, serde_json::json!({"name": "alpha"}), serde_json::json!(null))
+            .append(Uuid::now_v7(), eid1, serde_json::json!({"name": "alpha"}), serde_json::json!(null))
             .unwrap();
         s.hypotheses()
-            .append(eid2, serde_json::json!({"name": "beta"}), serde_json::json!(null))
+            .append(Uuid::now_v7(), eid2, serde_json::json!({"name": "beta"}), serde_json::json!(null))
             .unwrap();
 
         let facts = s.facts().list().unwrap();
@@ -217,12 +226,12 @@ mod tests {
             (Uuid::now_v7(), serde_json::json!({"name": "r1"}), serde_json::json!(null)),
             (Uuid::now_v7(), serde_json::json!({"name": "r2"}), serde_json::json!(null)),
         ];
-        s.facts().append_batch(&fact_items).unwrap();
+        s.facts().append_batch(Uuid::now_v7(), &fact_items).unwrap();
 
         let hyp_items: Vec<(Uuid, serde_json::Value, serde_json::Value)> = vec![
             (Uuid::now_v7(), serde_json::json!({"name": "h1"}), serde_json::json!(null)),
         ];
-        s.hypotheses().append_batch(&hyp_items).unwrap();
+        s.hypotheses().append_batch(Uuid::now_v7(), &hyp_items).unwrap();
 
         assert_eq!(s.facts().list().unwrap().len(), 2);
         assert_eq!(s.hypotheses().list().unwrap().len(), 1);

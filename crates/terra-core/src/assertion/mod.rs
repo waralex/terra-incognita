@@ -8,6 +8,7 @@ pub(crate) mod log;
 mod property_value;
 mod store;
 pub(crate) mod transaction;
+pub(crate) mod visibility;
 pub(crate) mod writer;
 
 /// The default branch UUID (all zeros). The main branch.
@@ -23,5 +24,6 @@ pub use log::{AppendLog, LogEntry, LogError};
 pub use property_value::{PropertyValue, RangeValue, SetValue, StructValue};
 pub use store::AssertionStore;
 pub use transaction::{Transaction, TransactionStore};
+pub use visibility::{ItemKind, VisibilityStore};
 pub use writer::{AssertionInput, AssertionWriter, WriterError};
 pub use entity::EntityError;

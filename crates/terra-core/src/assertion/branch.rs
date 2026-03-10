@@ -1,4 +1,3 @@
-use chrono::Utc;
 use uuid::Uuid;
 
 use super::branch_io::{BranchIo, BranchRecord, MAX_BRANCH_DEPTH};
@@ -43,46 +42,53 @@ impl BranchStore {
         Self { io }
     }
 
-    /// Creates a new branch. Resolves parent ancestry and computes branch_point_us.
+    /// Creates a new branch.
+    ///
+    /// - `parent_id`: parent branch UUID (`MAIN_BRANCH` for main).
+    /// - `branch_point_tx`: transaction at which we branch off (`Uuid::max()` = HEAD/latest).
     pub fn create(
         &self,
         slug: &str,
-        description: Option<&str>,
+        reasoning: serde_json::Value,
         parent_id: Uuid,
-        seed_entity_ids: Vec<Uuid>,
+        branch_point_tx: Uuid,
     ) -> Result<BranchRecord, BranchError> {
         if self.io.get_uuid_by_slug(slug)?.is_some() {
             return Err(BranchError::SlugExists(slug.to_string()));
         }
 
-        let now = Utc::now();
-        let branch_point_us = now.timestamp_micros();
         let id = Uuid::now_v7();
 
         let ancestry = if parent_id == MAIN_BRANCH {
-            vec![id, MAIN_BRANCH]
+            vec![(id, Uuid::max()), (MAIN_BRANCH, branch_point_tx)]
         } else {
             let parent = self.io.get(&parent_id)?
                 .ok_or(BranchError::ParentNotFound(parent_id))?;
             let mut ancestry = Vec::with_capacity(parent.ancestry.len() + 1);
-            ancestry.push(id);
-            ancestry.extend_from_slice(&parent.ancestry);
+            ancestry.push((id, Uuid::max()));
+            ancestry.push((parent_id, branch_point_tx));
+            // Append parent's ancestry, skipping the parent's own self-entry
+            for entry in parent.ancestry.iter().skip(1) {
+                ancestry.push(*entry);
+            }
             if ancestry.len() > MAX_BRANCH_DEPTH {
                 return Err(BranchError::MaxDepthExceeded(MAX_BRANCH_DEPTH));
             }
             ancestry
         };
 
+        let created_from_tx = if parent_id == MAIN_BRANCH && branch_point_tx == Uuid::max() {
+            Uuid::nil()
+        } else {
+            branch_point_tx
+        };
+
         let record = BranchRecord {
             id,
             slug: slug.to_string(),
-            description: description.map(String::from),
-            parent_id,
-            branch_point_us,
+            reasoning,
+            created_from_tx,
             ancestry,
-            seed_entities: seed_entity_ids,
-            introduced_entities: vec![],
-            timestamp: now,
         };
 
         self.io.put_with_index(&record)?;
@@ -108,67 +114,17 @@ impl BranchStore {
         Ok(self.io.scan_all()?)
     }
 
-    /// Adds an entity UUID to the branch's introduced list.
-    pub fn add_introduced(
-        &self,
-        branch_id: &Uuid,
-        entity_id: Uuid,
-    ) -> Result<BranchRecord, BranchError> {
-        let mut record = self.io.get(branch_id)?
-            .ok_or_else(|| BranchError::NotFound(*branch_id))?;
-
-        record.introduced_entities.push(entity_id);
-        record.timestamp = Utc::now();
-        self.io.put(&record)?;
-        Ok(record)
-    }
-
-    /// Builds the ancestry chain with temporal filtering info.
-    /// Returns `Vec<(branch_id, branch_point_us)>` — for main branch, branch_point_us is i64::MAX.
-    pub fn resolve_ancestry(&self, branch_id: &Uuid) -> Result<Vec<(Uuid, i64)>, BranchError> {
+    /// Returns the precomputed ancestry chain for temporal filtering.
+    /// Each entry is `(branch_id, branch_point_tx)`.
+    pub fn resolve_ancestry(&self, branch_id: &Uuid) -> Result<Vec<(Uuid, Uuid)>, BranchError> {
         if *branch_id == MAIN_BRANCH {
-            return Ok(vec![(MAIN_BRANCH, i64::MAX)]);
+            return Ok(vec![(MAIN_BRANCH, Uuid::max())]);
         }
 
         let record = self.io.get(branch_id)?
             .ok_or_else(|| BranchError::NotFound(*branch_id))?;
 
-        let mut result = Vec::with_capacity(record.ancestry.len());
-
-        // First entry is self — no temporal filter (i64::MAX = see everything)
-        result.push((record.id, i64::MAX));
-
-        // Walk ancestry: for each parent, we need THEIR branch_point_us
-        for (i, ancestor_id) in record.ancestry.iter().enumerate().skip(1) {
-            if *ancestor_id == MAIN_BRANCH {
-                // Main branch is filtered by the child's branch_point_us
-                let child_branch_point = if i == 1 {
-                    record.branch_point_us
-                } else {
-                    // Get the branch_point_us of the child that branched from this ancestor
-                    let child_id = record.ancestry[i - 1];
-                    let child_record = self.io.get(&child_id)?
-                        .ok_or_else(|| BranchError::NotFound(child_id))?;
-                    child_record.branch_point_us
-                };
-                result.push((MAIN_BRANCH, child_branch_point));
-            } else {
-                let ancestor = self.io.get(ancestor_id)?
-                    .ok_or_else(|| BranchError::NotFound(*ancestor_id))?;
-                // Parent is filtered by its child's branch_point_us
-                let child_branch_point = if i == 1 {
-                    record.branch_point_us
-                } else {
-                    let child_id = record.ancestry[i - 1];
-                    let child_record = self.io.get(&child_id)?
-                        .ok_or_else(|| BranchError::NotFound(child_id))?;
-                    child_record.branch_point_us
-                };
-                result.push((ancestor.id, child_branch_point));
-            }
-        }
-
-        Ok(result)
+        Ok(record.ancestry.clone())
     }
 }
 
@@ -189,15 +145,17 @@ mod tests {
         let branches = store.branches();
 
         let rec = branches
-            .create("analysis", Some("Deep dive"), MAIN_BRANCH, vec![])
+            .create("analysis", serde_json::json!("Deep dive"), MAIN_BRANCH, Uuid::max())
             .unwrap();
 
         assert_eq!(rec.slug, "analysis");
-        assert_eq!(rec.description.as_deref(), Some("Deep dive"));
-        assert_eq!(rec.parent_id, MAIN_BRANCH);
+        assert_eq!(rec.reasoning, serde_json::json!("Deep dive"));
+        assert_eq!(rec.created_from_tx, Uuid::nil()); // genesis: main + HEAD
         assert_eq!(rec.ancestry.len(), 2);
-        assert_eq!(rec.ancestry[0], rec.id);
-        assert_eq!(rec.ancestry[1], MAIN_BRANCH);
+        assert_eq!(rec.ancestry[0].0, rec.id);
+        assert_eq!(rec.ancestry[0].1, Uuid::max());
+        assert_eq!(rec.ancestry[1].0, MAIN_BRANCH);
+        assert_eq!(rec.ancestry[1].1, Uuid::max());
     }
 
     #[test]
@@ -205,8 +163,8 @@ mod tests {
         let (store, _dir) = setup();
         let branches = store.branches();
 
-        branches.create("dup", None, MAIN_BRANCH, vec![]).unwrap();
-        let err = branches.create("dup", None, MAIN_BRANCH, vec![]).unwrap_err();
+        branches.create("dup", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
+        let err = branches.create("dup", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap_err();
         assert!(matches!(err, BranchError::SlugExists(_)));
     }
 
@@ -215,7 +173,7 @@ mod tests {
         let (store, _dir) = setup();
         let branches = store.branches();
 
-        let created = branches.create("find-me", None, MAIN_BRANCH, vec![]).unwrap();
+        let created = branches.create("find-me", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
         let found = branches.get_by_slug("find-me").unwrap().unwrap();
         assert_eq!(found.id, created.id);
         assert!(branches.get_by_slug("ghost").unwrap().is_none());
@@ -226,26 +184,17 @@ mod tests {
         let (store, _dir) = setup();
         let branches = store.branches();
 
-        let parent = branches.create("parent", None, MAIN_BRANCH, vec![]).unwrap();
-        let child = branches.create("child", None, parent.id, vec![]).unwrap();
+        let tx_id = Uuid::now_v7();
+        let parent = branches.create("parent", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
+        let child = branches.create("child", serde_json::Value::Null, parent.id, tx_id).unwrap();
 
-        assert_eq!(child.parent_id, parent.id);
+        let parent_id = child.ancestry.get(1).map(|(id, _)| *id).unwrap_or(MAIN_BRANCH);
+        assert_eq!(parent_id, parent.id);
         assert_eq!(child.ancestry.len(), 3);
-        assert_eq!(child.ancestry[0], child.id);
-        assert_eq!(child.ancestry[1], parent.id);
-        assert_eq!(child.ancestry[2], MAIN_BRANCH);
-    }
-
-    #[test]
-    fn add_introduced() {
-        let (store, _dir) = setup();
-        let branches = store.branches();
-
-        let created = branches.create("growing", None, MAIN_BRANCH, vec![]).unwrap();
-        let new_entity = Uuid::now_v7();
-
-        let updated = branches.add_introduced(&created.id, new_entity).unwrap();
-        assert_eq!(updated.introduced_entities, vec![new_entity]);
+        assert_eq!(child.ancestry[0].0, child.id);
+        assert_eq!(child.ancestry[1].0, parent.id);
+        assert_eq!(child.ancestry[1].1, tx_id);
+        assert_eq!(child.ancestry[2].0, MAIN_BRANCH);
     }
 
     #[test]
@@ -253,8 +202,8 @@ mod tests {
         let (store, _dir) = setup();
         let branches = store.branches();
 
-        branches.create("a", None, MAIN_BRANCH, vec![]).unwrap();
-        branches.create("b", None, MAIN_BRANCH, vec![]).unwrap();
+        branches.create("a", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
+        branches.create("b", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
 
         let all = branches.list_all().unwrap();
         assert_eq!(all.len(), 2);
@@ -268,7 +217,7 @@ mod tests {
         let ancestry = branches.resolve_ancestry(&MAIN_BRANCH).unwrap();
         assert_eq!(ancestry.len(), 1);
         assert_eq!(ancestry[0].0, MAIN_BRANCH);
-        assert_eq!(ancestry[0].1, i64::MAX);
+        assert_eq!(ancestry[0].1, Uuid::max());
     }
 
     #[test]
@@ -276,12 +225,12 @@ mod tests {
         let (store, _dir) = setup();
         let branches = store.branches();
 
-        let child = branches.create("child", None, MAIN_BRANCH, vec![]).unwrap();
+        let child = branches.create("child", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
         let ancestry = branches.resolve_ancestry(&child.id).unwrap();
         assert_eq!(ancestry.len(), 2);
         assert_eq!(ancestry[0].0, child.id);
-        assert_eq!(ancestry[0].1, i64::MAX);
+        assert_eq!(ancestry[0].1, Uuid::max());
         assert_eq!(ancestry[1].0, MAIN_BRANCH);
-        assert_eq!(ancestry[1].1, child.branch_point_us);
+        assert_eq!(ancestry[1].1, Uuid::max());
     }
 }

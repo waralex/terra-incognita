@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::Utc;
 use rocksdb::DB;
 use uuid::Uuid;
 
@@ -92,6 +91,7 @@ impl AssertionWriter {
     /// Everything goes into a single RocksDB WriteBatch.
     pub fn write(
         &self,
+        tx_id: Uuid,
         inputs: &[AssertionInput],
         registry: &BranchSchemaRegistry,
     ) -> Result<Vec<LogEntry>, WriterError> {
@@ -106,8 +106,6 @@ impl AssertionWriter {
         let mut log_entries = Vec::with_capacity(inputs.len());
 
         for (input, prop_types) in inputs.iter().zip(resolved.iter()) {
-            let now = Utc::now();
-            let timestamp_us = now.timestamp_micros();
             let log_entry_id = Uuid::now_v7();
 
             // Build properties JSON: property_id → typed value
@@ -119,7 +117,7 @@ impl AssertionWriter {
 
             let log_key = LogKey {
                 branch_id: super::MAIN_BRANCH,
-                timestamp_us,
+                tx_id,
                 entry_id: log_entry_id,
                 entity_id: input.entity_id,
             };
@@ -137,7 +135,7 @@ impl AssertionWriter {
                 let col_key = ColumnKey {
                     branch_id: super::MAIN_BRANCH,
                     property_id: *property_id,
-                    timestamp_us,
+                    tx_id,
                     log_entry_id,
                     entity_id: input.entity_id,
                 };
@@ -153,9 +151,8 @@ impl AssertionWriter {
 
             log_entries.push(LogEntry {
                 id: log_entry_id,
-                timestamp: now,
                 entity_id: input.entity_id,
-                tx_id: None,
+                tx_id,
                 properties,
                 reasoning: input.reasoning.clone(),
             });
@@ -175,7 +172,6 @@ impl AssertionWriter {
     /// a single WriteBatch: transaction record + log entries + typed columns.
     pub fn write_tx(
         &self,
-        entity_id: Uuid,
         tx_reasoning: serde_json::Value,
         inputs: &[AssertionInput],
         registry: &BranchSchemaRegistry,
@@ -189,19 +185,17 @@ impl AssertionWriter {
 
         let mut batch = rocksdb::WriteBatch::default();
 
-        let now = Utc::now();
         let tx = Transaction {
             id: Uuid::now_v7(),
-            entity_id: Some(entity_id),
+            branch_id: super::MAIN_BRANCH,
             reasoning: tx_reasoning,
-            timestamp: now,
+            timestamp: chrono::Utc::now(),
         };
         self.tx_store.put_to_batch(&mut batch, &tx)?;
 
         let mut log_entries = Vec::with_capacity(inputs.len());
 
         for (input, prop_types) in inputs.iter().zip(resolved.iter()) {
-            let timestamp_us = Utc::now().timestamp_micros();
             let log_entry_id = Uuid::now_v7();
 
             let mut props_map = serde_json::Map::new();
@@ -212,7 +206,7 @@ impl AssertionWriter {
 
             let log_key = LogKey {
                 branch_id: super::MAIN_BRANCH,
-                timestamp_us,
+                tx_id: tx.id,
                 entry_id: log_entry_id,
                 entity_id: input.entity_id,
             };
@@ -230,7 +224,7 @@ impl AssertionWriter {
                 let col_key = ColumnKey {
                     branch_id: super::MAIN_BRANCH,
                     property_id: *property_id,
-                    timestamp_us,
+                    tx_id: tx.id,
                     log_entry_id,
                     entity_id: input.entity_id,
                 };
@@ -245,9 +239,8 @@ impl AssertionWriter {
 
             log_entries.push(LogEntry {
                 id: log_entry_id,
-                timestamp: Utc::now(),
                 entity_id: input.entity_id,
-                tx_id: Some(tx.id),
+                tx_id: tx.id,
                 properties,
                 reasoning: input.reasoning.clone(),
             });
@@ -282,8 +275,6 @@ impl AssertionWriter {
         let mut log_entries = Vec::with_capacity(inputs.len());
 
         for (input, prop_types) in inputs.iter().zip(resolved.iter()) {
-            let now = Utc::now();
-            let timestamp_us = now.timestamp_micros();
             let log_entry_id = Uuid::now_v7();
 
             let mut props_map = serde_json::Map::new();
@@ -294,7 +285,7 @@ impl AssertionWriter {
 
             let log_key = LogKey {
                 branch_id: super::MAIN_BRANCH,
-                timestamp_us,
+                tx_id,
                 entry_id: log_entry_id,
                 entity_id: input.entity_id,
             };
@@ -312,7 +303,7 @@ impl AssertionWriter {
                 let col_key = ColumnKey {
                     branch_id: super::MAIN_BRANCH,
                     property_id: *property_id,
-                    timestamp_us,
+                    tx_id,
                     log_entry_id,
                     entity_id: input.entity_id,
                 };
@@ -327,9 +318,8 @@ impl AssertionWriter {
 
             log_entries.push(LogEntry {
                 id: log_entry_id,
-                timestamp: now,
                 entity_id: input.entity_id,
-                tx_id: Some(tx_id),
+                tx_id,
                 properties,
                 reasoning: input.reasoning.clone(),
             });
@@ -403,7 +393,7 @@ mod tests {
     fn setup() -> (AssertionStore, BranchSchemaRegistry, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
-        let reg = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
+        let reg = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
         (store, reg, dir)
     }
 
@@ -446,6 +436,7 @@ mod tests {
         let writer = store.fact_writer();
 
         let entity_id = Uuid::now_v7();
+        let tx_id = Uuid::now_v7();
         let props = HashMap::from([
             (p_bpm, range_eq(json!(120))),
             (p_cert, set_contains(vec![json!("gold")])),
@@ -453,6 +444,7 @@ mod tests {
 
         let entries = writer
             .write(
+                tx_id,
                 &[AssertionInput {
                     entity_id,
                     entity_type_id: et_id,
@@ -465,6 +457,7 @@ mod tests {
 
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].entity_id, entity_id);
+        assert_eq!(entries[0].tx_id, tx_id);
 
         let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 1);
@@ -485,6 +478,7 @@ mod tests {
 
         writer
             .write(
+                Uuid::now_v7(),
                 &[AssertionInput {
                     entity_id,
                     entity_type_id: et_id,
@@ -522,6 +516,7 @@ mod tests {
 
         let err = writer
             .write(
+                Uuid::now_v7(),
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
@@ -549,6 +544,7 @@ mod tests {
 
         let err = writer
             .write(
+                Uuid::now_v7(),
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
@@ -570,6 +566,7 @@ mod tests {
 
         let entries = writer
             .write(
+                Uuid::now_v7(),
                 &[
                     AssertionInput {
                         entity_id: Uuid::now_v7(),
@@ -608,6 +605,7 @@ mod tests {
 
         fact_writer
             .write(
+                Uuid::now_v7(),
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
@@ -620,6 +618,7 @@ mod tests {
 
         hyp_writer
             .write(
+                Uuid::now_v7(),
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
@@ -643,7 +642,6 @@ mod tests {
         let entity_id = Uuid::now_v7();
         let (tx, entries) = writer
             .write_tx(
-                entity_id,
                 json!("analyzed spectral data and narrowed hypotheses"),
                 &[
                     AssertionInput {
@@ -663,19 +661,19 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(tx.entity_id, Some(entity_id));
+        assert_eq!(tx.branch_id, MAIN_BRANCH);
         assert_eq!(entries.len(), 2);
-        assert!(entries.iter().all(|e| e.tx_id == Some(tx.id)));
+        assert!(entries.iter().all(|e| e.tx_id == tx.id));
 
         // Transaction is retrievable
-        let loaded_tx = store.transactions().get(&tx.id).unwrap().unwrap();
-        assert_eq!(loaded_tx.entity_id, Some(entity_id));
+        let loaded_tx = store.transactions().get(&MAIN_BRANCH, &tx.id).unwrap().unwrap();
+        assert_eq!(loaded_tx.branch_id, MAIN_BRANCH);
         assert_eq!(loaded_tx.reasoning, json!("analyzed spectral data and narrowed hypotheses"));
 
         // Log entries have tx_id
         let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 2);
-        assert!(log.iter().all(|e| e.tx_id == Some(tx.id)));
+        assert!(log.iter().all(|e| e.tx_id == tx.id));
     }
 
     #[test]
@@ -687,7 +685,6 @@ mod tests {
         let entity_id = Uuid::now_v7();
         writer
             .write_tx(
-                entity_id,
                 json!(null),
                 &[AssertionInput {
                     entity_id,
@@ -706,13 +703,15 @@ mod tests {
     }
 
     #[test]
-    fn write_without_tx_has_no_tx_id() {
+    fn write_carries_tx_id() {
         let (store, reg, _dir) = setup();
         let (et_id, p_bpm, _p_cert, _p_meta) = create_schema(&reg);
         let writer = store.fact_writer();
 
+        let tx_id = Uuid::now_v7();
         writer
             .write(
+                tx_id,
                 &[AssertionInput {
                     entity_id: Uuid::now_v7(),
                     entity_type_id: et_id,
@@ -725,6 +724,6 @@ mod tests {
 
         let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 1);
-        assert!(log[0].tx_id.is_none());
+        assert_eq!(log[0].tx_id, tx_id);
     }
 }

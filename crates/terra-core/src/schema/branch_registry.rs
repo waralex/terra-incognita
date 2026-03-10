@@ -13,29 +13,34 @@ use super::SchemaError;
 use crate::assertion::key::{storage_key, StorageKey};
 
 storage_key! {
-    pub(crate) struct SchemaTypeKey(32) {
+    pub(crate) struct SchemaTypeKey(48) {
         branch_id: Uuid,
         type_id: Uuid,
+        tx_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
+        prefix_branch_type(branch_id: Uuid, type_id: Uuid) -> 32,
     }
 }
 
 storage_key! {
-    pub(crate) struct SchemaPropertyKey(32) {
+    pub(crate) struct SchemaPropertyKey(48) {
         branch_id: Uuid,
         prop_id: Uuid,
+        tx_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
+        prefix_branch_prop(branch_id: Uuid, prop_id: Uuid) -> 32,
     }
 }
 
 storage_key! {
-    pub(crate) struct SchemaAttachmentKey(48) {
+    pub(crate) struct SchemaAttachmentKey(64) {
         branch_id: Uuid,
         type_id: Uuid,
+        tx_id: Uuid,
         prop_id: Uuid,
     }
     prefixes {
@@ -85,13 +90,13 @@ struct PropertyValue {
 pub struct BranchSchemaRegistry {
     db: Arc<DB>,
     branch_id: Uuid,
-    /// `(branch_id, branch_point_us)` — for temporal filtering on reads.
-    ancestry: Vec<(Uuid, i64)>,
+    /// `(branch_id, branch_point_tx)` — for temporal filtering on reads via UUID byte comparison.
+    ancestry: Vec<(Uuid, Uuid)>,
 }
 
 impl BranchSchemaRegistry {
     /// Creates a registry for the given branch with its resolved ancestry.
-    pub fn new(db: Arc<DB>, branch_id: Uuid, ancestry: Vec<(Uuid, i64)>) -> Self {
+    pub fn new(db: Arc<DB>, branch_id: Uuid, ancestry: Vec<(Uuid, Uuid)>) -> Self {
         Self { db, branch_id, ancestry }
     }
 
@@ -170,13 +175,14 @@ impl BranchSchemaRegistry {
         for item in items {
             let id = Uuid::now_v7();
             let now = Utc::now();
+            let tx_id = Uuid::now_v7();
 
             let val = EntityTypeValue {
                 slug: item.slug.to_string(),
                 description: item.description.map(String::from),
                 created_at: now.to_rfc3339(),
             };
-            let key = SchemaTypeKey { branch_id: self.branch_id, type_id: id }.encode();
+            let key = SchemaTypeKey { branch_id: self.branch_id, type_id: id, tx_id }.encode();
             let val_bytes = serde_json::to_vec(&val)
                 .map_err(|e| SchemaError::Storage(e.to_string()))?;
             batch.put_cf(type_cf, &key, &val_bytes);
@@ -186,9 +192,11 @@ impl BranchSchemaRegistry {
 
             for prop_slug in item.properties {
                 let prop = self.get_property_by_slug(prop_slug)?;
+                let attach_tx_id = Uuid::now_v7();
                 let attach_key = SchemaAttachmentKey {
                     branch_id: self.branch_id,
                     type_id: id,
+                    tx_id: attach_tx_id,
                     prop_id: prop.id,
                 }.encode();
                 batch.put_cf(attach_cf, &attach_key, &[]);
@@ -212,22 +220,22 @@ impl BranchSchemaRegistry {
         let mut types = Vec::new();
         let mut seen_slugs = std::collections::HashSet::new();
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
             let prefix = SchemaTypeKey::prefix_branch(&ancestor_id);
             let iter = self.db.prefix_iterator_cf(cf, &prefix);
             for item in iter {
                 let (raw_key, val) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
                 if !raw_key.starts_with(&prefix) { break; }
 
+                let k = SchemaTypeKey::decode(&raw_key)
+                    .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                if k.tx_id.as_bytes() > branch_point_tx.as_bytes() { continue; }
+
                 let et_val: EntityTypeValue = serde_json::from_slice(&val)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
 
-                let created_at = parse_datetime(&et_val.created_at)?;
-                if created_at.timestamp_micros() > branch_point_us { continue; }
-
                 if seen_slugs.insert(et_val.slug.clone()) {
-                    let k = SchemaTypeKey::decode(&raw_key)
-                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    let created_at = parse_datetime(&et_val.created_at)?;
                     types.push(EntityType {
                         id: k.type_id,
                         slug: et_val.slug,
@@ -247,19 +255,25 @@ impl BranchSchemaRegistry {
         let slug_cf = self.cf("schema_type_slug")?;
         let type_cf = self.cf("schema_types")?;
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
             let slug_key = encode_branch_slug_key(&ancestor_id, slug);
             if let Some(id_bytes) = self.db.get_cf(slug_cf, &slug_key)
                 .map_err(|e| SchemaError::Storage(e.to_string()))? {
                 let type_id = Uuid::from_slice(&id_bytes)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                let key = SchemaTypeKey { branch_id: ancestor_id, type_id }.encode();
-                if let Some(val_bytes) = self.db.get_cf(type_cf, &key)
-                    .map_err(|e| SchemaError::Storage(e.to_string()))? {
-                    let et_val: EntityTypeValue = serde_json::from_slice(&val_bytes)
+                // Prefix scan on (branch_id, type_id) — schema items are immutable,
+                // so at most one entry per (branch_id, type_id).
+                let prefix = SchemaTypeKey::prefix_branch_type(&ancestor_id, &type_id);
+                let iter = self.db.prefix_iterator_cf(type_cf, &prefix);
+                for item in iter {
+                    let (raw_key, val_bytes) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    if !raw_key.starts_with(&prefix) { break; }
+                    let k = SchemaTypeKey::decode(&raw_key)
                         .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                    let created_at = parse_datetime(&et_val.created_at)?;
-                    if created_at.timestamp_micros() <= branch_point_us {
+                    if k.tx_id.as_bytes() <= branch_point_tx.as_bytes() {
+                        let et_val: EntityTypeValue = serde_json::from_slice(&val_bytes)
+                            .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                        let created_at = parse_datetime(&et_val.created_at)?;
                         return Ok(EntityType {
                             id: type_id,
                             slug: et_val.slug,
@@ -278,14 +292,18 @@ impl BranchSchemaRegistry {
     pub fn get_entity_type_by_id(&self, id: &Uuid) -> Result<EntityType, SchemaError> {
         let type_cf = self.cf("schema_types")?;
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
-            let key = SchemaTypeKey { branch_id: ancestor_id, type_id: *id }.encode();
-            if let Some(val_bytes) = self.db.get_cf(type_cf, &key)
-                .map_err(|e| SchemaError::Storage(e.to_string()))? {
-                let et_val: EntityTypeValue = serde_json::from_slice(&val_bytes)
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let prefix = SchemaTypeKey::prefix_branch_type(&ancestor_id, id);
+            let iter = self.db.prefix_iterator_cf(type_cf, &prefix);
+            for item in iter {
+                let (raw_key, val_bytes) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
+                if !raw_key.starts_with(&prefix) { break; }
+                let k = SchemaTypeKey::decode(&raw_key)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                let created_at = parse_datetime(&et_val.created_at)?;
-                if created_at.timestamp_micros() <= branch_point_us {
+                if k.tx_id.as_bytes() <= branch_point_tx.as_bytes() {
+                    let et_val: EntityTypeValue = serde_json::from_slice(&val_bytes)
+                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    let created_at = parse_datetime(&et_val.created_at)?;
                     return Ok(EntityType {
                         id: *id,
                         slug: et_val.slug,
@@ -382,6 +400,7 @@ impl BranchSchemaRegistry {
         for item in items {
             let id = Uuid::now_v7();
             let now = Utc::now();
+            let tx_id = Uuid::now_v7();
 
             let val = PropertyValue {
                 slug: item.slug.to_string(),
@@ -389,7 +408,7 @@ impl BranchSchemaRegistry {
                 value_type: item.value_type.as_str().to_string(),
                 created_at: now.to_rfc3339(),
             };
-            let key = SchemaPropertyKey { branch_id: self.branch_id, prop_id: id }.encode();
+            let key = SchemaPropertyKey { branch_id: self.branch_id, prop_id: id, tx_id }.encode();
             let val_bytes = serde_json::to_vec(&val)
                 .map_err(|e| SchemaError::Storage(e.to_string()))?;
             batch.put_cf(prop_cf, &key, &val_bytes);
@@ -399,9 +418,11 @@ impl BranchSchemaRegistry {
 
             for et_slug in item.entity_types {
                 let et = self.get_entity_type(et_slug)?;
+                let attach_tx_id = Uuid::now_v7();
                 let attach_key = SchemaAttachmentKey {
                     branch_id: self.branch_id,
                     type_id: et.id,
+                    tx_id: attach_tx_id,
                     prop_id: id,
                 }.encode();
                 batch.put_cf(attach_cf, &attach_key, &[]);
@@ -426,21 +447,22 @@ impl BranchSchemaRegistry {
         let mut props = Vec::new();
         let mut seen_slugs = std::collections::HashSet::new();
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
             let prefix = SchemaPropertyKey::prefix_branch(&ancestor_id);
             let iter = self.db.prefix_iterator_cf(cf, &prefix);
             for item in iter {
                 let (raw_key, val) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
                 if !raw_key.starts_with(&prefix) { break; }
 
+                let k = SchemaPropertyKey::decode(&raw_key)
+                    .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                if k.tx_id.as_bytes() > branch_point_tx.as_bytes() { continue; }
+
                 let pv: PropertyValue = serde_json::from_slice(&val)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                let created_at = parse_datetime(&pv.created_at)?;
-                if created_at.timestamp_micros() > branch_point_us { continue; }
 
                 if seen_slugs.insert(pv.slug.clone()) {
-                    let k = SchemaPropertyKey::decode(&raw_key)
-                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    let created_at = parse_datetime(&pv.created_at)?;
                     let value_type = ValueType::from_str(&pv.value_type)
                         .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
                     props.push(EntityProperty {
@@ -459,23 +481,27 @@ impl BranchSchemaRegistry {
     }
 
     /// Gets a property by slug (chain walk).
-    fn get_property_by_slug(&self, slug: &str) -> Result<EntityProperty, SchemaError> {
+    pub fn get_property_by_slug(&self, slug: &str) -> Result<EntityProperty, SchemaError> {
         let slug_cf = self.cf("schema_prop_slug")?;
         let prop_cf = self.cf("schema_props")?;
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
             let slug_key = encode_branch_slug_key(&ancestor_id, slug);
             if let Some(id_bytes) = self.db.get_cf(slug_cf, &slug_key)
                 .map_err(|e| SchemaError::Storage(e.to_string()))? {
                 let prop_id = Uuid::from_slice(&id_bytes)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                let key = SchemaPropertyKey { branch_id: ancestor_id, prop_id }.encode();
-                if let Some(val_bytes) = self.db.get_cf(prop_cf, &key)
-                    .map_err(|e| SchemaError::Storage(e.to_string()))? {
-                    let pv: PropertyValue = serde_json::from_slice(&val_bytes)
+                let prefix = SchemaPropertyKey::prefix_branch_prop(&ancestor_id, &prop_id);
+                let iter = self.db.prefix_iterator_cf(prop_cf, &prefix);
+                for item in iter {
+                    let (raw_key, val_bytes) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    if !raw_key.starts_with(&prefix) { break; }
+                    let k = SchemaPropertyKey::decode(&raw_key)
                         .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                    let created_at = parse_datetime(&pv.created_at)?;
-                    if created_at.timestamp_micros() <= branch_point_us {
+                    if k.tx_id.as_bytes() <= branch_point_tx.as_bytes() {
+                        let pv: PropertyValue = serde_json::from_slice(&val_bytes)
+                            .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                        let created_at = parse_datetime(&pv.created_at)?;
                         let value_type = ValueType::from_str(&pv.value_type)
                             .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
                         return Ok(EntityProperty {
@@ -507,7 +533,7 @@ impl BranchSchemaRegistry {
         let attach_cf = self.cf("schema_attachments")?;
         let mut prop_ids = std::collections::HashSet::new();
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
             let prefix = SchemaAttachmentKey::prefix_branch_type(&ancestor_id, entity_type_id);
             let iter = self.db.prefix_iterator_cf(attach_cf, &prefix);
             for item in iter {
@@ -516,11 +542,8 @@ impl BranchSchemaRegistry {
 
                 let k = SchemaAttachmentKey::decode(&raw_key)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                // Check if property was created before branch point
-                if let Ok(prop) = self.get_property_by_id(&k.prop_id) {
-                    if prop.created_at.timestamp_micros() <= branch_point_us {
-                        prop_ids.insert(k.prop_id);
-                    }
+                if k.tx_id.as_bytes() <= branch_point_tx.as_bytes() {
+                    prop_ids.insert(k.prop_id);
                 }
             }
         }
@@ -539,14 +562,18 @@ impl BranchSchemaRegistry {
     fn get_property_by_id(&self, id: &Uuid) -> Result<EntityProperty, SchemaError> {
         let prop_cf = self.cf("schema_props")?;
 
-        for &(ancestor_id, branch_point_us) in &self.ancestry {
-            let key = SchemaPropertyKey { branch_id: ancestor_id, prop_id: *id }.encode();
-            if let Some(val_bytes) = self.db.get_cf(prop_cf, &key)
-                .map_err(|e| SchemaError::Storage(e.to_string()))? {
-                let pv: PropertyValue = serde_json::from_slice(&val_bytes)
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let prefix = SchemaPropertyKey::prefix_branch_prop(&ancestor_id, id);
+            let iter = self.db.prefix_iterator_cf(prop_cf, &prefix);
+            for item in iter {
+                let (raw_key, val_bytes) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
+                if !raw_key.starts_with(&prefix) { break; }
+                let k = SchemaPropertyKey::decode(&raw_key)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                let created_at = parse_datetime(&pv.created_at)?;
-                if created_at.timestamp_micros() <= branch_point_us {
+                if k.tx_id.as_bytes() <= branch_point_tx.as_bytes() {
+                    let pv: PropertyValue = serde_json::from_slice(&val_bytes)
+                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    let created_at = parse_datetime(&pv.created_at)?;
                     let value_type = ValueType::from_str(&pv.value_type)
                         .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
                     return Ok(EntityProperty {
@@ -575,9 +602,11 @@ impl BranchSchemaRegistry {
         let prop = self.get_property_by_slug(property_slug)?;
 
         let cf = self.cf("schema_attachments")?;
+        let tx_id = Uuid::now_v7();
         let key = SchemaAttachmentKey {
             branch_id: self.branch_id,
             type_id: et.id,
+            tx_id,
             prop_id: prop.id,
         }.encode();
 
@@ -612,9 +641,11 @@ impl BranchSchemaRegistry {
         let mut batch = rocksdb::WriteBatch::default();
 
         for (type_id, prop_id) in resolved {
+            let tx_id = Uuid::now_v7();
             let key = SchemaAttachmentKey {
                 branch_id: self.branch_id,
                 type_id,
+                tx_id,
                 prop_id,
             }.encode();
             batch.put_cf(cf, &key, &[]);
@@ -628,7 +659,8 @@ impl BranchSchemaRegistry {
 
     fn write_entity_type(&self, id: Uuid, slug: &str, description: Option<&str>, created_at: &DateTime<Utc>) -> Result<(), SchemaError> {
         let cf = self.cf("schema_types")?;
-        let key = SchemaTypeKey { branch_id: self.branch_id, type_id: id }.encode();
+        let tx_id = Uuid::now_v7();
+        let key = SchemaTypeKey { branch_id: self.branch_id, type_id: id, tx_id }.encode();
         let val = EntityTypeValue {
             slug: slug.to_string(),
             description: description.map(String::from),
@@ -649,7 +681,8 @@ impl BranchSchemaRegistry {
 
     fn write_property(&self, id: Uuid, slug: &str, value_type: ValueType, description: Option<&str>, created_at: &DateTime<Utc>) -> Result<(), SchemaError> {
         let cf = self.cf("schema_props")?;
-        let key = SchemaPropertyKey { branch_id: self.branch_id, prop_id: id }.encode();
+        let tx_id = Uuid::now_v7();
+        let key = SchemaPropertyKey { branch_id: self.branch_id, prop_id: id, tx_id }.encode();
         let val = PropertyValue {
             slug: slug.to_string(),
             description: description.map(String::from),
@@ -702,7 +735,7 @@ mod tests {
     }
 
     fn main_registry(store: &AssertionStore) -> BranchSchemaRegistry {
-        store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)])
+        store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())])
     }
 
     #[test]
@@ -820,7 +853,7 @@ mod tests {
 
         // Create a branch
         let branches = store.branches();
-        let branch = branches.create("child", None, MAIN_BRANCH, vec![]).unwrap();
+        let branch = branches.create("child", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
         let ancestry = branches.resolve_ancestry(&branch.id).unwrap();
         let branch_reg = store.schema_registry(branch.id, ancestry);
 

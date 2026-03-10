@@ -4,8 +4,8 @@ use crate::error::QueryError;
 use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
-    AssertEntityInput, AssertItem, AssertionItem, AttachProperty, Command, CreateBranchInput,
-    CreateEntityType, CreateProperty, IntroduceItem, TransactionInput,
+    AssertItem, AssertionItem, AttachProperty, Command, CreateBranchInput,
+    CreateEntityType, CreateProperty, HideUnhideInput, IntroduceItem, TransactionInput,
 };
 
 /// DTO for batch entity type creation items.
@@ -65,60 +65,27 @@ pub struct AssertItemDto {
     pub hypotheses: Vec<AssertionItemDto>,
 }
 
+/// DTO for hide/unhide input.
+#[derive(Deserialize, Default)]
+pub struct HideUnhideDto {
+    #[serde(default)]
+    pub entities: Vec<String>,
+    #[serde(default)]
+    pub entity_types: Vec<String>,
+    #[serde(default)]
+    pub properties: Vec<String>,
+}
+
 /// Serde-tagged query DTO. Normalized into a domain [`Command`] via [`into_command`](QueryDto::into_command).
 #[derive(Deserialize)]
 #[serde(tag = "command")]
 pub enum QueryDto {
-    #[serde(rename = "entity-type.create")]
-    CreateEntityType {
-        slug: Option<String>,
-        description: Option<String>,
-        #[serde(default)]
-        properties: Vec<String>,
-        items: Option<Vec<EntityTypeItemDto>>,
-    },
     #[serde(rename = "entity-type.list")]
     ListEntityTypes,
     #[serde(rename = "entity-type.get")]
     GetEntityType { slug: String },
-    #[serde(rename = "property.create")]
-    CreateProperty {
-        slug: Option<String>,
-        value_type: Option<terra_core::schema::ValueType>,
-        description: Option<String>,
-        #[serde(default)]
-        entity_types: Vec<String>,
-        items: Option<Vec<PropertyItemDto>>,
-    },
     #[serde(rename = "property.list")]
     ListProperties { entity_type: Option<String> },
-    #[serde(rename = "property.attach")]
-    AttachProperty {
-        entity_type: Option<String>,
-        slug: Option<String>,
-        items: Option<Vec<AttachItemDto>>,
-    },
-    #[serde(rename = "entity.create")]
-    CreateEntity {
-        entity: String,
-        description: Option<String>,
-        #[serde(default)]
-        reasoning: serde_json::Value,
-        #[serde(default)]
-        facts: Vec<AssertionItemDto>,
-        #[serde(default)]
-        hypotheses: Vec<AssertionItemDto>,
-    },
-    #[serde(rename = "entity.assert")]
-    AssertEntity {
-        entity: String,
-        #[serde(default)]
-        reasoning: serde_json::Value,
-        #[serde(default)]
-        facts: Vec<AssertionItemDto>,
-        #[serde(default)]
-        hypotheses: Vec<AssertionItemDto>,
-    },
     #[serde(rename = "entity.list")]
     ListEntities,
     #[serde(rename = "entity.get")]
@@ -131,6 +98,16 @@ pub enum QueryDto {
         #[serde(default)]
         reasoning: serde_json::Value,
         #[serde(default)]
+        entity_types: Vec<EntityTypeItemDto>,
+        #[serde(default)]
+        properties: Vec<PropertyItemDto>,
+        #[serde(default)]
+        attach: Vec<AttachItemDto>,
+        #[serde(default)]
+        hide: HideUnhideDto,
+        #[serde(default)]
+        unhide: HideUnhideDto,
+        #[serde(default)]
         introduce: Vec<IntroduceItemDto>,
         #[serde(default)]
         asserts: Vec<AssertItemDto>,
@@ -138,11 +115,11 @@ pub enum QueryDto {
     #[serde(rename = "branch.create")]
     CreateBranch {
         slug: String,
-        description: Option<String>,
+        #[serde(default)]
+        reasoning: serde_json::Value,
         #[serde(default)]
         parent: String,
-        #[serde(default)]
-        entities: Vec<String>,
+        from_tx: Option<String>,
     },
     #[serde(rename = "branch.get")]
     GetBranch { slug: String },
@@ -164,147 +141,15 @@ impl QueryDto {
     /// Normalizes the DTO into a domain command and response shape.
     pub fn into_command(self) -> Result<(Command, ResponseShape), QueryError> {
         match self {
-            QueryDto::CreateEntityType {
-                slug,
-                description,
-                properties,
-                items,
-            } => match (slug, items) {
-                (Some(slug), None) => Ok((
-                    Command::CreateEntityTypes(vec![CreateEntityType {
-                        slug,
-                        description,
-                        properties,
-                    }]),
-                    ResponseShape::Single,
-                )),
-                (None, Some(batch_items)) => Ok((
-                    Command::CreateEntityTypes(
-                        batch_items
-                            .into_iter()
-                            .map(|item| CreateEntityType {
-                                slug: item.slug,
-                                description: item.description,
-                                properties: item.properties,
-                            })
-                            .collect(),
-                    ),
-                    ResponseShape::Batch,
-                )),
-                _ => Err(QueryError::bad_request(
-                    "parse_error",
-                    "provide either 'slug' for single creation or 'items' for batch creation, not both",
-                )),
-            },
             QueryDto::ListEntityTypes => {
                 Ok((Command::ListEntityTypes, ResponseShape::Batch))
             }
             QueryDto::GetEntityType { slug } => {
                 Ok((Command::GetEntityType { slug }, ResponseShape::Single))
             }
-            QueryDto::CreateProperty {
-                slug,
-                value_type,
-                description,
-                entity_types,
-                items,
-            } => match (slug, items) {
-                (Some(slug), None) => {
-                    let value_type = value_type.ok_or_else(|| {
-                        QueryError::bad_request("parse_error", "value_type is required")
-                    })?;
-                    Ok((
-                        Command::CreateProperties(vec![CreateProperty {
-                            slug,
-                            value_type,
-                            description,
-                            entity_types,
-                        }]),
-                        ResponseShape::Single,
-                    ))
-                }
-                (None, Some(batch_items)) => Ok((
-                    Command::CreateProperties(
-                        batch_items
-                            .into_iter()
-                            .map(|item| CreateProperty {
-                                slug: item.slug,
-                                value_type: item.value_type,
-                                description: item.description,
-                                entity_types: item.entity_types,
-                            })
-                            .collect(),
-                    ),
-                    ResponseShape::Batch,
-                )),
-                _ => Err(QueryError::bad_request(
-                    "parse_error",
-                    "provide either 'slug' for single creation or 'items' for batch creation, not both",
-                )),
-            },
             QueryDto::ListProperties { entity_type } => Ok((
                 Command::ListProperties { entity_type },
                 ResponseShape::Batch,
-            )),
-            QueryDto::AttachProperty {
-                entity_type,
-                slug,
-                items,
-            } => match (entity_type.zip(slug), items) {
-                (Some((et, slug)), None) => Ok((
-                    Command::AttachProperties(vec![AttachProperty {
-                        entity_type: et,
-                        property: slug,
-                    }]),
-                    ResponseShape::Single,
-                )),
-                (None, Some(batch_items)) => Ok((
-                    Command::AttachProperties(
-                        batch_items
-                            .into_iter()
-                            .map(|item| AttachProperty {
-                                entity_type: item.entity_type,
-                                property: item.slug,
-                            })
-                            .collect(),
-                    ),
-                    ResponseShape::Batch,
-                )),
-                _ => Err(QueryError::bad_request(
-                    "parse_error",
-                    "provide either 'entity_type'+'slug' for single attach or 'items' for batch, not both",
-                )),
-            },
-            QueryDto::CreateEntity {
-                entity,
-                description,
-                reasoning,
-                facts,
-                hypotheses,
-            } => Ok((
-                Command::CreateEntity(AssertEntityInput {
-                    entity,
-                    description,
-                    reasoning,
-                    facts: convert_assertion_items(facts)?,
-                    hypotheses: convert_assertion_items(hypotheses)?,
-                }),
-                ResponseShape::Single,
-            )),
-            QueryDto::AssertEntity {
-                entity,
-                reasoning,
-                facts,
-                hypotheses,
-            } => Ok((
-                Command::AssertEntity(AssertEntityInput {
-                    entity,
-                    description: None,
-                    reasoning,
-                    facts: convert_assertion_items(facts)?,
-                    hypotheses: convert_assertion_items(hypotheses)?,
-                }),
-                ResponseShape::Single,
             )),
             QueryDto::ListEntities => {
                 Ok((Command::ListEntities, ResponseShape::Batch))
@@ -321,9 +166,38 @@ impl QueryDto {
             )),
             QueryDto::Transaction {
                 reasoning,
+                entity_types,
+                properties,
+                attach,
+                hide,
+                unhide,
                 introduce,
                 asserts,
             } => {
+                let entity_type_items = entity_types
+                    .into_iter()
+                    .map(|item| CreateEntityType {
+                        slug: item.slug,
+                        description: item.description,
+                        properties: item.properties,
+                    })
+                    .collect();
+                let property_items = properties
+                    .into_iter()
+                    .map(|item| CreateProperty {
+                        slug: item.slug,
+                        value_type: item.value_type,
+                        description: item.description,
+                        entity_types: item.entity_types,
+                    })
+                    .collect();
+                let attach_items = attach
+                    .into_iter()
+                    .map(|item| AttachProperty {
+                        entity_type: item.entity_type,
+                        property: item.slug,
+                    })
+                    .collect();
                 let introduce_items = introduce
                     .into_iter()
                     .map(|item| {
@@ -348,6 +222,19 @@ impl QueryDto {
                 Ok((
                     Command::Transaction(TransactionInput {
                         reasoning,
+                        entity_types: entity_type_items,
+                        properties: property_items,
+                        attach: attach_items,
+                        hide: HideUnhideInput {
+                            entities: hide.entities,
+                            entity_types: hide.entity_types,
+                            properties: hide.properties,
+                        },
+                        unhide: HideUnhideInput {
+                            entities: unhide.entities,
+                            entity_types: unhide.entity_types,
+                            properties: unhide.properties,
+                        },
                         introduce: introduce_items,
                         asserts: assert_items,
                     }),
@@ -356,18 +243,24 @@ impl QueryDto {
             }
             QueryDto::CreateBranch {
                 slug,
-                description,
+                reasoning,
                 parent,
-                entities,
-            } => Ok((
-                Command::CreateBranch(CreateBranchInput {
-                    slug,
-                    description,
-                    parent,
-                    entities,
-                }),
-                ResponseShape::Single,
-            )),
+                from_tx,
+            } => {
+                let from_tx = from_tx
+                    .map(|s| uuid::Uuid::parse_str(&s))
+                    .transpose()
+                    .map_err(|e| QueryError::bad_request("parse_error", format!("invalid from_tx UUID: {e}")))?;
+                Ok((
+                    Command::CreateBranch(CreateBranchInput {
+                        slug,
+                        reasoning,
+                        parent,
+                        from_tx,
+                    }),
+                    ResponseShape::Single,
+                ))
+            }
             QueryDto::GetBranch { slug } => {
                 Ok((Command::GetBranch { slug }, ResponseShape::Single))
             }

@@ -17,25 +17,18 @@ use crate::schema::SchemaError;
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// Domain command — plain enum without serde. All mutating variants take `Vec`.
+/// Domain command — plain enum without serde.
+///
+/// All writes go through `Transaction` (or `CreateBranch`).
+/// Read variants return data without mutation.
 pub enum Command {
-    /// Create one or more entity types (with optional property attachment).
-    CreateEntityTypes(Vec<CreateEntityType>),
     /// List all registered entity types.
     ListEntityTypes,
     /// Get a single entity type with its attached properties.
     GetEntityType { slug: String },
-    /// Create one or more properties (with optional entity type attachment).
-    CreateProperties(Vec<CreateProperty>),
     /// List properties, optionally filtered by entity type.
     ListProperties { entity_type: Option<String> },
-    /// Attach existing properties to existing entity types.
-    AttachProperties(Vec<AttachProperty>),
-    /// Create entity and optionally assert facts/hypotheses in one transaction.
-    CreateEntity(AssertEntityInput),
-    /// Assert facts/hypotheses about an existing entity in one transaction.
-    AssertEntity(AssertEntityInput),
-    /// Multi-entity transaction: introduce new entities and assert on existing ones atomically.
+    /// Unified write command: schema creation, attachments, visibility, entity introduction and assertions.
     Transaction(TransactionInput),
     /// List all entities (slug + uuid).
     ListEntities,
@@ -77,20 +70,6 @@ pub struct AttachProperty {
     pub property: String,
 }
 
-/// Unified input for entity creation and assertion.
-pub struct AssertEntityInput {
-    /// Entity slug.
-    pub entity: String,
-    /// Entity description (only used during creation).
-    pub description: Option<String>,
-    /// Transaction-level reasoning: why this batch was made.
-    pub reasoning: serde_json::Value,
-    /// Facts — convergence points, at most one per property per entity type.
-    pub facts: Vec<AssertionItem>,
-    /// Hypotheses — tentative claims, no uniqueness constraint on properties.
-    pub hypotheses: Vec<AssertionItem>,
-}
-
 /// A single fact or hypothesis: entity type + properties + reasoning.
 pub struct AssertionItem {
     /// Entity type slug (determines which properties are valid).
@@ -101,14 +80,45 @@ pub struct AssertionItem {
     pub reasoning: serde_json::Value,
 }
 
-/// Input for a multi-entity transaction.
+/// Input for the unified transaction command.
+///
+/// All write operations are expressed here: schema creation, property attachment,
+/// visibility changes, entity introduction, and assertions on existing entities.
+/// Processed in order: entity_types → properties → attach → hide/unhide → introduce → asserts.
 pub struct TransactionInput {
     /// Transaction-level reasoning: why this batch of operations.
     pub reasoning: serde_json::Value,
-    /// New entities to introduce (created first).
+    /// Entity types to create (processed first).
+    pub entity_types: Vec<CreateEntityType>,
+    /// Properties to create (processed second).
+    pub properties: Vec<CreateProperty>,
+    /// Property-to-entity-type attachments (processed third).
+    pub attach: Vec<AttachProperty>,
+    /// Items to hide on the current branch.
+    pub hide: HideUnhideInput,
+    /// Items to unhide on the current branch.
+    pub unhide: HideUnhideInput,
+    /// New entities to introduce (created after schema operations).
     pub introduce: Vec<IntroduceItem>,
     /// Assertions on existing entities (processed after introduces).
     pub asserts: Vec<AssertItem>,
+}
+
+/// Items to hide or unhide on a branch, referenced by slug.
+pub struct HideUnhideInput {
+    pub entities: Vec<String>,
+    pub entity_types: Vec<String>,
+    pub properties: Vec<String>,
+}
+
+impl Default for HideUnhideInput {
+    fn default() -> Self {
+        Self {
+            entities: vec![],
+            entity_types: vec![],
+            properties: vec![],
+        }
+    }
 }
 
 /// A new entity to introduce in a transaction.
@@ -148,11 +158,11 @@ pub struct TransactionEntityResult {
 /// Input for creating a branch.
 pub struct CreateBranchInput {
     pub slug: String,
-    pub description: Option<String>,
+    pub reasoning: serde_json::Value,
     /// Parent branch slug ("main" or empty for main).
     pub parent: String,
-    /// Entity slugs — seed entities added at creation.
-    pub entities: Vec<String>,
+    /// Transaction UUID to branch from. `None` = branch from HEAD.
+    pub from_tx: Option<Uuid>,
 }
 
 /// Result of executing a command.
@@ -162,17 +172,12 @@ pub enum CommandResult {
     EntityTypes(Vec<EntityType>),
     /// Created or listed properties.
     Properties(Vec<EntityProperty>),
-    /// Properties attached; `count` is the number of attachments.
-    Attached { count: usize },
-    /// Entity created/asserted with transaction and log entries.
-    Asserted {
-        transaction: Transaction,
-        facts: Vec<LogEntry>,
-        hypotheses: Vec<LogEntry>,
-    },
-    /// Multi-entity transaction result.
+    /// Unified transaction result.
     TransactionResult {
         transaction: Transaction,
+        entity_types: Vec<EntityType>,
+        properties: Vec<EntityProperty>,
+        attached_count: usize,
         introduced: Vec<TransactionEntityResult>,
         asserted: Vec<TransactionEntityResult>,
     },

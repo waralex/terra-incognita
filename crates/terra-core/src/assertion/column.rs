@@ -12,7 +12,7 @@ use super::log::LogError;
 pub struct ColumnCell {
     pub branch_id: Uuid,
     pub property_id: Uuid,
-    pub timestamp_us: i64,
+    pub tx_id: Uuid,
     pub log_entry_id: Uuid,
     pub entity_id: Uuid,
     pub value: serde_json::Value,
@@ -21,7 +21,7 @@ pub struct ColumnCell {
 /// Low-level columnar storage backed by a RocksDB column family.
 ///
 /// Key layout (72 bytes, big-endian where applicable):
-/// `branch_id(16) | property_id(16) | timestamp_us(8) | log_entry_id(16) | entity_id(16)`
+/// `branch_id(16) | property_id(16) | tx_id(8) | log_entry_id(16) | entity_id(16)`
 ///
 /// Value: arbitrary JSON bytes.
 pub struct Column {
@@ -85,7 +85,7 @@ impl Column {
             cells.push(ColumnCell {
                 branch_id: k.branch_id,
                 property_id: k.property_id,
-                timestamp_us: k.timestamp_us,
+                tx_id: k.tx_id,
                 log_entry_id: k.log_entry_id,
                 entity_id: k.entity_id,
                 value,
@@ -121,7 +121,7 @@ impl Column {
             latest = Some(ColumnCell {
                 branch_id: k.branch_id,
                 property_id: k.property_id,
-                timestamp_us: k.timestamp_us,
+                tx_id: k.tx_id,
                 log_entry_id: k.log_entry_id,
                 entity_id: k.entity_id,
                 value,
@@ -164,10 +164,10 @@ impl Column {
 }
 
 storage_key! {
-    pub(crate) struct ColumnKey(72) {
+    pub(crate) struct ColumnKey(80) {
         branch_id: Uuid,
         property_id: Uuid,
-        timestamp_us: i64,
+        tx_id: Uuid,
         log_entry_id: Uuid,
         entity_id: Uuid,
     }
@@ -181,7 +181,7 @@ impl ColumnKey {
         Self {
             branch_id: cell.branch_id,
             property_id: cell.property_id,
-            timestamp_us: cell.timestamp_us,
+            tx_id: cell.tx_id,
             log_entry_id: cell.log_entry_id,
             entity_id: cell.entity_id,
         }
@@ -205,11 +205,11 @@ mod tests {
         Arc::new(DB::open_cf_descriptors(&opts, dir.path(), vec![cf]).unwrap())
     }
 
-    fn cell(property_id: Uuid, ts: i64, value: serde_json::Value) -> ColumnCell {
+    fn cell(property_id: Uuid, value: serde_json::Value) -> ColumnCell {
         ColumnCell {
             branch_id: Uuid::nil(),
             property_id,
-            timestamp_us: ts,
+            tx_id: Uuid::now_v7(),
             log_entry_id: Uuid::now_v7(),
             entity_id: Uuid::now_v7(),
             value,
@@ -223,7 +223,7 @@ mod tests {
         let col = Column::new(Arc::clone(&db), TEST_CF);
 
         let prop = Uuid::now_v7();
-        let c = cell(prop, 1000, serde_json::json!({"v": 42}));
+        let c = cell(prop, serde_json::json!({"v": 42}));
         col.put(&c).unwrap();
 
         let cells = col.scan_property(prop).unwrap();
@@ -240,17 +240,14 @@ mod tests {
 
         let prop = Uuid::now_v7();
         let cells = vec![
-            cell(prop, 100, serde_json::json!("first")),
-            cell(prop, 200, serde_json::json!("second")),
-            cell(prop, 300, serde_json::json!("third")),
+            cell(prop, serde_json::json!("first")),
+            cell(prop, serde_json::json!("second")),
+            cell(prop, serde_json::json!("third")),
         ];
         col.put_batch(&cells).unwrap();
 
         let result = col.scan_property(prop).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0].timestamp_us, 100);
-        assert_eq!(result[1].timestamp_us, 200);
-        assert_eq!(result[2].timestamp_us, 300);
     }
 
     #[test]
@@ -262,14 +259,12 @@ mod tests {
         let prop_a = Uuid::now_v7();
         let prop_b = Uuid::now_v7();
 
-        col.put(&cell(prop_a, 100, serde_json::json!("a1"))).unwrap();
-        col.put(&cell(prop_b, 200, serde_json::json!("b1"))).unwrap();
-        col.put(&cell(prop_a, 300, serde_json::json!("a2"))).unwrap();
+        col.put(&cell(prop_a, serde_json::json!("a1"))).unwrap();
+        col.put(&cell(prop_b, serde_json::json!("b1"))).unwrap();
+        col.put(&cell(prop_a, serde_json::json!("a2"))).unwrap();
 
         let a_cells = col.scan_property(prop_a).unwrap();
         assert_eq!(a_cells.len(), 2);
-        assert_eq!(a_cells[0].value, serde_json::json!("a1"));
-        assert_eq!(a_cells[1].value, serde_json::json!("a2"));
 
         let b_cells = col.scan_property(prop_b).unwrap();
         assert_eq!(b_cells.len(), 1);
@@ -288,7 +283,7 @@ mod tests {
 
     #[test]
     fn key_encoding_roundtrip() {
-        let c = cell(Uuid::now_v7(), 1_700_000_000_000_000, serde_json::json!(null));
+        let c = cell(Uuid::now_v7(), serde_json::json!(null));
         let key = ColumnKey::from_cell(&c);
         let encoded = key.encode();
         assert_eq!(encoded.len(), ColumnKey::SIZE);
@@ -298,14 +293,16 @@ mod tests {
     }
 
     #[test]
-    fn keys_sort_by_branch_property_timestamp() {
+    fn keys_sort_by_branch_property_tx() {
         let branch = Uuid::nil();
         let prop = Uuid::now_v7();
         let lid = Uuid::now_v7();
         let eid = Uuid::now_v7();
+        let tx1 = Uuid::from_u128(100);
+        let tx2 = Uuid::from_u128(200);
 
-        let k1 = ColumnKey { branch_id: branch, property_id: prop, timestamp_us: 100, log_entry_id: lid, entity_id: eid };
-        let k2 = ColumnKey { branch_id: branch, property_id: prop, timestamp_us: 200, log_entry_id: lid, entity_id: eid };
+        let k1 = ColumnKey { branch_id: branch, property_id: prop, tx_id: tx1, log_entry_id: lid, entity_id: eid };
+        let k2 = ColumnKey { branch_id: branch, property_id: prop, tx_id: tx2, log_entry_id: lid, entity_id: eid };
 
         assert!(k1.encode() < k2.encode());
     }

@@ -12,6 +12,7 @@ use axum::{Router, routing::post};
 use std::sync::{Arc, Mutex};
 use terra_core::assertion::{AssertionStore, MAIN_BRANCH};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::config::Config;
 use crate::error::error_kind_to_status;
@@ -26,7 +27,7 @@ async fn handle_query(
     let format = content_format_from_headers(&headers);
     let ct = format.content_type_header();
     let inner = state.lock().unwrap();
-    let registry = inner.assertions.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
+    let registry = inner.assertions.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
     match terra_query::dispatch(&body, format, &registry, &inner.assertions) {
         Ok(bytes) => (StatusCode::OK, [(CONTENT_TYPE, ct)], bytes).into_response(),
         Err(e) => {

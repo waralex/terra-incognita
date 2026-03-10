@@ -117,13 +117,13 @@ mod tests {
     use super::*;
     use crate::assertion::{PropertyValue, RangeValue, SetValue, MAIN_BRANCH};
     use crate::command::assert_entity;
-    use crate::command::{AssertEntityInput, AssertionItem};
+    use crate::command::{AssertionItem, HideUnhideInput, IntroduceItem, AssertItem, TransactionInput};
     use std::collections::HashMap;
 
     fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
-        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
         (registry, store, dir)
     }
 
@@ -136,35 +136,55 @@ mod tests {
         reg.attach_property("track", "certification").unwrap();
     }
 
+    fn tx_input(
+        reasoning: serde_json::Value,
+        introduce: Vec<IntroduceItem>,
+        asserts: Vec<AssertItem>,
+    ) -> TransactionInput {
+        TransactionInput {
+            reasoning,
+            entity_types: vec![],
+            properties: vec![],
+            attach: vec![],
+            hide: HideUnhideInput::default(),
+            unhide: HideUnhideInput::default(),
+            introduce,
+            asserts,
+        }
+    }
+
     #[test]
     fn project_entity_with_facts() {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        assert_entity::create_entity(
-            AssertEntityInput {
-                entity: "song-1".into(),
-                description: None,
-                reasoning: json!("test"),
-                facts: vec![AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([
-                        (
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(128))),
-                        ),
-                        (
-                            "certification".into(),
-                            PropertyValue::Set(SetValue {
-                                contains: vec![json!("gold")],
-                                not_contains: vec![],
-                            }),
-                        ),
-                    ]),
-                    reasoning: json!("analysis"),
+        assert_entity::execute_transaction(
+            tx_input(
+                json!("test"),
+                vec![IntroduceItem {
+                    entity: "song-1".into(),
+                    description: None,
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([
+                            (
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(128))),
+                            ),
+                            (
+                                "certification".into(),
+                                PropertyValue::Set(SetValue {
+                                    contains: vec![json!("gold")],
+                                    not_contains: vec![],
+                                }),
+                            ),
+                        ]),
+                        reasoning: json!("analysis"),
+                    }],
+                    hypotheses: vec![],
                 }],
-                hypotheses: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -186,15 +206,17 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        // Create entity with no assertions
-        assert_entity::create_entity(
-            AssertEntityInput {
-                entity: "song-2".into(),
-                description: None,
-                reasoning: json!("empty"),
-                facts: vec![],
-                hypotheses: vec![],
-            },
+        assert_entity::execute_transaction(
+            tx_input(
+                json!("empty"),
+                vec![IntroduceItem {
+                    entity: "song-2".into(),
+                    description: None,
+                    facts: vec![],
+                    hypotheses: vec![],
+                }],
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -214,52 +236,57 @@ mod tests {
         setup_schema(&reg);
 
         // Create with a fact
-        assert_entity::create_entity(
-            AssertEntityInput {
-                entity: "song-3".into(),
-                description: None,
-                reasoning: json!("initial"),
-                facts: vec![AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "bpm".into(),
-                        PropertyValue::Range(RangeValue::Eq(json!(120))),
-                    )]),
-                    reasoning: json!("detected"),
+        assert_entity::execute_transaction(
+            tx_input(
+                json!("initial"),
+                vec![IntroduceItem {
+                    entity: "song-3".into(),
+                    description: None,
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(json!(120))),
+                        )]),
+                        reasoning: json!("detected"),
+                    }],
+                    hypotheses: vec![],
                 }],
-                hypotheses: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
         // Add hypotheses after the fact
-        assert_entity::assert_entity(
-            AssertEntityInput {
-                entity: "song-3".into(),
-                description: None,
-                reasoning: json!("re-analysis"),
-                facts: vec![],
-                hypotheses: vec![
-                    AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(122))),
-                        )]),
-                        reasoning: json!("maybe higher"),
-                    },
-                    AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(118))),
-                        )]),
-                        reasoning: json!("maybe lower"),
-                    },
-                ],
-            },
+        assert_entity::execute_transaction(
+            tx_input(
+                json!("re-analysis"),
+                vec![],
+                vec![AssertItem {
+                    entity: "song-3".into(),
+                    facts: vec![],
+                    hypotheses: vec![
+                        AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(122))),
+                            )]),
+                            reasoning: json!("maybe higher"),
+                        },
+                        AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(118))),
+                            )]),
+                            reasoning: json!("maybe lower"),
+                        },
+                    ],
+                }],
+            ),
             &reg,
             &store,
         )
@@ -285,31 +312,34 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        assert_entity::create_entity(
-            AssertEntityInput {
-                entity: "song-4".into(),
-                description: None,
-                reasoning: json!("guessing"),
-                facts: vec![],
-                hypotheses: vec![
-                    AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(100))),
-                        )]),
-                        reasoning: json!("guess 1"),
-                    },
-                    AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(140))),
-                        )]),
-                        reasoning: json!("guess 2"),
-                    },
-                ],
-            },
+        assert_entity::execute_transaction(
+            tx_input(
+                json!("guessing"),
+                vec![IntroduceItem {
+                    entity: "song-4".into(),
+                    description: None,
+                    facts: vec![],
+                    hypotheses: vec![
+                        AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(100))),
+                            )]),
+                            reasoning: json!("guess 1"),
+                        },
+                        AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(140))),
+                            )]),
+                            reasoning: json!("guess 2"),
+                        },
+                    ],
+                }],
+                vec![],
+            ),
             &reg,
             &store,
         )

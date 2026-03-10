@@ -11,7 +11,7 @@ pub(crate) trait StorageKey: Sized {
 /// Declares a fixed-size storage key struct with automatic encode/decode
 /// and named prefix methods.
 ///
-/// Supported field types: `Uuid` (16 bytes), `i64` (8 bytes big-endian).
+/// Supported field types: `Uuid` (16 bytes), `i64` (8 bytes big-endian), `u8` (1 byte).
 ///
 /// ```ignore
 /// storage_key! {
@@ -92,10 +92,12 @@ macro_rules! storage_key {
     // Map macro type names to Rust types
     (@rust_type Uuid) => { uuid::Uuid };
     (@rust_type i64) => { i64 };
+    (@rust_type u8) => { u8 };
 
     // Field sizes
     (@field_size Uuid) => { 16 };
     (@field_size i64) => { 8 };
+    (@field_size u8) => { 1 };
 
     // Encode owned field
     (@encode $buf:ident, $off:ident, $val:expr, Uuid) => {
@@ -106,6 +108,10 @@ macro_rules! storage_key {
         $buf[$off..$off + 8].copy_from_slice(&$val.to_be_bytes());
         $off += 8;
     };
+    (@encode $buf:ident, $off:ident, $val:expr, u8) => {
+        $buf[$off] = $val;
+        $off += 1;
+    };
 
     // Encode reference (for prefix functions)
     (@encode_ref $buf:ident, $off:ident, $val:expr, Uuid) => {
@@ -115,6 +121,10 @@ macro_rules! storage_key {
     (@encode_ref $buf:ident, $off:ident, $val:expr, i64) => {
         $buf[$off..$off + 8].copy_from_slice(&$val.to_be_bytes());
         $off += 8;
+    };
+    (@encode_ref $buf:ident, $off:ident, $val:expr, u8) => {
+        $buf[$off] = *$val;
+        $off += 1;
     };
 
     // Decode field
@@ -130,6 +140,11 @@ macro_rules! storage_key {
             .map(i64::from_be_bytes)
             .map_err(|_| $crate::assertion::log::LogError::Storage("bad i64".into()));
         $off += 8;
+        val
+    }};
+    (@decode $buf:ident, $off:ident, u8) => {{
+        let val: Result<u8, $crate::assertion::log::LogError> = Ok($buf[$off]);
+        $off += 1;
         val
     }};
 }
@@ -183,6 +198,41 @@ mod tests {
         assert_eq!(prefix.len(), 32);
         assert_eq!(&prefix[..16], branch.as_bytes());
         assert_eq!(&prefix[16..], entity.as_bytes());
+    }
+
+    storage_key! {
+        pub(crate) struct TestKeyWithU8(33) {
+            branch_id: Uuid,
+            kind: u8,
+            item_id: Uuid,
+        }
+        prefixes {
+            prefix_branch(branch_id: Uuid) -> 16,
+            prefix_branch_kind(branch_id: Uuid, kind: u8) -> 17,
+        }
+    }
+
+    #[test]
+    fn u8_roundtrip() {
+        let key = TestKeyWithU8 {
+            branch_id: Uuid::nil(),
+            kind: 42,
+            item_id: Uuid::from_u128(7),
+        };
+        let encoded = key.encode();
+        assert_eq!(encoded.len(), 33);
+        assert_eq!(encoded[16], 42);
+
+        let decoded = TestKeyWithU8::decode(&encoded).unwrap();
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn u8_prefix() {
+        let branch = Uuid::nil();
+        let prefix = TestKeyWithU8::prefix_branch_kind(&branch, &2);
+        assert_eq!(prefix.len(), 17);
+        assert_eq!(prefix[16], 2);
     }
 
     #[test]

@@ -2,8 +2,7 @@ use crate::error::QueryError;
 use crate::format::ContentFormat;
 use crate::query::{QueryDto, ResponseShape};
 use crate::response::{
-    AssertedResponse, AttachedResponse, BranchResponse, EntityListItem,
-    EntityTypeDetailResponse, TransactionResultResponse,
+    BranchResponse, EntityListItem, EntityTypeDetailResponse, TransactionResultResponse,
 };
 use terra_core::assertion::AssertionStore;
 use terra_core::command::CommandResult;
@@ -38,27 +37,6 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_json::
             ResponseShape::Single => serde_json::to_value(&props[0]).unwrap(),
             ResponseShape::Batch => serde_json::to_value(&props).unwrap(),
         },
-        CommandResult::Attached { count } => {
-            let resp = AttachedResponse {
-                status: "ok",
-                count: if matches!(shape, ResponseShape::Batch) {
-                    Some(count)
-                } else {
-                    None
-                },
-            };
-            serde_json::to_value(&resp).unwrap()
-        }
-        CommandResult::Asserted {
-            transaction,
-            facts,
-            hypotheses,
-        } => serde_json::to_value(&AssertedResponse {
-            tx_id: transaction.id,
-            facts,
-            hypotheses,
-        })
-        .unwrap(),
         CommandResult::EntityTypeDetail {
             entity_type,
             properties,
@@ -72,10 +50,16 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_json::
         .unwrap(),
         CommandResult::TransactionResult {
             transaction,
+            entity_types,
+            properties,
+            attached_count,
             introduced,
             asserted,
         } => serde_json::to_value(&TransactionResultResponse {
             tx_id: transaction.id,
+            entity_types,
+            properties,
+            attached_count,
             introduce: introduced,
             asserts: asserted,
         })

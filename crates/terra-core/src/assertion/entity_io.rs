@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -23,7 +22,7 @@ pub struct EntityRecord {
     pub slug: String,
     pub status: EntityStatus,
     pub description: Option<String>,
-    pub timestamp: DateTime<Utc>,
+    pub tx_id: Uuid,
 }
 
 /// Low-level IO for entity storage: main CF (uuid+timestamp → body) and slug index CF (slug → uuid).
@@ -44,7 +43,7 @@ impl EntityIo {
         let key = EntityKey {
             branch_id: super::MAIN_BRANCH,
             entity_id: record.id,
-            timestamp_us: record.timestamp.timestamp_micros(),
+            tx_id: record.tx_id,
         }.encode();
         let val = serde_json::json!({
             "slug": record.slug,
@@ -67,7 +66,7 @@ impl EntityIo {
         let key = EntityKey {
             branch_id: super::MAIN_BRANCH,
             entity_id: record.id,
-            timestamp_us: record.timestamp.timestamp_micros(),
+            tx_id: record.tx_id,
         }.encode();
         let val = serde_json::json!({
             "slug": record.slug,
@@ -91,7 +90,7 @@ impl EntityIo {
         let main = self.main_cf()?;
         let prefix = EntityKey::prefix_branch_entity(&super::MAIN_BRANCH, entity_id);
 
-        let mut latest: Option<(i64, Vec<u8>)> = None;
+        let mut latest: Option<(Uuid, Vec<u8>)> = None;
         let iter = self.db.prefix_iterator_cf(main, &prefix);
 
         for item in iter {
@@ -101,15 +100,15 @@ impl EntityIo {
             }
             let k = EntityKey::decode(&raw_key)?;
             match &latest {
-                Some((prev_ts, _)) if k.timestamp_us <= *prev_ts => {}
-                _ => latest = Some((k.timestamp_us, val.to_vec())),
+                Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
+                _ => latest = Some((k.tx_id, val.to_vec())),
             }
         }
 
         match latest {
             None => Ok(None),
-            Some((ts, val_bytes)) => {
-                let record = decode_record(entity_id, ts, &val_bytes)?;
+            Some((tx_id, val_bytes)) => {
+                let record = decode_record(entity_id, tx_id, &val_bytes)?;
                 Ok(Some(record))
             }
         }
@@ -129,7 +128,7 @@ impl EntityIo {
                 break;
             }
             let k = EntityKey::decode(&raw_key)?;
-            records.push(decode_record(entity_id, k.timestamp_us, &val)?);
+            records.push(decode_record(entity_id, k.tx_id, &val)?);
         }
 
         Ok(records)
@@ -154,7 +153,7 @@ impl EntityIo {
     pub fn scan_all_latest(&self) -> Result<Vec<EntityRecord>, LogError> {
         let main = self.main_cf()?;
         let branch_prefix = EntityKey::prefix_branch(&super::MAIN_BRANCH);
-        let mut latest_map: std::collections::HashMap<Uuid, (i64, Vec<u8>)> =
+        let mut latest_map: std::collections::HashMap<Uuid, (Uuid, Vec<u8>)> =
             std::collections::HashMap::new();
 
         let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
@@ -169,14 +168,14 @@ impl EntityIo {
             let k = EntityKey::decode(&raw_key)?;
 
             match latest_map.get(&k.entity_id) {
-                Some((prev_ts, _)) if k.timestamp_us <= *prev_ts => {}
-                _ => { latest_map.insert(k.entity_id, (k.timestamp_us, val.to_vec())); }
+                Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
+                _ => { latest_map.insert(k.entity_id, (k.tx_id, val.to_vec())); }
             }
         }
 
         let mut records = Vec::with_capacity(latest_map.len());
-        for (entity_id, (ts, val_bytes)) in latest_map {
-            records.push(decode_record(&entity_id, ts, &val_bytes)?);
+        for (entity_id, (tx_id, val_bytes)) in latest_map {
+            records.push(decode_record(&entity_id, tx_id, &val_bytes)?);
         }
         Ok(records)
     }
@@ -195,10 +194,10 @@ impl EntityIo {
 }
 
 storage_key! {
-    struct EntityKey(40) {
+    struct EntityKey(48) {
         branch_id: Uuid,
         entity_id: Uuid,
-        timestamp_us: i64,
+        tx_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
@@ -213,7 +212,7 @@ fn encode_slug_key(branch_id: &Uuid, slug: &str) -> Vec<u8> {
     key
 }
 
-fn decode_record(entity_id: &Uuid, timestamp_us: i64, val_bytes: &[u8]) -> Result<EntityRecord, LogError> {
+fn decode_record(entity_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Result<EntityRecord, LogError> {
     let val: serde_json::Value = serde_json::from_slice(val_bytes)
         .map_err(|e| LogError::Storage(e.to_string()))?;
 
@@ -232,15 +231,12 @@ fn decode_record(entity_id: &Uuid, timestamp_us: i64, val_bytes: &[u8]) -> Resul
         .and_then(|v| if v.is_null() { None } else { v.as_str() })
         .map(String::from);
 
-    let timestamp = DateTime::from_timestamp_micros(timestamp_us)
-        .ok_or_else(|| LogError::Storage("invalid timestamp".into()))?;
-
     Ok(EntityRecord {
         id: *entity_id,
         slug,
         status,
         description,
-        timestamp,
+        tx_id,
     })
 }
 
@@ -273,7 +269,7 @@ mod tests {
             slug: slug.into(),
             status,
             description: None,
-            timestamp: Utc::now(),
+            tx_id: Uuid::now_v7(),
         }
     }
 
@@ -326,9 +322,7 @@ mod tests {
 
         let id = Uuid::now_v7();
         io.put(&record(id, "charlie", EntityStatus::Active)).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1));
         io.put(&record(id, "charlie", EntityStatus::Deleted)).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1));
         io.put(&record(id, "charlie", EntityStatus::Active)).unwrap();
 
         let history = io.get_history(&id).unwrap();
@@ -352,7 +346,6 @@ mod tests {
 
         io.put(&record(id1, "one", EntityStatus::Active)).unwrap();
         io.put(&record(id2, "two", EntityStatus::Active)).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(1));
         io.put(&record(id1, "one", EntityStatus::Deleted)).unwrap();
 
         let all = io.scan_all_latest().unwrap();
@@ -370,7 +363,7 @@ mod tests {
         let key = EntityKey {
             branch_id: Uuid::nil(),
             entity_id: Uuid::now_v7(),
-            timestamp_us: 1_700_000_000_000_000,
+            tx_id: Uuid::now_v7(),
         };
         let encoded = key.encode();
         assert_eq!(encoded.len(), EntityKey::SIZE);

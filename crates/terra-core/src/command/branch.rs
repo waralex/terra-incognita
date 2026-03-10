@@ -1,17 +1,17 @@
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::assertion::{AssertionStore, BranchRecord, BranchError, EntityRecord};
+use crate::assertion::{AssertionStore, BranchError, MAIN_BRANCH};
 
-/// Resolved branch detail with full objects instead of UUIDs.
+/// Resolved branch detail.
 #[derive(Debug)]
 pub struct BranchDetail {
     pub id: Uuid,
     pub slug: String,
-    pub description: Option<String>,
+    pub reasoning: serde_json::Value,
+    pub created_from_tx: Uuid,
+    /// Derived from `ancestry[1].0` or `MAIN_BRANCH`.
     pub parent_id: Uuid,
-    pub seed_entities: Vec<EntityRecord>,
-    pub introduced_entities: Vec<EntityRecord>,
 }
 
 /// Branch summary for list output.
@@ -19,11 +19,9 @@ pub struct BranchDetail {
 pub struct BranchSummary {
     pub id: Uuid,
     pub slug: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub reasoning: serde_json::Value,
+    /// Derived from `ancestry[1].0` or `MAIN_BRANCH`.
     pub parent_id: Uuid,
-    pub seed_count: usize,
-    pub introduced_count: usize,
 }
 
 /// Errors specific to branch command logic.
@@ -32,24 +30,17 @@ pub enum BranchCommandError {
     #[error("branch not found: {0}")]
     BranchNotFound(String),
 
-    #[error("entity not found: {0}")]
-    EntityNotFound(String),
-
     #[error(transparent)]
     Branch(#[from] BranchError),
-
-    #[error(transparent)]
-    Entity(#[from] crate::assertion::EntityError),
 }
 
-/// Creates a new branch, resolving entity slugs to UUIDs.
+/// Creates a new branch.
 pub fn create_branch(
     input: super::CreateBranchInput,
     store: &AssertionStore,
 ) -> Result<BranchDetail, BranchCommandError> {
-    // Resolve parent
     let parent_id = if input.parent.is_empty() || input.parent == "main" {
-        crate::assertion::MAIN_BRANCH
+        MAIN_BRANCH
     } else {
         let branches = store.branches();
         let parent = branches.get_by_slug(&input.parent)?
@@ -57,36 +48,25 @@ pub fn create_branch(
         parent.id
     };
 
-    // Resolve entity slugs
-    let entities = store.entities();
-    let mut seed_entity_ids = Vec::with_capacity(input.entities.len());
-    let mut seed_entities = Vec::with_capacity(input.entities.len());
-    for slug in &input.entities {
-        let record = entities
-            .get_by_slug(slug)?
-            .ok_or_else(|| BranchCommandError::EntityNotFound(slug.to_string()))?;
-        seed_entity_ids.push(record.id);
-        seed_entities.push(record);
-    }
+    let branch_point_tx = input.from_tx.unwrap_or(Uuid::max());
 
     let record = store.branches().create(
         &input.slug,
-        input.description.as_deref(),
+        input.reasoning,
         parent_id,
-        seed_entity_ids,
+        branch_point_tx,
     )?;
 
     Ok(BranchDetail {
         id: record.id,
         slug: record.slug,
-        description: record.description,
-        parent_id: record.parent_id,
-        seed_entities,
-        introduced_entities: vec![],
+        reasoning: record.reasoning,
+        created_from_tx: record.created_from_tx,
+        parent_id: record.ancestry.get(1).map(|(id, _)| *id).unwrap_or(MAIN_BRANCH),
     })
 }
 
-/// Gets a branch by slug, resolving all UUIDs to full objects.
+/// Gets a branch by slug.
 pub fn get_branch(
     slug: &str,
     store: &AssertionStore,
@@ -96,7 +76,13 @@ pub fn get_branch(
         .get_by_slug(slug)?
         .ok_or_else(|| BranchCommandError::BranchNotFound(slug.to_string()))?;
 
-    resolve_branch(record, store)
+    Ok(BranchDetail {
+        id: record.id,
+        slug: record.slug,
+        reasoning: record.reasoning,
+        created_from_tx: record.created_from_tx,
+        parent_id: record.ancestry.get(1).map(|(id, _)| *id).unwrap_or(MAIN_BRANCH),
+    })
 }
 
 /// Lists all branches as summaries.
@@ -109,39 +95,10 @@ pub fn list_branches(
         .map(|r| BranchSummary {
             id: r.id,
             slug: r.slug,
-            description: r.description,
-            parent_id: r.parent_id,
-            seed_count: r.seed_entities.len(),
-            introduced_count: r.introduced_entities.len(),
+            reasoning: r.reasoning,
+            parent_id: r.ancestry.get(1).map(|(id, _)| *id).unwrap_or(MAIN_BRANCH),
         })
         .collect())
-}
-
-fn resolve_branch(
-    record: BranchRecord,
-    store: &AssertionStore,
-) -> Result<BranchDetail, BranchCommandError> {
-    let entities = store.entities();
-    let seed_entities: Vec<EntityRecord> = record
-        .seed_entities
-        .iter()
-        .filter_map(|id| entities.get(id).ok().flatten())
-        .collect();
-
-    let introduced_entities: Vec<EntityRecord> = record
-        .introduced_entities
-        .iter()
-        .filter_map(|id| entities.get(id).ok().flatten())
-        .collect();
-
-    Ok(BranchDetail {
-        id: record.id,
-        slug: record.slug,
-        description: record.description,
-        parent_id: record.parent_id,
-        seed_entities,
-        introduced_entities,
-    })
 }
 
 #[cfg(test)]
@@ -159,45 +116,23 @@ mod tests {
     fn create_and_get_branch() {
         let (store, _dir) = setup();
 
-        store.entities().create("song-1", None).unwrap();
-        store.entities().create("song-2", None).unwrap();
-
         let detail = create_branch(
             CreateBranchInput {
                 slug: "my-branch".into(),
-                description: Some("Test branch".into()),
+                reasoning: serde_json::json!("Test branch"),
                 parent: "main".into(),
-                entities: vec!["song-1".into(), "song-2".into()],
+                from_tx: None,
             },
             &store,
         )
         .unwrap();
 
         assert_eq!(detail.slug, "my-branch");
-        assert_eq!(detail.seed_entities.len(), 2);
-        assert!(detail.introduced_entities.is_empty());
+        assert_eq!(detail.reasoning, serde_json::json!("Test branch"));
+        assert_eq!(detail.parent_id, MAIN_BRANCH);
 
         let fetched = get_branch("my-branch", &store).unwrap();
         assert_eq!(fetched.id, detail.id);
-        assert_eq!(fetched.seed_entities.len(), 2);
-    }
-
-    #[test]
-    fn create_branch_unknown_entity() {
-        let (store, _dir) = setup();
-
-        let err = create_branch(
-            CreateBranchInput {
-                slug: "bad".into(),
-                description: None,
-                parent: "main".into(),
-                entities: vec!["ghost".into()],
-            },
-            &store,
-        )
-        .unwrap_err();
-
-        assert!(matches!(err, BranchCommandError::EntityNotFound(_)));
     }
 
     #[test]
@@ -207,9 +142,9 @@ mod tests {
         create_branch(
             CreateBranchInput {
                 slug: "a".into(),
-                description: None,
+                reasoning: serde_json::Value::Null,
                 parent: "main".into(),
-                entities: vec![],
+                from_tx: None,
             },
             &store,
         )
@@ -217,9 +152,9 @@ mod tests {
         create_branch(
             CreateBranchInput {
                 slug: "b".into(),
-                description: None,
+                reasoning: serde_json::Value::Null,
                 parent: "main".into(),
-                entities: vec![],
+                from_tx: None,
             },
             &store,
         )

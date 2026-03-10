@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::assertion::{
-    AssertionInput, AssertionStore, EntityError, LogEntry, Transaction,
+    AssertionInput, AssertionStore, EntityError, ItemKind, Transaction,
     WriterError,
 };
-use crate::schema::BranchSchemaRegistry;
+use crate::schema::{AttachInput, BranchSchemaRegistry, EntityProperty, EntityType, EntityTypeInput, PropertyInput};
 
-use super::{AssertEntityInput, TransactionEntityResult, TransactionInput};
+use super::{TransactionEntityResult, TransactionInput};
 
-/// Errors specific to the assert-entity business logic.
+/// Errors specific to the transaction business logic.
 #[derive(Debug, thiserror::Error)]
 pub enum AssertEntityError {
     /// Entity must exist for assertion but was not found.
@@ -56,121 +56,95 @@ pub enum AssertEntityError {
     Schema(#[from] crate::schema::SchemaError),
 }
 
-/// Result of assert-entity operation.
-#[derive(Debug)]
-pub struct AssertEntityResult {
-    pub transaction: Transaction,
-    pub facts: Vec<LogEntry>,
-    pub hypotheses: Vec<LogEntry>,
-}
-
-/// Creates a new entity and optionally asserts facts/hypotheses.
-pub fn create_entity(
-    input: AssertEntityInput,
-    registry: &BranchSchemaRegistry,
-    store: &AssertionStore,
-) -> Result<AssertEntityResult, AssertEntityError> {
-    // Validate BEFORE creating entity
-    validate_no_conflicting_facts(&input.facts)?;
-    let resolved_facts = resolve_items(&input.facts, Uuid::nil(), registry)?;
-    let resolved_hypotheses = resolve_items(&input.hypotheses, Uuid::nil(), registry)?;
-
-    // Check entity does NOT exist
-    let entities = store.entities();
-    if entities.get_by_slug(&input.entity)?.is_some() {
-        return Err(AssertEntityError::EntityAlreadyExists(input.entity));
-    }
-
-    // Create entity
-    let entity_record = entities.create(&input.entity, input.description.as_deref())?;
-
-    // Write with real entity_id
-    write_assertions(entity_record.id, input, resolved_facts, resolved_hypotheses, registry, store)
-}
-
-/// Asserts facts/hypotheses about an existing entity.
-pub fn assert_entity(
-    input: AssertEntityInput,
-    registry: &BranchSchemaRegistry,
-    store: &AssertionStore,
-) -> Result<AssertEntityResult, AssertEntityError> {
-    // Validate first
-    validate_no_conflicting_facts(&input.facts)?;
-    let resolved_facts = resolve_items(&input.facts, Uuid::nil(), registry)?;
-    let resolved_hypotheses = resolve_items(&input.hypotheses, Uuid::nil(), registry)?;
-
-    // Check entity exists
-    let entities = store.entities();
-    let entity_record = entities
-        .get_by_slug(&input.entity)?
-        .ok_or_else(|| AssertEntityError::EntityNotFound(input.entity.clone()))?;
-
-    write_assertions(entity_record.id, input, resolved_facts, resolved_hypotheses, registry, store)
-}
-
-fn write_assertions(
-    entity_id: Uuid,
-    input: AssertEntityInput,
-    mut resolved_facts: Vec<AssertionInput>,
-    mut resolved_hypotheses: Vec<AssertionInput>,
-    registry: &BranchSchemaRegistry,
-    store: &AssertionStore,
-) -> Result<AssertEntityResult, AssertEntityError> {
-    // Fix entity_id (was Uuid::nil() during pre-validation resolve)
-    for item in &mut resolved_facts {
-        item.entity_id = entity_id;
-    }
-    for item in &mut resolved_hypotheses {
-        item.entity_id = entity_id;
-    }
-
-    let fact_writer = store.fact_writer();
-    let hyp_writer = store.hypothesis_writer();
-
-    let (tx, facts) = if resolved_facts.is_empty() {
-        let (tx, _) = fact_writer.write_tx(entity_id, input.reasoning.clone(), &[], registry)?;
-        (tx, vec![])
-    } else {
-        fact_writer.write_tx(entity_id, input.reasoning.clone(), &resolved_facts, registry)?
-    };
-
-    let hypotheses = if resolved_hypotheses.is_empty() {
-        vec![]
-    } else {
-        let (_, hyps) =
-            hyp_writer.write_tx(entity_id, input.reasoning, &resolved_hypotheses, registry)?;
-        hyps
-    };
-
-    Ok(AssertEntityResult {
-        transaction: tx,
-        facts,
-        hypotheses,
-    })
-}
-
-/// Result of a multi-entity transaction.
+/// Result of executing a unified transaction.
 #[derive(Debug)]
 pub struct TransactionExecResult {
     pub transaction: Transaction,
+    pub entity_types: Vec<EntityType>,
+    pub properties: Vec<EntityProperty>,
+    pub attached_count: usize,
     pub introduced: Vec<TransactionEntityResult>,
     pub asserted: Vec<TransactionEntityResult>,
 }
 
-/// Executes a multi-entity transaction: introduces new entities, then asserts on existing ones.
+/// Executes a unified transaction: schema operations, visibility changes,
+/// entity introduction, and assertions — all in one command.
 ///
-/// All operations share one transaction record and one WriteBatch — if anything
-/// fails validation, nothing is written.
+/// Processing order:
+/// 1. Create entity types (committed via registry)
+/// 2. Create properties (committed via registry)
+/// 3. Attach properties (committed via registry)
+/// 4. Build one WriteBatch for: Transaction record + visibility + assertions
+/// 5. Introduce new entities + write their assertions
+/// 6. Write assertions on existing entities
 pub fn execute_transaction(
     input: TransactionInput,
     registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<TransactionExecResult, AssertEntityError> {
+    // Phase 0: Schema operations (committed independently via registry)
+
+    let created_entity_types = if input.entity_types.is_empty() {
+        vec![]
+    } else {
+        let prop_strs: Vec<Vec<&str>> = input
+            .entity_types
+            .iter()
+            .map(|item| item.properties.iter().map(|s| s.as_str()).collect())
+            .collect();
+        let inputs: Vec<EntityTypeInput<'_>> = input
+            .entity_types
+            .iter()
+            .zip(prop_strs.iter())
+            .map(|(item, props)| EntityTypeInput {
+                slug: &item.slug,
+                description: item.description.as_deref(),
+                properties: props,
+            })
+            .collect();
+        registry.create_entity_types_batch(&inputs)?
+    };
+
+    let created_properties = if input.properties.is_empty() {
+        vec![]
+    } else {
+        let et_strs: Vec<Vec<&str>> = input
+            .properties
+            .iter()
+            .map(|item| item.entity_types.iter().map(|s| s.as_str()).collect())
+            .collect();
+        let inputs: Vec<PropertyInput<'_>> = input
+            .properties
+            .iter()
+            .zip(et_strs.iter())
+            .map(|(item, ets)| PropertyInput {
+                slug: &item.slug,
+                value_type: item.value_type,
+                description: item.description.as_deref(),
+                entity_types: ets,
+            })
+            .collect();
+        registry.create_properties_batch(&inputs)?
+    };
+
+    let attached_count = if input.attach.is_empty() {
+        0
+    } else {
+        let inputs: Vec<AttachInput<'_>> = input
+            .attach
+            .iter()
+            .map(|item| AttachInput {
+                entity_type: &item.entity_type,
+                property: &item.property,
+            })
+            .collect();
+        registry.attach_properties_batch(&inputs)?
+    };
+
+    // Phase 1: Validate assertions before any entity mutation
+
     let entities = store.entities();
 
-    // Phase 1: Validate everything before any mutation
-
-    // Validate introduces
     let mut intro_resolved: Vec<(String, Option<String>, Vec<AssertionInput>, Vec<AssertionInput>)> =
         Vec::with_capacity(input.introduce.len());
     for item in &input.introduce {
@@ -188,7 +162,6 @@ pub fn execute_transaction(
         ));
     }
 
-    // Check for duplicate slugs within introduces
     for (i, item) in input.introduce.iter().enumerate() {
         for prev in &input.introduce[..i] {
             if prev.entity == item.entity {
@@ -197,7 +170,6 @@ pub fn execute_transaction(
         }
     }
 
-    // Validate asserts
     let mut assert_resolved: Vec<(Uuid, String, Vec<AssertionInput>, Vec<AssertionInput>)> =
         Vec::with_capacity(input.asserts.len());
     for item in &input.asserts {
@@ -205,11 +177,9 @@ pub fn execute_transaction(
         let facts = resolve_items(&item.facts, Uuid::nil(), registry)?;
         let hyps = resolve_items(&item.hypotheses, Uuid::nil(), registry)?;
 
-        // Entity must exist OR be in the introduce list
         if let Some(record) = entities.get_by_slug(&item.entity)? {
             assert_resolved.push((record.id, item.entity.clone(), facts, hyps));
         } else if input.introduce.iter().any(|i| i.entity == item.entity) {
-            // Will be resolved after entity creation — use nil placeholder
             assert_resolved.push((Uuid::nil(), item.entity.clone(), facts, hyps));
         } else {
             return Err(AssertEntityError::EntityNotFound(item.entity.clone()));
@@ -231,25 +201,27 @@ pub fn execute_transaction(
         }
     }
 
-    // Fix entity_ids for asserts that reference introduced entities
+    // Fix entity_ids for all assert resolved items.
+    // resolve_items used Uuid::nil() as placeholder; now replace with the real entity_id.
     for (entity_id, slug, facts, hyps) in assert_resolved.iter_mut() {
         if *entity_id == Uuid::nil() {
+            // References an introduced entity — look up its real id
             let real_id = intro_entities
                 .iter()
                 .find(|(_, s)| s == slug)
                 .map(|(id, _)| *id)
                 .expect("introduced entity must exist at this point");
             *entity_id = real_id;
-            for item in facts.iter_mut().chain(hyps.iter_mut()) {
-                item.entity_id = real_id;
-            }
+        }
+        for item in facts.iter_mut().chain(hyps.iter_mut()) {
+            item.entity_id = *entity_id;
         }
     }
 
-    // Phase 3: Build one WriteBatch for all assertions
+    // Phase 3: Build one WriteBatch for Transaction record + visibility + assertions
     let tx = Transaction {
         id: Uuid::now_v7(),
-        entity_id: None,
+        branch_id: crate::assertion::MAIN_BRANCH,
         reasoning: input.reasoning,
         timestamp: chrono::Utc::now(),
     };
@@ -259,6 +231,30 @@ pub fn execute_transaction(
         .transactions()
         .put_to_batch(&mut batch, &tx)
         .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+
+    // Visibility: hide
+    let vis = store.visibility();
+    resolve_and_write_visibility(
+        &mut batch,
+        &vis,
+        tx.branch_id,
+        tx.id,
+        &input.hide,
+        true,
+        registry,
+        &entities,
+    )?;
+    // Visibility: unhide
+    resolve_and_write_visibility(
+        &mut batch,
+        &vis,
+        tx.branch_id,
+        tx.id,
+        &input.unhide,
+        false,
+        registry,
+        &entities,
+    )?;
 
     let fact_writer = store.fact_writer();
     let hyp_writer = store.hypothesis_writer();
@@ -314,9 +310,76 @@ pub fn execute_transaction(
 
     Ok(TransactionExecResult {
         transaction: tx,
+        entity_types: created_entity_types,
+        properties: created_properties,
+        attached_count,
         introduced,
         asserted,
     })
+}
+
+/// Resolves slug-based hide/unhide items to UUIDs and writes visibility records to the batch.
+fn resolve_and_write_visibility(
+    batch: &mut rocksdb::WriteBatch,
+    vis: &crate::assertion::VisibilityStore,
+    branch_id: Uuid,
+    tx_id: Uuid,
+    input: &super::HideUnhideInput,
+    hide: bool,
+    registry: &BranchSchemaRegistry,
+    entities: &crate::assertion::EntityStore,
+) -> Result<(), AssertEntityError> {
+    // Resolve entity slugs
+    if !input.entities.is_empty() {
+        let mut ids = Vec::with_capacity(input.entities.len());
+        for slug in &input.entities {
+            let record = entities
+                .get_by_slug(slug)?
+                .ok_or_else(|| AssertEntityError::EntityNotFound(slug.clone()))?;
+            ids.push(record.id);
+        }
+        if hide {
+            vis.hide_to_batch(batch, branch_id, tx_id, ItemKind::Entity, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        } else {
+            vis.unhide_to_batch(batch, branch_id, tx_id, ItemKind::Entity, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        }
+    }
+
+    // Resolve entity type slugs
+    if !input.entity_types.is_empty() {
+        let mut ids = Vec::with_capacity(input.entity_types.len());
+        for slug in &input.entity_types {
+            let et = registry.get_entity_type(slug)?;
+            ids.push(et.id);
+        }
+        if hide {
+            vis.hide_to_batch(batch, branch_id, tx_id, ItemKind::EntityType, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        } else {
+            vis.unhide_to_batch(batch, branch_id, tx_id, ItemKind::EntityType, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        }
+    }
+
+    // Resolve property slugs
+    if !input.properties.is_empty() {
+        let mut ids = Vec::with_capacity(input.properties.len());
+        for slug in &input.properties {
+            let prop = registry.get_property_by_slug(slug)?;
+            ids.push(prop.id);
+        }
+        if hide {
+            vis.hide_to_batch(batch, branch_id, tx_id, ItemKind::Property, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        } else {
+            vis.unhide_to_batch(batch, branch_id, tx_id, ItemKind::Property, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_no_conflicting_facts(
@@ -390,13 +453,13 @@ fn resolve_items(
 mod tests {
     use super::*;
     use crate::assertion::{PropertyValue, RangeValue, SetValue, MAIN_BRANCH};
-    use crate::schema::{ValueType, BranchSchemaRegistry};
+    use crate::schema::ValueType;
     use serde_json::json;
 
     fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
-        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
         (registry, store, dir)
     }
 
@@ -409,42 +472,61 @@ mod tests {
         reg.attach_property("track", "certification").unwrap();
     }
 
+    fn tx_input(
+        reasoning: serde_json::Value,
+        introduce: Vec<super::super::IntroduceItem>,
+        asserts: Vec<super::super::AssertItem>,
+    ) -> TransactionInput {
+        TransactionInput {
+            reasoning,
+            entity_types: vec![],
+            properties: vec![],
+            attach: vec![],
+            hide: super::super::HideUnhideInput::default(),
+            unhide: super::super::HideUnhideInput::default(),
+            introduce,
+            asserts,
+        }
+    }
+
     #[test]
     fn create_entity_with_facts() {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let result = create_entity(
-            AssertEntityInput {
-                entity: "song-1".into(),
-                description: Some("A great song".into()),
-                reasoning: json!("initial analysis"),
-                facts: vec![super::super::AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "bpm".into(),
-                        PropertyValue::Range(RangeValue::Eq(json!(128))),
-                    )]),
-                    reasoning: json!("detected from waveform"),
+        let result = execute_transaction(
+            tx_input(
+                json!("initial analysis"),
+                vec![super::super::IntroduceItem {
+                    entity: "song-1".into(),
+                    description: Some("A great song".into()),
+                    facts: vec![super::super::AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(json!(128))),
+                        )]),
+                        reasoning: json!("detected from waveform"),
+                    }],
+                    hypotheses: vec![],
                 }],
-                hypotheses: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
-        assert_eq!(result.facts.len(), 1);
-        assert!(result.hypotheses.is_empty());
+        assert_eq!(result.introduced.len(), 1);
+        assert_eq!(result.introduced[0].facts.len(), 1);
+        assert!(result.introduced[0].hypotheses.is_empty());
 
-        // Entity exists
         let entity = store.entities().get_by_slug("song-1").unwrap().unwrap();
         assert_eq!(entity.description.as_deref(), Some("A great song"));
 
-        // Fact in log
         let log = store.facts().list().unwrap();
         assert_eq!(log.len(), 1);
-        assert_eq!(log[0].tx_id, Some(result.transaction.id));
+        assert_eq!(log[0].tx_id, result.transaction.id);
     }
 
     #[test]
@@ -452,38 +534,41 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let result = create_entity(
-            AssertEntityInput {
-                entity: "song-2".into(),
-                description: None,
-                reasoning: json!("exploring possibilities"),
-                facts: vec![],
-                hypotheses: vec![
-                    super::super::AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(120))),
-                        )]),
-                        reasoning: json!("estimate A"),
-                    },
-                    super::super::AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(130))),
-                        )]),
-                        reasoning: json!("estimate B"),
-                    },
-                ],
-            },
+        let result = execute_transaction(
+            tx_input(
+                json!("exploring possibilities"),
+                vec![super::super::IntroduceItem {
+                    entity: "song-2".into(),
+                    description: None,
+                    facts: vec![],
+                    hypotheses: vec![
+                        super::super::AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(120))),
+                            )]),
+                            reasoning: json!("estimate A"),
+                        },
+                        super::super::AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(130))),
+                            )]),
+                            reasoning: json!("estimate B"),
+                        },
+                    ],
+                }],
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
-        assert!(result.facts.is_empty());
-        assert_eq!(result.hypotheses.len(), 2);
+        assert!(result.introduced[0].facts.is_empty());
+        assert_eq!(result.introduced[0].hypotheses.len(), 2);
 
         let hyp_log = store.hypotheses().list().unwrap();
         assert_eq!(hyp_log.len(), 2);
@@ -494,33 +579,35 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        // Create entity first
         store.entities().create("song-3", None).unwrap();
 
-        let result = assert_entity(
-            AssertEntityInput {
-                entity: "song-3".into(),
-                description: None,
-                reasoning: json!("follow-up analysis"),
-                facts: vec![super::super::AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "certification".into(),
-                        PropertyValue::Set(SetValue {
-                            contains: vec![json!("gold")],
-                            not_contains: vec![],
-                        }),
-                    )]),
-                    reasoning: json!("confirmed by RIAA"),
+        let result = execute_transaction(
+            tx_input(
+                json!("follow-up analysis"),
+                vec![],
+                vec![super::super::AssertItem {
+                    entity: "song-3".into(),
+                    facts: vec![super::super::AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "certification".into(),
+                            PropertyValue::Set(SetValue {
+                                contains: vec![json!("gold")],
+                                not_contains: vec![],
+                            }),
+                        )]),
+                        reasoning: json!("confirmed by RIAA"),
+                    }],
+                    hypotheses: vec![],
                 }],
-                hypotheses: vec![],
-            },
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
-        assert_eq!(result.facts.len(), 1);
+        assert_eq!(result.asserted.len(), 1);
+        assert_eq!(result.asserted[0].facts.len(), 1);
     }
 
     #[test]
@@ -528,14 +615,16 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let err = assert_entity(
-            AssertEntityInput {
-                entity: "nonexistent".into(),
-                description: None,
-                reasoning: json!(null),
-                facts: vec![],
-                hypotheses: vec![],
-            },
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![],
+                vec![super::super::AssertItem {
+                    entity: "nonexistent".into(),
+                    facts: vec![],
+                    hypotheses: vec![],
+                }],
+            ),
             &reg,
             &store,
         )
@@ -551,14 +640,17 @@ mod tests {
 
         store.entities().create("dupe", None).unwrap();
 
-        let err = create_entity(
-            AssertEntityInput {
-                entity: "dupe".into(),
-                description: None,
-                reasoning: json!(null),
-                facts: vec![],
-                hypotheses: vec![],
-            },
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "dupe".into(),
+                    description: None,
+                    facts: vec![],
+                    hypotheses: vec![],
+                }],
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -572,39 +664,40 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let err = create_entity(
-            AssertEntityInput {
-                entity: "conflict".into(),
-                description: None,
-                reasoning: json!(null),
-                facts: vec![
-                    super::super::AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(120))),
-                        )]),
-                        reasoning: json!("analysis A"),
-                    },
-                    super::super::AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(130))),
-                        )]),
-                        reasoning: json!("analysis B"),
-                    },
-                ],
-                hypotheses: vec![],
-            },
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "conflict".into(),
+                    description: None,
+                    facts: vec![
+                        super::super::AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(120))),
+                            )]),
+                            reasoning: json!("analysis A"),
+                        },
+                        super::super::AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(130))),
+                            )]),
+                            reasoning: json!("analysis B"),
+                        },
+                    ],
+                    hypotheses: vec![],
+                }],
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap_err();
 
         assert!(matches!(err, AssertEntityError::ConflictingFacts { .. }));
-
-        // Entity should NOT have been created
         assert!(store.entities().get_by_slug("conflict").unwrap().is_none());
     }
 
@@ -613,18 +706,21 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let err = create_entity(
-            AssertEntityInput {
-                entity: "bad-type".into(),
-                description: None,
-                reasoning: json!(null),
-                facts: vec![super::super::AssertionItem {
-                    entity_type: "nonexistent-type".into(),
-                    properties: HashMap::new(),
-                    reasoning: json!(null),
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "bad-type".into(),
+                    description: None,
+                    facts: vec![super::super::AssertionItem {
+                        entity_type: "nonexistent-type".into(),
+                        properties: HashMap::new(),
+                        reasoning: json!(null),
+                    }],
+                    hypotheses: vec![],
                 }],
-                hypotheses: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -638,21 +734,24 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let err = create_entity(
-            AssertEntityInput {
-                entity: "bad-prop".into(),
-                description: None,
-                reasoning: json!(null),
-                facts: vec![super::super::AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "nonexistent-prop".into(),
-                        PropertyValue::Range(RangeValue::Eq(json!(0))),
-                    )]),
-                    reasoning: json!(null),
+        let err = execute_transaction(
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
+                    entity: "bad-prop".into(),
+                    description: None,
+                    facts: vec![super::super::AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "nonexistent-prop".into(),
+                            PropertyValue::Range(RangeValue::Eq(json!(0))),
+                        )]),
+                        reasoning: json!(null),
+                    }],
+                    hypotheses: vec![],
                 }],
-                hypotheses: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -666,50 +765,52 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        let result = create_entity(
-            AssertEntityInput {
-                entity: "mixed".into(),
-                description: Some("Mixed assertions".into()),
-                reasoning: json!("comprehensive analysis"),
-                facts: vec![super::super::AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "certification".into(),
-                        PropertyValue::Set(SetValue {
-                            contains: vec![json!("gold")],
-                            not_contains: vec![],
-                        }),
-                    )]),
-                    reasoning: json!("confirmed"),
+        let result = execute_transaction(
+            tx_input(
+                json!("comprehensive analysis"),
+                vec![super::super::IntroduceItem {
+                    entity: "mixed".into(),
+                    description: Some("Mixed assertions".into()),
+                    facts: vec![super::super::AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "certification".into(),
+                            PropertyValue::Set(SetValue {
+                                contains: vec![json!("gold")],
+                                not_contains: vec![],
+                            }),
+                        )]),
+                        reasoning: json!("confirmed"),
+                    }],
+                    hypotheses: vec![
+                        super::super::AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(120))),
+                            )]),
+                            reasoning: json!("estimate A"),
+                        },
+                        super::super::AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(json!(128))),
+                            )]),
+                            reasoning: json!("estimate B"),
+                        },
+                    ],
                 }],
-                hypotheses: vec![
-                    super::super::AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(120))),
-                        )]),
-                        reasoning: json!("estimate A"),
-                    },
-                    super::super::AssertionItem {
-                        entity_type: "track".into(),
-                        properties: HashMap::from([(
-                            "bpm".into(),
-                            PropertyValue::Range(RangeValue::Eq(json!(128))),
-                        )]),
-                        reasoning: json!("estimate B"),
-                    },
-                ],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
-        assert_eq!(result.facts.len(), 1);
-        assert_eq!(result.hypotheses.len(), 2);
+        assert_eq!(result.introduced[0].facts.len(), 1);
+        assert_eq!(result.introduced[0].hypotheses.len(), 2);
 
-        // Facts and hypotheses in separate logs
         assert_eq!(store.facts().list().unwrap().len(), 1);
         assert_eq!(store.hypotheses().list().unwrap().len(), 2);
     }
@@ -722,17 +823,15 @@ mod tests {
         }
     }
 
-    // -- Transaction tests --
-
     #[test]
     fn transaction_introduce_multiple_entities() {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
         let result = execute_transaction(
-            TransactionInput {
-                reasoning: json!("catalog import"),
-                introduce: vec![
+            tx_input(
+                json!("catalog import"),
+                vec![
                     super::super::IntroduceItem {
                         entity: "song-a".into(),
                         description: Some("First song".into()),
@@ -746,14 +845,14 @@ mod tests {
                         hypotheses: vec![],
                     },
                 ],
-                asserts: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
-        assert!(result.transaction.entity_id.is_none());
+        assert_eq!(result.transaction.branch_id, crate::assertion::MAIN_BRANCH);
         assert_eq!(result.introduced.len(), 2);
         assert_eq!(result.asserted.len(), 0);
         assert_eq!(result.introduced[0].entity_slug, "song-a");
@@ -761,12 +860,10 @@ mod tests {
         assert_eq!(result.introduced[0].facts.len(), 1);
         assert_eq!(result.introduced[1].facts.len(), 1);
 
-        // All log entries share the same tx_id
         let tx_id = result.transaction.id;
-        assert!(result.introduced[0].facts[0].tx_id == Some(tx_id));
-        assert!(result.introduced[1].facts[0].tx_id == Some(tx_id));
+        assert!(result.introduced[0].facts[0].tx_id == tx_id);
+        assert!(result.introduced[1].facts[0].tx_id == tx_id);
 
-        // Entities exist
         assert!(store.entities().get_by_slug("song-a").unwrap().is_some());
         assert!(store.entities().get_by_slug("song-b").unwrap().is_some());
     }
@@ -779,15 +876,15 @@ mod tests {
         store.entities().create("existing-song", None).unwrap();
 
         let result = execute_transaction(
-            TransactionInput {
-                reasoning: json!("follow-up"),
-                introduce: vec![],
-                asserts: vec![super::super::AssertItem {
+            tx_input(
+                json!("follow-up"),
+                vec![],
+                vec![super::super::AssertItem {
                     entity: "existing-song".into(),
                     facts: vec![make_item("track", "bpm", PropertyValue::Range(RangeValue::Eq(json!(100))))],
                     hypotheses: vec![],
                 }],
-            },
+            ),
             &reg,
             &store,
         )
@@ -805,20 +902,20 @@ mod tests {
         setup_schema(&reg);
 
         let result = execute_transaction(
-            TransactionInput {
-                reasoning: json!("create and annotate"),
-                introduce: vec![super::super::IntroduceItem {
+            tx_input(
+                json!("create and annotate"),
+                vec![super::super::IntroduceItem {
                     entity: "new-song".into(),
                     description: Some("Brand new".into()),
                     facts: vec![],
                     hypotheses: vec![],
                 }],
-                asserts: vec![super::super::AssertItem {
+                vec![super::super::AssertItem {
                     entity: "new-song".into(),
                     facts: vec![make_item("track", "bpm", PropertyValue::Range(RangeValue::Eq(json!(130))))],
                     hypotheses: vec![],
                 }],
-            },
+            ),
             &reg,
             &store,
         )
@@ -826,7 +923,6 @@ mod tests {
 
         assert_eq!(result.introduced.len(), 1);
         assert_eq!(result.asserted.len(), 1);
-        // Assert got the real entity_id from the introduce
         assert_eq!(result.introduced[0].entity_id, result.asserted[0].entity_id);
     }
 
@@ -836,9 +932,9 @@ mod tests {
         setup_schema(&reg);
 
         let err = execute_transaction(
-            TransactionInput {
-                reasoning: json!(null),
-                introduce: vec![
+            tx_input(
+                json!(null),
+                vec![
                     super::super::IntroduceItem {
                         entity: "dupe".into(),
                         description: None,
@@ -852,8 +948,8 @@ mod tests {
                         hypotheses: vec![],
                     },
                 ],
-                asserts: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -868,15 +964,15 @@ mod tests {
         setup_schema(&reg);
 
         let err = execute_transaction(
-            TransactionInput {
-                reasoning: json!(null),
-                introduce: vec![],
-                asserts: vec![super::super::AssertItem {
+            tx_input(
+                json!(null),
+                vec![],
+                vec![super::super::AssertItem {
                     entity: "ghost".into(),
                     facts: vec![],
                     hypotheses: vec![],
                 }],
-            },
+            ),
             &reg,
             &store,
         )
@@ -891,9 +987,9 @@ mod tests {
         setup_schema(&reg);
 
         let err = execute_transaction(
-            TransactionInput {
-                reasoning: json!(null),
-                introduce: vec![super::super::IntroduceItem {
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
                     entity: "conflict".into(),
                     description: None,
                     facts: vec![
@@ -902,15 +998,14 @@ mod tests {
                     ],
                     hypotheses: vec![],
                 }],
-                asserts: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
         .unwrap_err();
 
         assert!(matches!(err, AssertEntityError::ConflictingFacts { .. }));
-        // Entity should NOT have been created
         assert!(store.entities().get_by_slug("conflict").unwrap().is_none());
     }
 
@@ -922,16 +1017,16 @@ mod tests {
         store.entities().create("taken", None).unwrap();
 
         let err = execute_transaction(
-            TransactionInput {
-                reasoning: json!(null),
-                introduce: vec![super::super::IntroduceItem {
+            tx_input(
+                json!(null),
+                vec![super::super::IntroduceItem {
                     entity: "taken".into(),
                     description: None,
                     facts: vec![],
                     hypotheses: vec![],
                 }],
-                asserts: vec![],
-            },
+                vec![],
+            ),
             &reg,
             &store,
         )
@@ -946,9 +1041,9 @@ mod tests {
         setup_schema(&reg);
 
         let result = execute_transaction(
-            TransactionInput {
-                reasoning: json!("comprehensive import"),
-                introduce: vec![super::super::IntroduceItem {
+            tx_input(
+                json!("comprehensive import"),
+                vec![super::super::IntroduceItem {
                     entity: "song-x".into(),
                     description: Some("A song".into()),
                     facts: vec![make_item("track", "bpm", PropertyValue::Range(RangeValue::Eq(json!(128))))],
@@ -957,7 +1052,7 @@ mod tests {
                         not_contains: vec![],
                     }))],
                 }],
-                asserts: vec![super::super::AssertItem {
+                vec![super::super::AssertItem {
                     entity: "song-x".into(),
                     facts: vec![],
                     hypotheses: vec![make_item("track", "certification", PropertyValue::Set(SetValue {
@@ -965,26 +1060,23 @@ mod tests {
                         not_contains: vec![],
                     }))],
                 }],
-            },
+            ),
             &reg,
             &store,
         )
         .unwrap();
 
-        // Introduce: 1 fact, 1 hypothesis
         assert_eq!(result.introduced[0].facts.len(), 1);
         assert_eq!(result.introduced[0].hypotheses.len(), 1);
-        // Assert: 0 facts, 1 hypothesis
         assert_eq!(result.asserted[0].facts.len(), 0);
         assert_eq!(result.asserted[0].hypotheses.len(), 1);
 
-        // All share same tx_id
         let tx_id = result.transaction.id;
         for entry in &result.introduced[0].facts {
-            assert_eq!(entry.tx_id, Some(tx_id));
+            assert_eq!(entry.tx_id, tx_id);
         }
         for entry in &result.asserted[0].hypotheses {
-            assert_eq!(entry.tx_id, Some(tx_id));
+            assert_eq!(entry.tx_id, tx_id);
         }
     }
 
@@ -993,36 +1085,83 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        // bpm as fact AND bpm as hypothesis — this is allowed
-        // (fact = convergence, hypothesis = alternative under consideration)
-        let result = create_entity(
-            AssertEntityInput {
-                entity: "overlap".into(),
-                description: None,
-                reasoning: json!("mixed certainty"),
-                facts: vec![super::super::AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "bpm".into(),
-                        PropertyValue::Range(RangeValue::Eq(json!(120))),
-                    )]),
-                    reasoning: json!("most likely"),
+        let result = execute_transaction(
+            tx_input(
+                json!("mixed certainty"),
+                vec![super::super::IntroduceItem {
+                    entity: "overlap".into(),
+                    description: None,
+                    facts: vec![super::super::AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(json!(120))),
+                        )]),
+                        reasoning: json!("most likely"),
+                    }],
+                    hypotheses: vec![super::super::AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(json!(125))),
+                        )]),
+                        reasoning: json!("but maybe this"),
+                    }],
                 }],
-                hypotheses: vec![super::super::AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "bpm".into(),
-                        PropertyValue::Range(RangeValue::Eq(json!(125))),
-                    )]),
-                    reasoning: json!("but maybe this"),
+                vec![],
+            ),
+            &reg,
+            &store,
+        )
+        .unwrap();
+
+        assert_eq!(result.introduced[0].facts.len(), 1);
+        assert_eq!(result.introduced[0].hypotheses.len(), 1);
+    }
+
+    #[test]
+    fn transaction_with_schema_operations() {
+        let (reg, store, _dir) = setup();
+
+        let result = execute_transaction(
+            TransactionInput {
+                reasoning: json!("bootstrap schema and data"),
+                entity_types: vec![super::super::CreateEntityType {
+                    slug: "track".into(),
+                    description: None,
+                    properties: vec![],
                 }],
+                properties: vec![super::super::CreateProperty {
+                    slug: "bpm".into(),
+                    value_type: ValueType::Range,
+                    description: None,
+                    entity_types: vec![],
+                }],
+                attach: vec![super::super::AttachProperty {
+                    entity_type: "track".into(),
+                    property: "bpm".into(),
+                }],
+                hide: super::super::HideUnhideInput::default(),
+                unhide: super::super::HideUnhideInput::default(),
+                introduce: vec![super::super::IntroduceItem {
+                    entity: "song-1".into(),
+                    description: None,
+                    facts: vec![make_item("track", "bpm", PropertyValue::Range(RangeValue::Eq(json!(128))))],
+                    hypotheses: vec![],
+                }],
+                asserts: vec![],
             },
             &reg,
             &store,
         )
         .unwrap();
 
-        assert_eq!(result.facts.len(), 1);
-        assert_eq!(result.hypotheses.len(), 1);
+        assert_eq!(result.entity_types.len(), 1);
+        assert_eq!(result.entity_types[0].slug, "track");
+        assert_eq!(result.properties.len(), 1);
+        assert_eq!(result.properties[0].slug, "bpm");
+        assert_eq!(result.attached_count, 1);
+        assert_eq!(result.introduced.len(), 1);
+        assert_eq!(result.introduced[0].facts.len(), 1);
     }
 }

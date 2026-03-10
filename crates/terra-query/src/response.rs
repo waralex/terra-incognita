@@ -2,36 +2,27 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
-use terra_core::assertion::LogEntry;
 use terra_core::command::{BranchDetail, TransactionEntityResult};
-use terra_core::schema::EntityProperty;
+use terra_core::schema::{EntityProperty, EntityType};
 
-/// Response for entity.create / entity.assert commands.
-#[derive(Serialize)]
-pub struct AssertedResponse {
-    pub tx_id: Uuid,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub facts: Vec<LogEntry>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub hypotheses: Vec<LogEntry>,
+fn is_zero(v: &usize) -> bool {
+    *v == 0
 }
 
-/// Response for multi-entity transaction command.
+/// Response for the unified transaction command.
 #[derive(Serialize)]
 pub struct TransactionResultResponse {
     pub tx_id: Uuid,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub entity_types: Vec<EntityType>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<EntityProperty>,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub attached_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub introduce: Vec<TransactionEntityResult>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub asserts: Vec<TransactionEntityResult>,
-}
-
-/// Response for property.attach command.
-#[derive(Serialize)]
-pub struct AttachedResponse {
-    pub status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<usize>,
 }
 
 /// Response for entity-type.get — flattened entity type with properties.
@@ -52,23 +43,14 @@ pub struct EntityListItem {
     pub slug: String,
 }
 
-/// Response for branch.get — reshapes entities to slim views.
+/// Response for branch.get / branch.create.
 #[derive(Serialize)]
 pub struct BranchResponse {
     pub id: Uuid,
     pub slug: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub reasoning: serde_json::Value,
+    pub created_from_tx: Uuid,
     pub parent_id: Uuid,
-    pub seed_entities: Vec<EntitySlim>,
-    pub introduced_entities: Vec<EntitySlim>,
-}
-
-/// Slim entity reference.
-#[derive(Serialize)]
-pub struct EntitySlim {
-    pub id: Uuid,
-    pub slug: String,
 }
 
 impl From<BranchDetail> for BranchResponse {
@@ -76,10 +58,9 @@ impl From<BranchDetail> for BranchResponse {
         Self {
             id: d.id,
             slug: d.slug,
-            description: d.description,
+            reasoning: d.reasoning,
+            created_from_tx: d.created_from_tx,
             parent_id: d.parent_id,
-            seed_entities: d.seed_entities.into_iter().map(|e| EntitySlim { id: e.id, slug: e.slug }).collect(),
-            introduced_entities: d.introduced_entities.into_iter().map(|e| EntitySlim { id: e.id, slug: e.slug }).collect(),
         }
     }
 }

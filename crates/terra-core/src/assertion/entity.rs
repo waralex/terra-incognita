@@ -1,4 +1,3 @@
-use chrono::Utc;
 use uuid::Uuid;
 
 use super::entity_io::{EntityIo, EntityRecord, EntityStatus};
@@ -54,7 +53,7 @@ impl EntityStore {
             slug: slug.to_string(),
             status: EntityStatus::Active,
             description: description.map(String::from),
-            timestamp: Utc::now(),
+            tx_id: Uuid::now_v7(),
         };
 
         self.io.put_with_index(&record)?;
@@ -74,7 +73,7 @@ impl EntityStore {
             slug: current.slug,
             status: EntityStatus::Deleted,
             description: current.description,
-            timestamp: Utc::now(),
+            tx_id: Uuid::now_v7(),
         };
 
         self.io.put(&record)?;
@@ -94,7 +93,7 @@ impl EntityStore {
             slug: current.slug,
             status: EntityStatus::Active,
             description: current.description,
-            timestamp: Utc::now(),
+            tx_id: Uuid::now_v7(),
         };
 
         self.io.put(&record)?;

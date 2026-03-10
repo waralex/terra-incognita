@@ -3,7 +3,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use terra_core::assertion::LogEntry;
-use terra_core::command::{SessionDetail, TransactionEntityResult};
+use terra_core::command::{BranchDetail, TransactionEntityResult};
 use terra_core::schema::EntityProperty;
 
 /// Response for entity.create / entity.assert commands.
@@ -52,22 +52,16 @@ pub struct EntityListItem {
     pub slug: String,
 }
 
-/// Response for session.get — reshapes entity_types and entities to slim views.
+/// Response for branch.get — reshapes entities to slim views.
 #[derive(Serialize)]
-pub struct SessionResponse {
+pub struct BranchResponse {
     pub id: Uuid,
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub entity_types: Vec<EntityTypeSlim>,
+    pub parent_id: Uuid,
     pub seed_entities: Vec<EntitySlim>,
     pub introduced_entities: Vec<EntitySlim>,
-}
-
-/// Slim entity type reference.
-#[derive(Serialize)]
-pub struct EntityTypeSlim {
-    pub slug: String,
 }
 
 /// Slim entity reference.
@@ -77,13 +71,13 @@ pub struct EntitySlim {
     pub slug: String,
 }
 
-impl From<SessionDetail> for SessionResponse {
-    fn from(d: SessionDetail) -> Self {
+impl From<BranchDetail> for BranchResponse {
+    fn from(d: BranchDetail) -> Self {
         Self {
             id: d.id,
             slug: d.slug,
             description: d.description,
-            entity_types: d.entity_types.into_iter().map(|et| EntityTypeSlim { slug: et.slug }).collect(),
+            parent_id: d.parent_id,
             seed_entities: d.seed_entities.into_iter().map(|e| EntitySlim { id: e.id, slug: e.slug }).collect(),
             introduced_entities: d.introduced_entities.into_iter().map(|e| EntitySlim { id: e.id, slug: e.slug }).collect(),
         }

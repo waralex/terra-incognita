@@ -1,6 +1,6 @@
 use terra_core::assertion::EntityError;
 use terra_core::command::{
-    AssertEntityError, CommandError, ProjectionError, SessionCommandError,
+    AssertEntityError, BranchCommandError, CommandError, ProjectionError,
 };
 use terra_core::schema::SchemaError;
 
@@ -58,7 +58,7 @@ impl From<SchemaError> for QueryError {
                     message: err.to_string(),
                 };
             }
-            SchemaError::Db(_) => "database_error",
+            SchemaError::Storage(_) => "database_error",
         };
         Self {
             kind: kind.to_string(),
@@ -102,22 +102,21 @@ impl From<CommandError> for QueryError {
                     message: e.to_string(),
                 }
             }
-            CommandError::Session(e) => {
-                use terra_core::assertion::SessionError;
+            CommandError::Branch(e) => {
+                use terra_core::assertion::BranchError;
                 let kind = match &e {
-                    SessionCommandError::SessionNotFound(_) => "session_not_found",
-                    SessionCommandError::EntityTypeNotFound(_) => "entity_type_not_found",
-                    SessionCommandError::EntityNotFound(_) => "entity_not_found",
-                    SessionCommandError::Session(se) => match se {
-                        SessionError::SlugExists(_) => "session_already_exists",
-                        SessionError::SlugNotFound(_) | SessionError::NotFound(_) => {
-                            "session_not_found"
+                    BranchCommandError::BranchNotFound(_) => "branch_not_found",
+                    BranchCommandError::EntityNotFound(_) => "entity_not_found",
+                    BranchCommandError::Branch(be) => match be {
+                        BranchError::SlugExists(_) => "branch_already_exists",
+                        BranchError::SlugNotFound(_) | BranchError::NotFound(_) => {
+                            "branch_not_found"
                         }
-                        SessionError::Storage(_) => "storage_error",
+                        BranchError::ParentNotFound(_) => "branch_not_found",
+                        BranchError::MaxDepthExceeded(_) => "max_depth_exceeded",
+                        BranchError::Storage(_) => "storage_error",
                     },
-                    SessionCommandError::Schema(_) | SessionCommandError::Entity(_) => {
-                        "internal_error"
-                    }
+                    BranchCommandError::Entity(_) => "internal_error",
                 };
                 Self {
                     kind: kind.to_string(),

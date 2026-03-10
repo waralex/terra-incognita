@@ -3,7 +3,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::assertion::AssertionStore;
-use crate::schema::{EntityProperty, SchemaRegistry, ValueType};
+use crate::schema::{EntityProperty, BranchSchemaRegistry, ValueType};
 
 /// State of a single property in an entity projection.
 #[derive(Debug, Clone, Serialize)]
@@ -32,7 +32,7 @@ pub struct EntityProjection {
 pub fn project_entity(
     entity_slug: &str,
     entity_type_slug: &str,
-    registry: &SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<EntityProjection, ProjectionError> {
     let entity = store
@@ -115,19 +115,19 @@ pub enum ProjectionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assertion::{PropertyValue, RangeValue, SetValue};
+    use crate::assertion::{PropertyValue, RangeValue, SetValue, MAIN_BRANCH};
     use crate::command::assert_entity;
     use crate::command::{AssertEntityInput, AssertionItem};
     use std::collections::HashMap;
 
-    fn setup() -> (SchemaRegistry, AssertionStore, tempfile::TempDir) {
-        let registry = SchemaRegistry::open_in_memory().unwrap();
+    fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
         (registry, store, dir)
     }
 
-    fn setup_schema(reg: &SchemaRegistry) {
+    fn setup_schema(reg: &BranchSchemaRegistry) {
         reg.create_entity_type("track", None).unwrap();
         reg.create_property("bpm", ValueType::Range, None).unwrap();
         reg.create_property("certification", ValueType::Set, None)

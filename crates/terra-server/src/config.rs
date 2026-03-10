@@ -59,11 +59,6 @@ impl Config {
         Config::default()
     }
 
-    /// Returns the path to the SQLite schema database.
-    pub fn schema_db_path(&self) -> PathBuf {
-        self.data_dir.join("schema.db")
-    }
-
     /// Returns the path to the RocksDB assertions directory.
     pub fn assertions_db_path(&self) -> PathBuf {
         self.data_dir.join("assertions")

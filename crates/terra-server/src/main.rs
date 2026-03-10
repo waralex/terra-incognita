@@ -10,8 +10,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Router, routing::post};
 use std::sync::{Arc, Mutex};
-use terra_core::assertion::AssertionStore;
-use terra_core::schema::SchemaRegistry;
+use terra_core::assertion::{AssertionStore, MAIN_BRANCH};
 use tracing::info;
 
 use crate::config::Config;
@@ -26,12 +25,9 @@ async fn handle_query(
 ) -> Response {
     let format = content_format_from_headers(&headers);
     let ct = format.content_type_header();
-    let mut inner = state.lock().unwrap();
-    let crate::state::Inner {
-        ref mut registry,
-        ref assertions,
-    } = *inner;
-    match terra_query::dispatch(&body, format, registry, assertions) {
+    let inner = state.lock().unwrap();
+    let registry = inner.assertions.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
+    match terra_query::dispatch(&body, format, &registry, &inner.assertions) {
         Ok(bytes) => (StatusCode::OK, [(CONTENT_TYPE, ct)], bytes).into_response(),
         Err(e) => {
             let status = error_kind_to_status(&e.kind);
@@ -52,16 +48,12 @@ async fn main() {
         .ensure_data_dir()
         .expect("failed to create data directory");
 
-    let db_path = config.schema_db_path();
-    let registry = SchemaRegistry::open(&db_path).expect("failed to open schema registry");
-
     let assertions_path = config.assertions_db_path();
     let assertions =
         AssertionStore::open(&assertions_path).expect("failed to open assertion store");
     info!("assertions_db: {}", assertions_path.display());
 
     let state: AppState = Arc::new(Mutex::new(crate::state::Inner {
-        registry,
         assertions,
     }));
 

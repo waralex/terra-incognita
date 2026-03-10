@@ -11,19 +11,19 @@ pub use format::ContentFormat;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use terra_core::assertion::AssertionStore;
-    use terra_core::schema::SchemaRegistry;
+    use terra_core::assertion::{AssertionStore, MAIN_BRANCH};
+    use terra_core::schema::BranchSchemaRegistry;
 
-    fn setup() -> (SchemaRegistry, AssertionStore, tempfile::TempDir) {
-        let registry = SchemaRegistry::open_in_memory().unwrap();
+    fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
         (registry, store, dir)
     }
 
     fn dispatch_yaml(
         yaml: &str,
-        registry: &mut SchemaRegistry,
+        registry: &BranchSchemaRegistry,
         store: &AssertionStore,
     ) -> Result<serde_json::Value, QueryError> {
         let bytes = dispatch(yaml.as_bytes(), ContentFormat::Yaml, registry, store)?;
@@ -32,24 +32,24 @@ mod tests {
 
     #[test]
     fn entity_list_returns_created_entities() {
-        let (mut reg, store, _dir) = setup();
+        let (reg, store, _dir) = setup();
 
         // Setup schema
         dispatch_yaml(
             "command: entity-type.create\nslug: track\n",
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
         dispatch_yaml(
             "command: property.create\nslug: bpm\nvalue_type: range\n",
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
         dispatch_yaml(
             "command: property.attach\nentity_type: track\nslug: bpm\n",
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
@@ -57,7 +57,7 @@ mod tests {
         // Create entity
         dispatch_yaml(
             "command: entity.create\nentity: song-1\n",
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
@@ -65,7 +65,7 @@ mod tests {
         // List entities
         let result = dispatch_yaml(
             "command: entity.list\n",
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
@@ -77,10 +77,10 @@ mod tests {
 
     #[test]
     fn json_format_roundtrip() {
-        let (mut reg, store, _dir) = setup();
+        let (reg, store, _dir) = setup();
 
         let input = br#"{"command": "entity-type.create", "slug": "track"}"#;
-        let bytes = dispatch(input, ContentFormat::Json, &mut reg, &store).unwrap();
+        let bytes = dispatch(input, ContentFormat::Json, &reg, &store).unwrap();
         let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(val["slug"], "track");
     }

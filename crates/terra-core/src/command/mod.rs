@@ -1,12 +1,12 @@
 mod assert_entity;
-mod execute;
+pub(crate) mod branch;
+pub mod execute;
 mod query_entity;
-pub(crate) mod session;
 
 pub use assert_entity::AssertEntityError;
 pub use execute::execute;
 pub use query_entity::{EntityProjection, ProjectionError, PropertyState};
-pub use session::{SessionCommandError, SessionDetail, SessionSummary};
+pub use branch::{BranchCommandError, BranchDetail, BranchSummary};
 
 use serde::Serialize;
 
@@ -44,12 +44,12 @@ pub enum Command {
         entity: String,
         entity_type: String,
     },
-    /// Create a new session scoped to entity types and seed entities.
-    CreateSession(CreateSessionInput),
-    /// Get session by slug with resolved references.
-    GetSession { slug: String },
-    /// List all sessions.
-    ListSessions,
+    /// Create a new branch.
+    CreateBranch(CreateBranchInput),
+    /// Get branch by slug with resolved references.
+    GetBranch { slug: String },
+    /// List all branches.
+    ListBranches,
     /// List all entries in the fact log.
     ListLog,
 }
@@ -145,12 +145,12 @@ pub struct TransactionEntityResult {
     pub hypotheses: Vec<LogEntry>,
 }
 
-/// Input for creating a session.
-pub struct CreateSessionInput {
+/// Input for creating a branch.
+pub struct CreateBranchInput {
     pub slug: String,
     pub description: Option<String>,
-    /// Entity type slugs — limits what types are valid in this session.
-    pub entity_types: Vec<String>,
+    /// Parent branch slug ("main" or empty for main).
+    pub parent: String,
     /// Entity slugs — seed entities added at creation.
     pub entities: Vec<String>,
 }
@@ -185,10 +185,10 @@ pub enum CommandResult {
     EntityList(Vec<EntityRecord>),
     /// Entity projected onto an entity type.
     EntityDetail(EntityProjection),
-    /// Session created or retrieved with resolved references.
-    Session(SessionDetail),
-    /// List of session summaries.
-    SessionList(Vec<SessionSummary>),
+    /// Branch created or retrieved with resolved references.
+    Branch(BranchDetail),
+    /// List of branch summaries.
+    BranchList(Vec<BranchSummary>),
     /// Full assertion log.
     LogEntries(Vec<LogEntry>),
 }
@@ -220,7 +220,7 @@ pub enum CommandError {
     #[error(transparent)]
     Projection(#[from] ProjectionError),
 
-    /// Session command error.
+    /// Branch command error.
     #[error(transparent)]
-    Session(#[from] SessionCommandError),
+    Branch(#[from] BranchCommandError),
 }

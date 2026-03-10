@@ -1,10 +1,8 @@
 use std::sync::{Arc, Mutex};
 use terra_core::assertion::AssertionStore;
-use terra_core::schema::SchemaRegistry;
 
-/// Shared mutable state holding both stores.
+/// Shared mutable state holding the assertion store.
 pub struct Inner {
-    pub registry: SchemaRegistry,
     pub assertions: AssertionStore,
 }
 

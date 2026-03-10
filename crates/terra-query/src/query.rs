@@ -4,8 +4,8 @@ use crate::error::QueryError;
 use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
-    AssertEntityInput, AssertItem, AssertionItem, AttachProperty, Command, CreateEntityType,
-    CreateProperty, CreateSessionInput, IntroduceItem, TransactionInput,
+    AssertEntityInput, AssertItem, AssertionItem, AttachProperty, Command, CreateBranchInput,
+    CreateEntityType, CreateProperty, IntroduceItem, TransactionInput,
 };
 
 /// DTO for batch entity type creation items.
@@ -135,19 +135,19 @@ pub enum QueryDto {
         #[serde(default)]
         asserts: Vec<AssertItemDto>,
     },
-    #[serde(rename = "session.create")]
-    CreateSession {
+    #[serde(rename = "branch.create")]
+    CreateBranch {
         slug: String,
         description: Option<String>,
         #[serde(default)]
-        entity_types: Vec<String>,
+        parent: String,
         #[serde(default)]
         entities: Vec<String>,
     },
-    #[serde(rename = "session.get")]
-    GetSession { slug: String },
-    #[serde(rename = "session.list")]
-    ListSessions,
+    #[serde(rename = "branch.get")]
+    GetBranch { slug: String },
+    #[serde(rename = "branch.list")]
+    ListBranches,
     #[serde(rename = "log.list")]
     ListLog,
 }
@@ -354,24 +354,24 @@ impl QueryDto {
                     ResponseShape::Single,
                 ))
             }
-            QueryDto::CreateSession {
+            QueryDto::CreateBranch {
                 slug,
                 description,
-                entity_types,
+                parent,
                 entities,
             } => Ok((
-                Command::CreateSession(CreateSessionInput {
+                Command::CreateBranch(CreateBranchInput {
                     slug,
                     description,
-                    entity_types,
+                    parent,
                     entities,
                 }),
                 ResponseShape::Single,
             )),
-            QueryDto::GetSession { slug } => {
-                Ok((Command::GetSession { slug }, ResponseShape::Single))
+            QueryDto::GetBranch { slug } => {
+                Ok((Command::GetBranch { slug }, ResponseShape::Single))
             }
-            QueryDto::ListSessions => Ok((Command::ListSessions, ResponseShape::Batch)),
+            QueryDto::ListBranches => Ok((Command::ListBranches, ResponseShape::Batch)),
             QueryDto::ListLog => Ok((Command::ListLog, ResponseShape::Batch)),
         }
     }

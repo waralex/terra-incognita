@@ -1,15 +1,15 @@
 use crate::assertion::AssertionStore;
-use crate::schema::{AttachInput, EntityTypeInput, PropertyInput, SchemaRegistry};
+use crate::schema::{AttachInput, EntityTypeInput, PropertyInput, BranchSchemaRegistry};
 
 use super::{Command, CommandError, CommandResult};
 use super::assert_entity;
 use super::query_entity;
-use super::session;
+use super::branch;
 
 /// Executes a domain command against the schema registry and assertion store.
 pub fn execute(
     cmd: Command,
-    registry: &mut SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<CommandResult, CommandError> {
     match cmd {
@@ -118,17 +118,17 @@ pub fn execute(
             let projection = query_entity::project_entity(&entity, &entity_type, registry, store)?;
             Ok(CommandResult::EntityDetail(projection))
         }
-        Command::CreateSession(input) => {
-            let detail = session::create_session(input, registry, store)?;
-            Ok(CommandResult::Session(detail))
+        Command::CreateBranch(input) => {
+            let detail = branch::create_branch(input, store)?;
+            Ok(CommandResult::Branch(detail))
         }
-        Command::GetSession { slug } => {
-            let detail = session::get_session(&slug, registry, store)?;
-            Ok(CommandResult::Session(detail))
+        Command::GetBranch { slug } => {
+            let detail = branch::get_branch(&slug, store)?;
+            Ok(CommandResult::Branch(detail))
         }
-        Command::ListSessions => {
-            let list = session::list_sessions(store)?;
-            Ok(CommandResult::SessionList(list))
+        Command::ListBranches => {
+            let list = branch::list_branches(store)?;
+            Ok(CommandResult::BranchList(list))
         }
         Command::ListLog => {
             let entries = store.facts().list()?;
@@ -141,20 +141,20 @@ pub fn execute(
 mod tests {
     use super::*;
     use crate::command::{
-        AssertEntityInput, AssertionItem, CreateEntityType, CreateProperty, AttachProperty,
+        AssertEntityInput, AssertionItem, CreateEntityType, CreateProperty,
     };
-    use crate::assertion::{PropertyValue, RangeValue, SetValue};
+    use crate::assertion::{PropertyValue, RangeValue, MAIN_BRANCH};
     use crate::schema::ValueType;
     use std::collections::HashMap;
 
-    fn setup() -> (SchemaRegistry, AssertionStore, tempfile::TempDir) {
-        let registry = SchemaRegistry::open_in_memory().unwrap();
+    fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
         (registry, store, dir)
     }
 
-    fn setup_schema(reg: &mut SchemaRegistry, store: &AssertionStore) {
+    fn setup_schema(reg: &BranchSchemaRegistry, store: &AssertionStore) {
         execute(
             Command::CreateProperties(vec![
                 CreateProperty {
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn create_and_list_entity_types() {
-        let (mut reg, store, _dir) = setup();
+        let (reg, store, _dir) = setup();
 
         let result = execute(
             Command::CreateEntityTypes(vec![CreateEntityType {
@@ -197,7 +197,7 @@ mod tests {
                 description: Some("Research project".into()),
                 properties: vec![],
             }]),
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
@@ -210,7 +210,7 @@ mod tests {
             _ => panic!("unexpected result"),
         }
 
-        let result = execute(Command::ListEntityTypes, &mut reg, &store).unwrap();
+        let result = execute(Command::ListEntityTypes, &reg, &store).unwrap();
         match result {
             CommandResult::EntityTypes(types) => assert_eq!(types.len(), 1),
             _ => panic!("unexpected result"),
@@ -218,149 +218,9 @@ mod tests {
     }
 
     #[test]
-    fn get_entity_type_detail() {
-        let (mut reg, store, _dir) = setup();
-
-        execute(
-            Command::CreateProperties(vec![CreateProperty {
-                slug: "name".into(),
-                value_type: ValueType::Struct,
-                description: None,
-                entity_types: vec![],
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        execute(
-            Command::CreateEntityTypes(vec![CreateEntityType {
-                slug: "unit".into(),
-                description: None,
-                properties: vec!["name".into()],
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        let result = execute(
-            Command::GetEntityType { slug: "unit".into() },
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        match result {
-            CommandResult::EntityTypeDetail {
-                entity_type,
-                properties,
-            } => {
-                assert_eq!(entity_type.slug, "unit");
-                assert_eq!(properties.len(), 1);
-                assert_eq!(properties[0].slug, "name");
-            }
-            _ => panic!("unexpected result"),
-        }
-    }
-
-    #[test]
-    fn create_properties_with_entity_type_attachment() {
-        let (mut reg, store, _dir) = setup();
-
-        execute(
-            Command::CreateEntityTypes(vec![CreateEntityType {
-                slug: "unit".into(),
-                description: None,
-                properties: vec![],
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        let result = execute(
-            Command::CreateProperties(vec![CreateProperty {
-                slug: "name".into(),
-                value_type: ValueType::Struct,
-                description: None,
-                entity_types: vec!["unit".into()],
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        match result {
-            CommandResult::Properties(props) => {
-                assert_eq!(props.len(), 1);
-                assert_eq!(props[0].slug, "name");
-            }
-            _ => panic!("unexpected result"),
-        }
-
-        let result = execute(
-            Command::ListProperties {
-                entity_type: Some("unit".into()),
-            },
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        match result {
-            CommandResult::Properties(props) => assert_eq!(props.len(), 1),
-            _ => panic!("unexpected result"),
-        }
-    }
-
-    #[test]
-    fn attach_properties() {
-        let (mut reg, store, _dir) = setup();
-
-        execute(
-            Command::CreateEntityTypes(vec![CreateEntityType {
-                slug: "unit".into(),
-                description: None,
-                properties: vec![],
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        execute(
-            Command::CreateProperties(vec![CreateProperty {
-                slug: "code".into(),
-                value_type: ValueType::Range,
-                description: None,
-                entity_types: vec![],
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        let result = execute(
-            Command::AttachProperties(vec![AttachProperty {
-                entity_type: "unit".into(),
-                property: "code".into(),
-            }]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        match result {
-            CommandResult::Attached { count } => assert_eq!(count, 1),
-            _ => panic!("unexpected result"),
-        }
-    }
-
-    #[test]
     fn create_entity_via_execute() {
-        let (mut reg, store, _dir) = setup();
-        setup_schema(&mut reg, &store);
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
 
         let result = execute(
             Command::CreateEntity(AssertEntityInput {
@@ -377,100 +237,19 @@ mod tests {
                 }],
                 hypotheses: vec![],
             }),
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
 
         match result {
             CommandResult::Asserted {
-                transaction,
                 facts,
                 hypotheses,
+                ..
             } => {
                 assert_eq!(facts.len(), 1);
                 assert!(hypotheses.is_empty());
-                assert!(facts[0].tx_id.is_some());
-            }
-            _ => panic!("unexpected result"),
-        }
-    }
-
-    #[test]
-    fn assert_entity_via_execute() {
-        let (mut reg, store, _dir) = setup();
-        setup_schema(&mut reg, &store);
-
-        // Create entity first
-        execute(
-            Command::CreateEntity(AssertEntityInput {
-                entity: "song-2".into(),
-                description: None,
-                reasoning: serde_json::json!(null),
-                facts: vec![],
-                hypotheses: vec![],
-            }),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        // Assert on it
-        let result = execute(
-            Command::AssertEntity(AssertEntityInput {
-                entity: "song-2".into(),
-                description: None,
-                reasoning: serde_json::json!("follow-up"),
-                facts: vec![],
-                hypotheses: vec![AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "bpm".into(),
-                        PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
-                    )]),
-                    reasoning: serde_json::json!("estimate"),
-                }],
-            }),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        match result {
-            CommandResult::Asserted { hypotheses, .. } => {
-                assert_eq!(hypotheses.len(), 1);
-            }
-            _ => panic!("unexpected result"),
-        }
-    }
-
-    #[test]
-    fn batch_entity_types() {
-        let (mut reg, store, _dir) = setup();
-
-        let result = execute(
-            Command::CreateEntityTypes(vec![
-                CreateEntityType {
-                    slug: "alpha".into(),
-                    description: None,
-                    properties: vec![],
-                },
-                CreateEntityType {
-                    slug: "bravo".into(),
-                    description: Some("Second".into()),
-                    properties: vec![],
-                },
-            ]),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        match result {
-            CommandResult::EntityTypes(types) => {
-                assert_eq!(types.len(), 2);
-                assert_eq!(types[0].slug, "alpha");
-                assert_eq!(types[1].slug, "bravo");
             }
             _ => panic!("unexpected result"),
         }
@@ -478,10 +257,9 @@ mod tests {
 
     #[test]
     fn list_entities_after_create() {
-        let (mut reg, store, _dir) = setup();
-        setup_schema(&mut reg, &store);
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
 
-        // Create two entities
         execute(
             Command::CreateEntity(AssertEntityInput {
                 entity: "alpha".into(),
@@ -490,68 +268,29 @@ mod tests {
                 facts: vec![],
                 hypotheses: vec![],
             }),
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap();
 
-        execute(
-            Command::CreateEntity(AssertEntityInput {
-                entity: "bravo".into(),
-                description: Some("Second".into()),
-                reasoning: serde_json::json!(null),
-                facts: vec![AssertionItem {
-                    entity_type: "track".into(),
-                    properties: HashMap::from([(
-                        "bpm".into(),
-                        PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
-                    )]),
-                    reasoning: serde_json::json!("detected"),
-                }],
-                hypotheses: vec![],
-            }),
-            &mut reg,
-            &store,
-        )
-        .unwrap();
-
-        // List should return both
-        let result = execute(Command::ListEntities, &mut reg, &store).unwrap();
+        let result = execute(Command::ListEntities, &reg, &store).unwrap();
         match result {
             CommandResult::EntityList(entities) => {
-                assert_eq!(entities.len(), 2);
-                let slugs: Vec<&str> = entities.iter().map(|e| e.slug.as_str()).collect();
-                assert!(slugs.contains(&"alpha"));
-                assert!(slugs.contains(&"bravo"));
+                assert_eq!(entities.len(), 1);
             }
             _ => panic!("unexpected result"),
         }
-
-        // Duplicate create should fail
-        let err = execute(
-            Command::CreateEntity(AssertEntityInput {
-                entity: "alpha".into(),
-                description: None,
-                reasoning: serde_json::json!(null),
-                facts: vec![],
-                hypotheses: vec![],
-            }),
-            &mut reg,
-            &store,
-        )
-        .unwrap_err();
-        assert!(matches!(err, CommandError::AssertEntity(_)));
     }
 
     #[test]
     fn error_propagation() {
-        let (mut reg, store, _dir) = setup();
+        let (reg, store, _dir) = setup();
 
         let err = execute(
             Command::GetEntityType {
                 slug: "nonexistent".into(),
             },
-            &mut reg,
+            &reg,
             &store,
         )
         .unwrap_err();

@@ -1,13 +1,12 @@
 mod entity_property;
 mod entity_type;
-mod migrations;
+pub(crate) mod branch_registry;
 pub(crate) mod reserved;
-mod registry;
 pub(crate) mod slug;
 
 pub use entity_property::{EntityProperty, ValueType};
 pub use entity_type::EntityType;
-pub use registry::{AttachInput, EntityTypeInput, PropertyInput, SchemaRegistry};
+pub use branch_registry::{AttachInput, EntityTypeInput, PropertyInput, BranchSchemaRegistry};
 
 /// Errors from schema registry operations.
 #[derive(Debug, thiserror::Error)]
@@ -43,7 +42,7 @@ pub enum SchemaError {
         source: Box<SchemaError>,
     },
 
-    /// Underlying SQLite error.
-    #[error("database error: {0}")]
-    Db(#[from] rusqlite::Error),
+    /// Underlying storage error.
+    #[error("storage error: {0}")]
+    Storage(String),
 }

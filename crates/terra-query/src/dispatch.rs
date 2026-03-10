@@ -2,12 +2,12 @@ use crate::error::QueryError;
 use crate::format::ContentFormat;
 use crate::query::{QueryDto, ResponseShape};
 use crate::response::{
-    AssertedResponse, AttachedResponse, EntityListItem, EntityTypeDetailResponse,
-    SessionResponse, TransactionResultResponse,
+    AssertedResponse, AttachedResponse, BranchResponse, EntityListItem,
+    EntityTypeDetailResponse, TransactionResultResponse,
 };
 use terra_core::assertion::AssertionStore;
 use terra_core::command::CommandResult;
-use terra_core::schema::SchemaRegistry;
+use terra_core::schema::BranchSchemaRegistry;
 
 /// Deserializes a query from bytes, executes it, and serializes the result back to bytes.
 ///
@@ -16,7 +16,7 @@ use terra_core::schema::SchemaRegistry;
 pub fn dispatch(
     input: &[u8],
     format: ContentFormat,
-    registry: &mut SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<Vec<u8>, QueryError> {
     let dto: QueryDto = format
@@ -80,10 +80,10 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_json::
             asserts: asserted,
         })
         .unwrap(),
-        CommandResult::Session(detail) => {
-            serde_json::to_value(&SessionResponse::from(detail)).unwrap()
+        CommandResult::Branch(detail) => {
+            serde_json::to_value(&BranchResponse::from(detail)).unwrap()
         }
-        CommandResult::SessionList(sessions) => serde_json::to_value(&sessions).unwrap(),
+        CommandResult::BranchList(branches) => serde_json::to_value(&branches).unwrap(),
         CommandResult::EntityList(entities) => {
             let items: Vec<EntityListItem> = entities
                 .into_iter()

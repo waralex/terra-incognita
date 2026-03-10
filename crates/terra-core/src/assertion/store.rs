@@ -2,16 +2,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
+use uuid::Uuid;
 
+use super::branch::BranchStore;
+use super::branch_io::BranchIo;
 use super::column::Column;
 use super::entity::EntityStore;
 use super::entity_io::EntityIo;
 use super::log::AppendLog;
-use super::session::SessionStore;
-use super::session_io::SessionIo;
 use super::transaction::TransactionStore;
 use super::writer::AssertionWriter;
 use super::LogError;
+use crate::schema::BranchSchemaRegistry;
 
 const CF_FACTS: &str = "facts";
 const CF_HYPOTHESES: &str = "hypotheses";
@@ -24,8 +26,13 @@ const CF_HYP_RANGE: &str = "hyp_range";
 const CF_TRANSACTIONS: &str = "transactions";
 const CF_ENTITY_MAIN: &str = "entity_main";
 const CF_ENTITY_SLUG: &str = "entity_slug";
-const CF_SESSION_MAIN: &str = "session_main";
-const CF_SESSION_SLUG: &str = "session_slug";
+const CF_BRANCH_MAIN: &str = "branch_main";
+const CF_BRANCH_SLUG: &str = "branch_slug";
+const CF_SCHEMA_TYPES: &str = "schema_types";
+const CF_SCHEMA_TYPE_SLUG: &str = "schema_type_slug";
+const CF_SCHEMA_PROPS: &str = "schema_props";
+const CF_SCHEMA_PROP_SLUG: &str = "schema_prop_slug";
+const CF_SCHEMA_ATTACHMENTS: &str = "schema_attachments";
 
 /// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
@@ -45,6 +52,12 @@ impl AssertionStore {
         let mut entity_opts = Options::default();
         entity_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
 
+        let mut schema_type_opts = Options::default();
+        schema_type_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
+
+        let mut schema_attach_opts = Options::default();
+        schema_attach_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(32));
+
         let cfs = vec![
             ColumnFamilyDescriptor::new(CF_FACTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HYPOTHESES, Options::default()),
@@ -57,8 +70,13 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_TRANSACTIONS, Options::default()),
             ColumnFamilyDescriptor::new(CF_ENTITY_MAIN, entity_opts.clone()),
             ColumnFamilyDescriptor::new(CF_ENTITY_SLUG, Options::default()),
-            ColumnFamilyDescriptor::new(CF_SESSION_MAIN, entity_opts),
-            ColumnFamilyDescriptor::new(CF_SESSION_SLUG, Options::default()),
+            ColumnFamilyDescriptor::new(CF_BRANCH_MAIN, Options::default()),
+            ColumnFamilyDescriptor::new(CF_BRANCH_SLUG, Options::default()),
+            ColumnFamilyDescriptor::new(CF_SCHEMA_TYPES, schema_type_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_SCHEMA_TYPE_SLUG, entity_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_SCHEMA_PROPS, schema_type_opts),
+            ColumnFamilyDescriptor::new(CF_SCHEMA_PROP_SLUG, entity_opts),
+            ColumnFamilyDescriptor::new(CF_SCHEMA_ATTACHMENTS, schema_attach_opts),
         ];
         let db = DB::open_cf_descriptors(&opts, path, cfs)
             .map_err(|e| LogError::Storage(e.to_string()))?;
@@ -143,18 +161,24 @@ impl AssertionStore {
         EntityStore::new(EntityIo::new(Arc::clone(&self.db), CF_ENTITY_MAIN, CF_ENTITY_SLUG))
     }
 
-    // -- Sessions --
+    // -- Branches --
 
-    /// Session store for creating and managing reasoning sessions.
-    pub fn sessions(&self) -> SessionStore {
-        SessionStore::new(SessionIo::new(Arc::clone(&self.db), CF_SESSION_MAIN, CF_SESSION_SLUG))
+    /// Branch store for creating and managing branches.
+    pub fn branches(&self) -> BranchStore {
+        BranchStore::new(BranchIo::new(Arc::clone(&self.db), CF_BRANCH_MAIN, CF_BRANCH_SLUG))
+    }
+
+    // -- Schema --
+
+    /// Creates a branch-scoped schema registry.
+    pub fn schema_registry(&self, branch_id: Uuid, ancestry: Vec<(Uuid, i64)>) -> BranchSchemaRegistry {
+        BranchSchemaRegistry::new(Arc::clone(&self.db), branch_id, ancestry)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     fn store(dir: &tempfile::TempDir) -> AssertionStore {
         AssertionStore::open(dir.path()).unwrap()

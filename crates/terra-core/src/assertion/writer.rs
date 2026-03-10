@@ -5,7 +5,7 @@ use chrono::Utc;
 use rocksdb::DB;
 use uuid::Uuid;
 
-use crate::schema::{SchemaRegistry, ValueType};
+use crate::schema::{BranchSchemaRegistry, ValueType};
 
 use super::column::{Column, ColumnKey};
 use super::key::StorageKey;
@@ -93,7 +93,7 @@ impl AssertionWriter {
     pub fn write(
         &self,
         inputs: &[AssertionInput],
-        registry: &SchemaRegistry,
+        registry: &BranchSchemaRegistry,
     ) -> Result<Vec<LogEntry>, WriterError> {
         let resolved = self.validate(inputs, registry)?;
 
@@ -178,7 +178,7 @@ impl AssertionWriter {
         entity_id: Uuid,
         tx_reasoning: serde_json::Value,
         inputs: &[AssertionInput],
-        registry: &SchemaRegistry,
+        registry: &BranchSchemaRegistry,
     ) -> Result<(Transaction, Vec<LogEntry>), WriterError> {
         let resolved = self.validate(inputs, registry)?;
 
@@ -270,7 +270,7 @@ impl AssertionWriter {
         batch: &mut rocksdb::WriteBatch,
         tx_id: Uuid,
         inputs: &[AssertionInput],
-        registry: &SchemaRegistry,
+        registry: &BranchSchemaRegistry,
     ) -> Result<Vec<LogEntry>, WriterError> {
         let resolved = self.validate(inputs, registry)?;
 
@@ -342,7 +342,7 @@ impl AssertionWriter {
     fn validate(
         &self,
         inputs: &[AssertionInput],
-        registry: &SchemaRegistry,
+        registry: &BranchSchemaRegistry,
     ) -> Result<Vec<HashMap<Uuid, ValueType>>, WriterError> {
         let mut result = Vec::with_capacity(inputs.len());
 
@@ -396,17 +396,18 @@ mod tests {
     use super::*;
     use crate::assertion::property_value::{RangeValue, SetValue, StructValue};
     use crate::assertion::AssertionStore;
-    use crate::schema::SchemaRegistry;
+    use crate::schema::BranchSchemaRegistry;
+    use crate::assertion::MAIN_BRANCH;
     use serde_json::json;
 
-    fn setup() -> (AssertionStore, SchemaRegistry, tempfile::TempDir) {
-        let reg = SchemaRegistry::open_in_memory().unwrap();
+    fn setup() -> (AssertionStore, BranchSchemaRegistry, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
+        let reg = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
         (store, reg, dir)
     }
 
-    fn create_schema(reg: &SchemaRegistry) -> (Uuid, Uuid, Uuid, Uuid) {
+    fn create_schema(reg: &BranchSchemaRegistry) -> (Uuid, Uuid, Uuid, Uuid) {
         let et = reg.create_entity_type("track", None).unwrap();
         let p_bpm = reg
             .create_property("bpm", ValueType::Range, None)

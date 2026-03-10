@@ -6,7 +6,7 @@ use crate::assertion::{
     AssertionInput, AssertionStore, EntityError, LogEntry, Transaction,
     WriterError,
 };
-use crate::schema::SchemaRegistry;
+use crate::schema::BranchSchemaRegistry;
 
 use super::{AssertEntityInput, TransactionEntityResult, TransactionInput};
 
@@ -67,7 +67,7 @@ pub struct AssertEntityResult {
 /// Creates a new entity and optionally asserts facts/hypotheses.
 pub fn create_entity(
     input: AssertEntityInput,
-    registry: &SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<AssertEntityResult, AssertEntityError> {
     // Validate BEFORE creating entity
@@ -91,7 +91,7 @@ pub fn create_entity(
 /// Asserts facts/hypotheses about an existing entity.
 pub fn assert_entity(
     input: AssertEntityInput,
-    registry: &SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<AssertEntityResult, AssertEntityError> {
     // Validate first
@@ -113,7 +113,7 @@ fn write_assertions(
     input: AssertEntityInput,
     mut resolved_facts: Vec<AssertionInput>,
     mut resolved_hypotheses: Vec<AssertionInput>,
-    registry: &SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<AssertEntityResult, AssertEntityError> {
     // Fix entity_id (was Uuid::nil() during pre-validation resolve)
@@ -163,7 +163,7 @@ pub struct TransactionExecResult {
 /// fails validation, nothing is written.
 pub fn execute_transaction(
     input: TransactionInput,
-    registry: &SchemaRegistry,
+    registry: &BranchSchemaRegistry,
     store: &AssertionStore,
 ) -> Result<TransactionExecResult, AssertEntityError> {
     let entities = store.entities();
@@ -344,7 +344,7 @@ fn validate_no_conflicting_facts(
 fn resolve_items(
     items: &[super::AssertionItem],
     entity_id: Uuid,
-    registry: &SchemaRegistry,
+    registry: &BranchSchemaRegistry,
 ) -> Result<Vec<AssertionInput>, AssertEntityError> {
     let mut result = Vec::with_capacity(items.len());
 
@@ -389,18 +389,18 @@ fn resolve_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assertion::{PropertyValue, RangeValue, SetValue};
-    use crate::schema::ValueType;
+    use crate::assertion::{PropertyValue, RangeValue, SetValue, MAIN_BRANCH};
+    use crate::schema::{ValueType, BranchSchemaRegistry};
     use serde_json::json;
 
-    fn setup() -> (SchemaRegistry, AssertionStore, tempfile::TempDir) {
-        let registry = SchemaRegistry::open_in_memory().unwrap();
+    fn setup() -> (BranchSchemaRegistry, AssertionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = AssertionStore::open(dir.path()).unwrap();
+        let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, i64::MAX)]);
         (registry, store, dir)
     }
 
-    fn setup_schema(reg: &SchemaRegistry) {
+    fn setup_schema(reg: &BranchSchemaRegistry) {
         reg.create_entity_type("track", None).unwrap();
         reg.create_property("bpm", ValueType::Range, None).unwrap();
         reg.create_property("certification", ValueType::Set, None)

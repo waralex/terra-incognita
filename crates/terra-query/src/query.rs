@@ -82,17 +82,10 @@ pub struct HideUnhideDto {
 pub enum QueryDto {
     #[serde(rename = "entity-type.list")]
     ListEntityTypes,
-    #[serde(rename = "entity-type.get")]
-    GetEntityType { slug: String },
     #[serde(rename = "property.list")]
     ListProperties { entity_type: Option<String> },
     #[serde(rename = "entity.list")]
     ListEntities,
-    #[serde(rename = "entity.get")]
-    GetEntity {
-        entity: String,
-        entity_type: String,
-    },
     #[serde(rename = "transaction")]
     Transaction {
         #[serde(default)]
@@ -155,27 +148,14 @@ impl QueryDto {
             QueryDto::ListEntityTypes => {
                 Ok((Command::ListEntityTypes, ResponseShape::Batch))
             }
-            QueryDto::GetEntityType { slug } => {
-                Ok((Command::GetEntityType { slug }, ResponseShape::Single))
-            }
-            QueryDto::ListProperties { entity_type } => Ok((
+QueryDto::ListProperties { entity_type } => Ok((
                 Command::ListProperties { entity_type },
                 ResponseShape::Batch,
             )),
             QueryDto::ListEntities => {
                 Ok((Command::ListEntities, ResponseShape::Batch))
             }
-            QueryDto::GetEntity {
-                entity,
-                entity_type,
-            } => Ok((
-                Command::GetEntity {
-                    entity,
-                    entity_type,
-                },
-                ResponseShape::Single,
-            )),
-            QueryDto::Transaction {
+QueryDto::Transaction {
                 reasoning,
                 entity_types,
                 properties,

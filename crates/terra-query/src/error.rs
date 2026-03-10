@@ -1,7 +1,5 @@
 use terra_core::assertion::EntityError;
-use terra_core::command::{
-    AssertEntityError, BranchCommandError, CommandError, ProjectionError,
-};
+use terra_core::command::{AssertEntityError, BranchCommandError, CommandError};
 use terra_core::schema::SchemaError;
 
 use crate::format::ContentFormat;
@@ -91,18 +89,7 @@ impl From<CommandError> for QueryError {
                 kind: "assertion_error".to_string(),
                 message: e.to_string(),
             },
-            CommandError::Projection(e) => {
-                let kind = match &e {
-                    ProjectionError::EntityNotFound(_) => "entity_not_found",
-                    ProjectionError::Entity(_) | ProjectionError::Storage(_) => "storage_error",
-                    ProjectionError::Schema(_) => "entity_type_not_found",
-                };
-                Self {
-                    kind: kind.to_string(),
-                    message: e.to_string(),
-                }
-            }
-            CommandError::Branch(e) => {
+CommandError::Branch(e) => {
                 use terra_core::assertion::BranchError;
                 let kind = match &e {
                     BranchCommandError::BranchNotFound(_) => "branch_not_found",

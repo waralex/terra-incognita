@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -23,17 +22,6 @@ pub struct TransactionResultResponse {
     pub introduce: Vec<TransactionEntityResult>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub asserts: Vec<TransactionEntityResult>,
-}
-
-/// Response for entity-type.get — flattened entity type with properties.
-#[derive(Serialize)]
-pub struct EntityTypeDetailResponse {
-    pub id: Uuid,
-    pub slug: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub properties: Vec<EntityProperty>,
 }
 
 /// Slim entity item for entity.list response.

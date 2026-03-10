@@ -3,7 +3,6 @@ use crate::schema::BranchSchemaRegistry;
 
 use super::{Command, CommandError, CommandResult};
 use super::assert_entity;
-use super::query_entity;
 use super::branch;
 
 /// Executes a domain command against the schema registry and assertion store.
@@ -22,24 +21,6 @@ pub fn execute(
                 .filter(|t| vis.is_visible(ancestry, ItemKind::EntityType, t.id).unwrap_or(true))
                 .collect();
             Ok(CommandResult::EntityTypes(types))
-        }
-        Command::GetEntityType { slug } => {
-            let entity_type = registry.get_entity_type(&slug)?;
-            let vis = store.visibility();
-            if !vis.is_visible(registry.ancestry(), ItemKind::EntityType, entity_type.id)? {
-                return Err(CommandError::Schema(
-                    crate::schema::SchemaError::EntityTypeNotFound(slug),
-                ));
-            }
-            let properties = registry.list_properties(&slug)?;
-            let properties = properties
-                .into_iter()
-                .filter(|p| vis.is_visible(registry.ancestry(), ItemKind::Property, p.id).unwrap_or(true))
-                .collect();
-            Ok(CommandResult::EntityTypeDetail {
-                entity_type,
-                properties,
-            })
         }
         Command::ListProperties {
             entity_type: None,
@@ -85,22 +66,6 @@ pub fn execute(
                 .filter(|e| vis.is_visible(ancestry, ItemKind::Entity, e.id).unwrap_or(true))
                 .collect();
             Ok(CommandResult::EntityList(entities))
-        }
-        Command::GetEntity {
-            entity,
-            entity_type,
-        } => {
-            // Check entity visibility before projecting
-            if let Some(rec) = store.entities().get_by_slug(&entity)? {
-                let vis = store.visibility();
-                if !vis.is_visible(registry.ancestry(), ItemKind::Entity, rec.id)? {
-                    return Err(CommandError::Log(
-                        crate::assertion::LogError::Storage(format!("entity not found: {}", entity)),
-                    ));
-                }
-            }
-            let projection = query_entity::project_entity(&entity, &entity_type, registry, store)?;
-            Ok(CommandResult::EntityDetail(projection))
         }
         Command::CreateBranch(input) => {
             let detail = branch::create_branch(input, store)?;
@@ -349,15 +314,6 @@ mod tests {
             }
             _ => panic!("unexpected result"),
         }
-
-        // GetEntityType should fail for hidden type
-        let err = execute(
-            Command::GetEntityType { slug: "track".into() },
-            &reg,
-            &store,
-        )
-        .unwrap_err();
-        assert!(matches!(err, CommandError::Schema(_)));
     }
 
     #[test]
@@ -470,22 +426,6 @@ mod tests {
             }
             _ => panic!("unexpected result"),
         }
-    }
-
-    #[test]
-    fn error_propagation() {
-        let (reg, store, _dir) = setup();
-
-        let err = execute(
-            Command::GetEntityType {
-                slug: "nonexistent".into(),
-            },
-            &reg,
-            &store,
-        )
-        .unwrap_err();
-
-        assert!(matches!(err, CommandError::Schema(_)));
     }
 
     #[test]

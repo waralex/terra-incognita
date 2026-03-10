@@ -2,12 +2,10 @@ mod assert_entity;
 pub(crate) mod branch;
 pub mod branch_state;
 pub mod execute;
-mod query_entity;
 
 pub use assert_entity::AssertEntityError;
 pub use branch_state::{BranchState, BranchStateError};
 pub use execute::execute;
-pub use query_entity::{EntityProjection, ProjectionError, PropertyState};
 pub use branch::{BranchCommandError, BranchDetail, BranchSummary};
 
 use serde::Serialize;
@@ -26,19 +24,12 @@ use uuid::Uuid;
 pub enum Command {
     /// List all registered entity types.
     ListEntityTypes,
-    /// Get a single entity type with its attached properties.
-    GetEntityType { slug: String },
     /// List properties, optionally filtered by entity type.
     ListProperties { entity_type: Option<String> },
     /// Unified write command: schema creation, attachments, visibility, entity introduction and assertions.
     Transaction(TransactionInput),
     /// List all entities (slug + uuid).
     ListEntities,
-    /// Get entity projected onto an entity type.
-    GetEntity {
-        entity: String,
-        entity_type: String,
-    },
     /// Create a new branch.
     CreateBranch(CreateBranchInput),
     /// Get branch by slug with resolved references.
@@ -189,15 +180,8 @@ pub enum CommandResult {
         introduced: Vec<TransactionEntityResult>,
         asserted: Vec<TransactionEntityResult>,
     },
-    /// Single entity type with its attached properties.
-    EntityTypeDetail {
-        entity_type: EntityType,
-        properties: Vec<EntityProperty>,
-    },
     /// List of entities (slug + uuid).
     EntityList(Vec<EntityRecord>),
-    /// Entity projected onto an entity type.
-    EntityDetail(EntityProjection),
     /// Branch created or retrieved with resolved references.
     Branch(BranchDetail),
     /// List of branch summaries.
@@ -230,10 +214,6 @@ pub enum CommandError {
     /// Business logic error from assert-entity flow.
     #[error(transparent)]
     AssertEntity(#[from] AssertEntityError),
-
-    /// Projection error from entity query.
-    #[error(transparent)]
-    Projection(#[from] ProjectionError),
 
     /// Branch command error.
     #[error(transparent)]

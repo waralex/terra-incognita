@@ -1,9 +1,7 @@
 use crate::error::QueryError;
 use crate::format::ContentFormat;
 use crate::query::{QueryDto, ResponseShape};
-use crate::response::{
-    BranchResponse, EntityListItem, EntityTypeDetailResponse, TransactionResultResponse,
-};
+use crate::response::{BranchResponse, EntityListItem, TransactionResultResponse};
 use terra_core::assertion::AssertionStore;
 use terra_core::command::CommandResult;
 use terra_core::schema::BranchSchemaRegistry;
@@ -37,18 +35,7 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_json::
             ResponseShape::Single => serde_json::to_value(&props[0]).unwrap(),
             ResponseShape::Batch => serde_json::to_value(&props).unwrap(),
         },
-        CommandResult::EntityTypeDetail {
-            entity_type,
-            properties,
-        } => serde_json::to_value(&EntityTypeDetailResponse {
-            id: entity_type.id,
-            slug: entity_type.slug,
-            description: entity_type.description,
-            created_at: entity_type.created_at,
-            properties,
-        })
-        .unwrap(),
-        CommandResult::TransactionResult {
+CommandResult::TransactionResult {
             transaction,
             entity_types,
             properties,
@@ -78,8 +65,7 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_json::
                 .collect();
             serde_json::to_value(&items).unwrap()
         }
-        CommandResult::EntityDetail(projection) => serde_json::to_value(&projection).unwrap(),
-        CommandResult::LogEntries(entries) => serde_json::to_value(&entries).unwrap(),
+CommandResult::LogEntries(entries) => serde_json::to_value(&entries).unwrap(),
         CommandResult::BranchState(state) => serde_json::to_value(&state).unwrap(),
     }
 }

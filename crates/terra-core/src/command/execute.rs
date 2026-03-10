@@ -477,6 +477,73 @@ mod tests {
     }
 
     #[test]
+    fn list_entities_after_create() {
+        let (mut reg, store, _dir) = setup();
+        setup_schema(&mut reg, &store);
+
+        // Create two entities
+        execute(
+            Command::CreateEntity(AssertEntityInput {
+                entity: "alpha".into(),
+                description: None,
+                reasoning: serde_json::json!(null),
+                facts: vec![],
+                hypotheses: vec![],
+            }),
+            &mut reg,
+            &store,
+        )
+        .unwrap();
+
+        execute(
+            Command::CreateEntity(AssertEntityInput {
+                entity: "bravo".into(),
+                description: Some("Second".into()),
+                reasoning: serde_json::json!(null),
+                facts: vec![AssertionItem {
+                    entity_type: "track".into(),
+                    properties: HashMap::from([(
+                        "bpm".into(),
+                        PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
+                    )]),
+                    reasoning: serde_json::json!("detected"),
+                }],
+                hypotheses: vec![],
+            }),
+            &mut reg,
+            &store,
+        )
+        .unwrap();
+
+        // List should return both
+        let result = execute(Command::ListEntities, &mut reg, &store).unwrap();
+        match result {
+            CommandResult::EntityList(entities) => {
+                assert_eq!(entities.len(), 2);
+                let slugs: Vec<&str> = entities.iter().map(|e| e.slug.as_str()).collect();
+                assert!(slugs.contains(&"alpha"));
+                assert!(slugs.contains(&"bravo"));
+            }
+            _ => panic!("unexpected result"),
+        }
+
+        // Duplicate create should fail
+        let err = execute(
+            Command::CreateEntity(AssertEntityInput {
+                entity: "alpha".into(),
+                description: None,
+                reasoning: serde_json::json!(null),
+                facts: vec![],
+                hypotheses: vec![],
+            }),
+            &mut reg,
+            &store,
+        )
+        .unwrap_err();
+        assert!(matches!(err, CommandError::AssertEntity(_)));
+    }
+
+    #[test]
     fn error_propagation() {
         let (mut reg, store, _dir) = setup();
 

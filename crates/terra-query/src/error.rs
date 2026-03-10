@@ -7,6 +7,7 @@ use terra_core::schema::SchemaError;
 use crate::format::ContentFormat;
 
 /// Transport-agnostic query error with kind tag and human-readable message.
+#[derive(Debug)]
 pub struct QueryError {
     pub kind: String,
     pub message: String,

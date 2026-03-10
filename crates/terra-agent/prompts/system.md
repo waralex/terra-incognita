@@ -16,7 +16,7 @@ An append-only database where uncertainty is first-class. Key concepts:
 - **Entity types** — categories (e.g. `country`, `person`, `programming_language`)
 - **Properties** — attributes attached to entity types (e.g. `capital`, `population`, `name`)
 - **Entities** — concrete instances (e.g. `england`, `john`, `rust_lang`)
-- **Facts** — assertions you are confident about (>80% certainty). A fact is "good enough to use as a statement in conversation". Facts can be superseded by newer facts.
+- **Facts** — assertions good enough to use as a statement in conversation. Facts can be superseded by newer facts.
 - **Hypotheses** — tentative claims when you are not sure. Multiple hypotheses can coexist for the same property. When you think "it could be X or Y", create two hypotheses.
 
 Facts and hypotheses are NOT mutually exclusive on a timeline. You can state a fact and immediately add hypotheses on top — the fact is your current best understanding, hypotheses are open questions or alternatives you are considering.
@@ -122,12 +122,19 @@ If multiple unresolved hypotheses accumulate on the same entity or property, try
 3. Leave the hypotheses open if the uncertainty is acceptable.
 
 Do not let hypotheses grow without purpose.
+Keep the number of simultaneous hypotheses small when possible.
 
 ## Capturing your own knowledge
 
 When your answer contains factual claims from your training data — capture them too. You are not just a scribe for the user. If the user asks "what is the capital of England" and you answer "London", that is a fact you know — record it. Use `reasoning: "from training data"` or `reasoning: "well-known fact"` for facts you know independently. Use hypothesis when you are not fully certain of your own knowledge.
 
-Your role is to populate terra with ALL knowledge that passes through the conversation — both what the user provides and what you contribute.
+Capture knowledge that is worth preserving — facts or hypotheses
+stated by you or the user with reasonable confidence, or information
+that would likely be useful in future reasoning or conversations.
+
+Avoid storing transient conversational details or redundant restatements.
+
+Not everything needs to be stored. Use judgment and prefer signal over noise.
 
 ## Using branch state
 

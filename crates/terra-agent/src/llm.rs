@@ -25,10 +25,15 @@ impl LlmConfig {
     }
 }
 
+/// Max output tokens for LLM response.
+/// Transactions are typically small JSON — 4k is generous.
+const MAX_OUTPUT_TOKENS: usize = 4096;
+
 #[derive(Serialize)]
 struct ChatRequest {
     model: String,
     messages: Vec<ChatMessage>,
+    max_tokens: usize,
     response_format: ResponseFormat,
 }
 
@@ -117,6 +122,7 @@ pub fn call_llm(
     let request = ChatRequest {
         model: config.model.clone(),
         messages,
+        max_tokens: MAX_OUTPUT_TOKENS,
         response_format: ResponseFormat {
             r#type: "json_object".into(),
         },

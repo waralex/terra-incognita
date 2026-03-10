@@ -118,6 +118,10 @@ pub fn execute(
             let entries = store.facts().list()?;
             Ok(CommandResult::LogEntries(entries))
         }
+        Command::BranchState { slug, last_transactions } => {
+            let state = super::branch_state::build_state(&slug, last_transactions, registry, store)?;
+            Ok(CommandResult::BranchState(state))
+        }
     }
 }
 
@@ -482,5 +486,342 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, CommandError::Schema(_)));
+    }
+
+    #[test]
+    fn branch_state_empty_branch() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            &reg,
+            &store,
+        ).unwrap();
+
+        match result {
+            CommandResult::BranchState(state) => {
+                assert_eq!(state.branch.slug, "main");
+                assert!(!state.schema.entity_types.is_empty());
+                assert!(!state.schema.properties.is_empty());
+                assert!(state.entities.is_empty());
+                // setup_schema creates 2 transactions
+                assert!(!state.recent_transactions.is_empty());
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn branch_state_with_fact_and_reasoning() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("initial analysis"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![IntroduceItem {
+                    entity: "song-1".into(),
+                    description: Some("A pop track".into()),
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(serde_json::json!(128))),
+                        )]),
+                        reasoning: serde_json::json!("detected via audio analysis"),
+                    }],
+                    hypotheses: vec![],
+                }],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            &reg,
+            &store,
+        ).unwrap();
+
+        match result {
+            CommandResult::BranchState(state) => {
+                assert_eq!(state.entities.len(), 1);
+                let entity = &state.entities[0];
+                assert_eq!(entity.slug, "song-1");
+                assert_eq!(entity.description.as_deref(), Some("A pop track"));
+                assert_eq!(entity.types.len(), 1);
+                assert_eq!(entity.types[0].entity_type, "track");
+
+                let bpm = entity.types[0].properties.iter().find(|p| p.slug == "bpm").unwrap();
+                assert!(bpm.fact.is_some());
+                let fact = bpm.fact.as_ref().unwrap();
+                assert_eq!(fact.value, serde_json::json!({"eq": 128}));
+                assert_eq!(fact.reasoning, serde_json::json!("detected via audio analysis"));
+                assert!(bpm.hypotheses.is_empty());
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn branch_state_with_hypotheses() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // Introduce with a fact
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("initial"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![IntroduceItem {
+                    entity: "song-2".into(),
+                    description: None,
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
+                        )]),
+                        reasoning: serde_json::json!("first measurement"),
+                    }],
+                    hypotheses: vec![],
+                }],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        // Add hypotheses
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("re-analysis"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![crate::command::AssertItem {
+                    entity: "song-2".into(),
+                    facts: vec![],
+                    hypotheses: vec![
+                        AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(serde_json::json!(122))),
+                            )]),
+                            reasoning: serde_json::json!("maybe higher"),
+                        },
+                        AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([(
+                                "bpm".into(),
+                                PropertyValue::Range(RangeValue::Eq(serde_json::json!(118))),
+                            )]),
+                            reasoning: serde_json::json!("maybe lower"),
+                        },
+                    ],
+                }],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            &reg,
+            &store,
+        ).unwrap();
+
+        match result {
+            CommandResult::BranchState(state) => {
+                let entity = &state.entities[0];
+                let bpm = entity.types[0].properties.iter().find(|p| p.slug == "bpm").unwrap();
+                assert!(bpm.fact.is_some());
+                assert_eq!(bpm.hypotheses.len(), 2);
+                // Check hypothesis values and reasoning
+                assert_eq!(bpm.hypotheses[0].value, serde_json::json!({"eq": 122}));
+                assert_eq!(bpm.hypotheses[0].reasoning, serde_json::json!("maybe higher"));
+                assert_eq!(bpm.hypotheses[1].value, serde_json::json!({"eq": 118}));
+                assert_eq!(bpm.hypotheses[1].reasoning, serde_json::json!("maybe lower"));
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn branch_state_respects_visibility() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // Create two entities
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!(null),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![
+                    IntroduceItem { entity: "visible".into(), description: None, facts: vec![], hypotheses: vec![] },
+                    IntroduceItem { entity: "hidden".into(), description: None, facts: vec![], hypotheses: vec![] },
+                ],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        // Hide one entity and bpm property
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!("hide stuff"),
+                entity_types: vec![],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput {
+                    entities: vec!["hidden".into()],
+                    entity_types: vec![],
+                    properties: vec!["bpm".into()],
+                },
+                unhide: HideUnhideInput::default(),
+                introduce: vec![],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            &reg,
+            &store,
+        ).unwrap();
+
+        match result {
+            CommandResult::BranchState(state) => {
+                // Only "visible" entity should appear
+                assert_eq!(state.entities.len(), 1);
+                assert_eq!(state.entities[0].slug, "visible");
+
+                // "bpm" should not be in properties
+                assert!(state.schema.properties.iter().all(|p| p.slug != "bpm"));
+
+                // "bpm" should not be in entity type's attached properties
+                let track = state.schema.entity_types.iter().find(|t| t.slug == "track").unwrap();
+                assert!(!track.properties.contains(&"bpm".to_string()));
+                assert!(track.properties.contains(&"certification".to_string()));
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn branch_state_skips_types_without_assertions() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // Add another entity type with no assertions
+        execute(
+            Command::Transaction(TransactionInput {
+                reasoning: serde_json::json!(null),
+                entity_types: vec![CreateEntityType {
+                    slug: "album".into(),
+                    description: None,
+                    properties: vec![],
+                }],
+                properties: vec![],
+                attach: vec![],
+                hide: HideUnhideInput::default(),
+                unhide: HideUnhideInput::default(),
+                introduce: vec![IntroduceItem {
+                    entity: "song-x".into(),
+                    description: None,
+                    facts: vec![AssertionItem {
+                        entity_type: "track".into(),
+                        properties: HashMap::from([(
+                            "bpm".into(),
+                            PropertyValue::Range(RangeValue::Eq(serde_json::json!(100))),
+                        )]),
+                        reasoning: serde_json::json!("test"),
+                    }],
+                    hypotheses: vec![],
+                }],
+                asserts: vec![],
+            }),
+            &reg,
+            &store,
+        ).unwrap();
+
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 10 },
+            &reg,
+            &store,
+        ).unwrap();
+
+        match result {
+            CommandResult::BranchState(state) => {
+                let entity = &state.entities[0];
+                // Only "track" type should appear (has assertions), not "album"
+                assert_eq!(entity.types.len(), 1);
+                assert_eq!(entity.types[0].entity_type, "track");
+            }
+            _ => panic!("unexpected result"),
+        }
+    }
+
+    #[test]
+    fn branch_state_recent_transactions_with_limit() {
+        let (reg, store, _dir) = setup();
+        setup_schema(&reg, &store);
+
+        // setup_schema creates 2 transactions; add 3 more
+        for i in 0..3 {
+            execute(
+                Command::Transaction(TransactionInput {
+                    reasoning: serde_json::json!(format!("tx-{}", i)),
+                    entity_types: vec![],
+                    properties: vec![],
+                    attach: vec![],
+                    hide: HideUnhideInput::default(),
+                    unhide: HideUnhideInput::default(),
+                    introduce: vec![],
+                    asserts: vec![],
+                }),
+                &reg,
+                &store,
+            ).unwrap();
+        }
+
+        // Get with limit 2
+        let result = execute(
+            Command::BranchState { slug: "main".into(), last_transactions: 2 },
+            &reg,
+            &store,
+        ).unwrap();
+
+        match result {
+            CommandResult::BranchState(state) => {
+                assert_eq!(state.recent_transactions.len(), 2);
+                // Newest first
+                assert_eq!(state.recent_transactions[0].reasoning, serde_json::json!("tx-2"));
+                assert_eq!(state.recent_transactions[1].reasoning, serde_json::json!("tx-1"));
+            }
+            _ => panic!("unexpected result"),
+        }
     }
 }

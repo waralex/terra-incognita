@@ -121,6 +121,20 @@ impl From<CommandError> for QueryError {
                     message: e.to_string(),
                 }
             }
+            CommandError::BranchState(e) => {
+                use terra_core::command::BranchStateError;
+                let kind = match &e {
+                    BranchStateError::BranchNotFound(_) => "branch_not_found",
+                    BranchStateError::Schema(_) => "schema_error",
+                    BranchStateError::Storage(_) => "storage_error",
+                    BranchStateError::Entity(_) => "entity_error",
+                    BranchStateError::Branch(_) => "branch_error",
+                };
+                Self {
+                    kind: kind.to_string(),
+                    message: e.to_string(),
+                }
+            }
             CommandError::AssertEntity(e) => {
                 let kind = match &e {
                     AssertEntityError::EntityNotFound(_) => "entity_not_found",

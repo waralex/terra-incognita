@@ -1,0 +1,344 @@
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use uuid::Uuid;
+
+use crate::assertion::{AssertionStore, ColumnCell, ItemKind, MAIN_BRANCH};
+use crate::schema::{BranchSchemaRegistry, EntityProperty, ValueType};
+
+/// Full epistemic state of a branch — schema, entities, assertions, recent transactions.
+#[derive(Debug, Serialize)]
+pub struct BranchState {
+    pub branch: BranchInfo,
+    pub schema: SchemaSnapshot,
+    pub entities: Vec<EntityState>,
+    pub recent_transactions: Vec<TransactionSnapshot>,
+}
+
+/// Branch identity and reasoning.
+#[derive(Debug, Serialize)]
+pub struct BranchInfo {
+    pub id: Uuid,
+    pub slug: String,
+    pub reasoning: serde_json::Value,
+}
+
+/// All visible schema items on the branch.
+#[derive(Debug, Serialize)]
+pub struct SchemaSnapshot {
+    pub entity_types: Vec<EntityTypeSnapshot>,
+    pub properties: Vec<PropertySnapshot>,
+}
+
+/// Entity type with attached property slugs.
+#[derive(Debug, Serialize)]
+pub struct EntityTypeSnapshot {
+    pub id: Uuid,
+    pub slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub properties: Vec<String>,
+}
+
+/// Property definition.
+#[derive(Debug, Serialize)]
+pub struct PropertySnapshot {
+    pub id: Uuid,
+    pub slug: String,
+    pub value_type: ValueType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Full state of an entity across all entity types with assertions.
+#[derive(Debug, Serialize)]
+pub struct EntityState {
+    pub id: Uuid,
+    pub slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub types: Vec<EntityTypeState>,
+}
+
+/// Entity's assertions grouped by entity type.
+#[derive(Debug, Serialize)]
+pub struct EntityTypeState {
+    pub entity_type: String,
+    pub properties: Vec<PropertyFullState>,
+}
+
+/// Full property state: latest fact + pending hypotheses with values and reasoning.
+#[derive(Debug, Serialize)]
+pub struct PropertyFullState {
+    pub slug: String,
+    pub value_type: ValueType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fact: Option<FactSnapshot>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hypotheses: Vec<HypothesisSnapshot>,
+}
+
+/// A convergence point — the latest decided value.
+#[derive(Debug, Serialize)]
+pub struct FactSnapshot {
+    pub value: serde_json::Value,
+    pub reasoning: serde_json::Value,
+    pub tx_id: Uuid,
+}
+
+/// A tentative claim under consideration.
+#[derive(Debug, Serialize)]
+pub struct HypothesisSnapshot {
+    pub value: serde_json::Value,
+    pub reasoning: serde_json::Value,
+    pub tx_id: Uuid,
+}
+
+/// Recent transaction with reasoning.
+#[derive(Debug, Serialize)]
+pub struct TransactionSnapshot {
+    pub id: Uuid,
+    pub reasoning: serde_json::Value,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Errors from building branch state.
+#[derive(Debug, thiserror::Error)]
+pub enum BranchStateError {
+    #[error("branch not found: {0}")]
+    BranchNotFound(String),
+
+    #[error(transparent)]
+    Schema(#[from] crate::schema::SchemaError),
+
+    #[error(transparent)]
+    Storage(#[from] crate::assertion::LogError),
+
+    #[error(transparent)]
+    Entity(#[from] crate::assertion::EntityError),
+
+    #[error(transparent)]
+    Branch(#[from] crate::assertion::BranchError),
+}
+
+/// Builds a complete branch state snapshot.
+pub fn build_state(
+    slug: &str,
+    last_transactions: usize,
+    registry: &BranchSchemaRegistry,
+    store: &AssertionStore,
+) -> Result<BranchState, BranchStateError> {
+    // 1. Resolve branch
+    let branch_info = resolve_branch(slug, store)?;
+    let branch_id = branch_info.id;
+
+    let vis = store.visibility();
+    let ancestry = registry.ancestry();
+
+    // 2. Schema snapshot
+    let all_types = registry.list_entity_types()?;
+    let visible_types: Vec<_> = all_types
+        .into_iter()
+        .filter(|t| vis.is_visible(ancestry, ItemKind::EntityType, t.id).unwrap_or(true))
+        .collect();
+
+    let all_props = registry.list_all_properties()?;
+    let visible_props: Vec<_> = all_props
+        .into_iter()
+        .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+        .collect();
+
+    let mut entity_type_snapshots = Vec::new();
+    for et in &visible_types {
+        let attached = registry.list_properties_by_type_id(&et.id)?;
+        let prop_slugs: Vec<String> = attached
+            .iter()
+            .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+            .map(|p| p.slug.clone())
+            .collect();
+        entity_type_snapshots.push(EntityTypeSnapshot {
+            id: et.id,
+            slug: et.slug.clone(),
+            description: et.description.clone(),
+            properties: prop_slugs,
+        });
+    }
+
+    let property_snapshots: Vec<PropertySnapshot> = visible_props
+        .iter()
+        .map(|p| PropertySnapshot {
+            id: p.id,
+            slug: p.slug.clone(),
+            value_type: p.value_type,
+            description: p.description.clone(),
+        })
+        .collect();
+
+    let schema = SchemaSnapshot {
+        entity_types: entity_type_snapshots,
+        properties: property_snapshots,
+    };
+
+    // 3. Entity states
+    let entities = store.entities().list_active()?;
+    let visible_entities: Vec<_> = entities
+        .into_iter()
+        .filter(|e| vis.is_visible(ancestry, ItemKind::Entity, e.id).unwrap_or(true))
+        .collect();
+
+    let mut entity_states = Vec::new();
+    for entity in &visible_entities {
+        let mut type_states = Vec::new();
+
+        for et in &visible_types {
+            let attached = registry.list_properties_by_type_id(&et.id)?;
+            let visible_attached: Vec<_> = attached
+                .into_iter()
+                .filter(|p| vis.is_visible(ancestry, ItemKind::Property, p.id).unwrap_or(true))
+                .collect();
+
+            let mut prop_states = Vec::new();
+            let mut has_any_data = false;
+
+            for prop in &visible_attached {
+                let pfs = resolve_property_full_state(entity.id, prop, store)?;
+                if pfs.fact.is_some() || !pfs.hypotheses.is_empty() {
+                    has_any_data = true;
+                }
+                prop_states.push(pfs);
+            }
+
+            if has_any_data {
+                type_states.push(EntityTypeState {
+                    entity_type: et.slug.clone(),
+                    properties: prop_states,
+                });
+            }
+        }
+
+        entity_states.push(EntityState {
+            id: entity.id,
+            slug: entity.slug.clone(),
+            description: entity.description.clone(),
+            types: type_states,
+        });
+    }
+
+    // 4. Recent transactions
+    let mut txns = store.transactions().list_by_branch(&branch_id)?;
+    txns.reverse(); // newest first
+    txns.truncate(last_transactions);
+
+    let recent_transactions = txns
+        .into_iter()
+        .map(|tx| TransactionSnapshot {
+            id: tx.id,
+            reasoning: tx.reasoning,
+            timestamp: tx.timestamp,
+        })
+        .collect();
+
+    Ok(BranchState {
+        branch: branch_info,
+        schema,
+        entities: entity_states,
+        recent_transactions,
+    })
+}
+
+fn resolve_branch(slug: &str, store: &AssertionStore) -> Result<BranchInfo, BranchStateError> {
+    if slug == "main" || slug.is_empty() {
+        return Ok(BranchInfo {
+            id: MAIN_BRANCH,
+            slug: "main".to_string(),
+            reasoning: serde_json::Value::Null,
+        });
+    }
+
+    let record = store
+        .branches()
+        .get_by_slug(slug)?
+        .ok_or_else(|| BranchStateError::BranchNotFound(slug.to_string()))?;
+
+    Ok(BranchInfo {
+        id: record.id,
+        slug: record.slug,
+        reasoning: record.reasoning,
+    })
+}
+
+fn resolve_property_full_state(
+    entity_id: Uuid,
+    prop: &EntityProperty,
+    store: &AssertionStore,
+) -> Result<PropertyFullState, BranchStateError> {
+    let fact_col = match prop.value_type {
+        ValueType::Set => store.fact_col_set(),
+        ValueType::Struct => store.fact_col_struct(),
+        ValueType::Range => store.fact_col_range(),
+    };
+    let hyp_col = match prop.value_type {
+        ValueType::Set => store.hypothesis_col_set(),
+        ValueType::Struct => store.hypothesis_col_struct(),
+        ValueType::Range => store.hypothesis_col_range(),
+    };
+
+    let latest_fact = fact_col.latest_for_entity(prop.id, entity_id)?;
+
+    let fact_snapshot = match &latest_fact {
+        Some(cell) => {
+            let entry = store.facts().get_entry(
+                cell.branch_id,
+                cell.tx_id,
+                cell.log_entry_id,
+                cell.entity_id,
+            )?;
+            let reasoning = entry
+                .map(|e| e.reasoning)
+                .unwrap_or(serde_json::Value::Null);
+            Some(FactSnapshot {
+                value: cell.value.clone(),
+                reasoning,
+                tx_id: cell.tx_id,
+            })
+        }
+        None => None,
+    };
+
+    let after_id = latest_fact
+        .as_ref()
+        .map(|c| c.log_entry_id)
+        .unwrap_or(Uuid::nil());
+    let hyp_cells = hyp_col.list_after(prop.id, entity_id, after_id)?;
+
+    let hypotheses = hyp_cells
+        .into_iter()
+        .map(|cell| resolve_hypothesis(cell, store))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(PropertyFullState {
+        slug: prop.slug.clone(),
+        value_type: prop.value_type,
+        fact: fact_snapshot,
+        hypotheses,
+    })
+}
+
+fn resolve_hypothesis(
+    cell: ColumnCell,
+    store: &AssertionStore,
+) -> Result<HypothesisSnapshot, BranchStateError> {
+    let entry = store.hypotheses().get_entry(
+        cell.branch_id,
+        cell.tx_id,
+        cell.log_entry_id,
+        cell.entity_id,
+    )?;
+    let reasoning = entry
+        .map(|e| e.reasoning)
+        .unwrap_or(serde_json::Value::Null);
+    Ok(HypothesisSnapshot {
+        value: cell.value,
+        reasoning,
+        tx_id: cell.tx_id,
+    })
+}

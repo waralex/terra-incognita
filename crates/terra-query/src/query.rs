@@ -127,6 +127,16 @@ pub enum QueryDto {
     ListBranches,
     #[serde(rename = "log.list")]
     ListLog,
+    #[serde(rename = "branch.state")]
+    BranchState {
+        slug: String,
+        #[serde(default = "default_last_transactions")]
+        last_transactions: usize,
+    },
+}
+
+fn default_last_transactions() -> usize {
+    10
 }
 
 /// Controls how the result is serialized back: single object or array.
@@ -266,6 +276,10 @@ impl QueryDto {
             }
             QueryDto::ListBranches => Ok((Command::ListBranches, ResponseShape::Batch)),
             QueryDto::ListLog => Ok((Command::ListLog, ResponseShape::Batch)),
+            QueryDto::BranchState { slug, last_transactions } => Ok((
+                Command::BranchState { slug, last_transactions },
+                ResponseShape::Single,
+            )),
         }
     }
 }

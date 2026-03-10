@@ -121,6 +121,40 @@ impl AppendLog {
         Ok(results)
     }
 
+    /// Point-get a single log entry by full key components.
+    pub fn get_entry(
+        &self,
+        branch_id: Uuid,
+        tx_id: Uuid,
+        entry_id: Uuid,
+        entity_id: Uuid,
+    ) -> Result<Option<LogEntry>, LogError> {
+        let cf = self.cf()?;
+        let key = LogKey {
+            branch_id,
+            tx_id,
+            entry_id,
+            entity_id,
+        };
+        match self.db.get_cf(cf, key.encode()) {
+            Ok(Some(bytes)) => {
+                let stored: serde_json::Value = serde_json::from_slice(&bytes)
+                    .map_err(|e| LogError::Storage(e.to_string()))?;
+                let properties = stored.get("properties").cloned().unwrap_or(serde_json::Value::Null);
+                let reasoning = stored.get("reasoning").cloned().unwrap_or(serde_json::Value::Null);
+                Ok(Some(LogEntry {
+                    id: entry_id,
+                    entity_id,
+                    tx_id,
+                    properties,
+                    reasoning,
+                }))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(LogError::Storage(e.to_string())),
+        }
+    }
+
     /// Returns all entries in reverse chronological order.
     pub fn list(&self) -> Result<Vec<LogEntry>, LogError> {
         let cf = self.cf()?;
@@ -267,6 +301,28 @@ mod tests {
 
         let decoded = LogKey::decode(&encoded).unwrap();
         assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn get_entry_returns_reasoning() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = open_db(&dir);
+        let log = AppendLog::new(Arc::clone(&db), TEST_CF);
+
+        let tx_id = Uuid::now_v7();
+        let entity_id = Uuid::now_v7();
+        let reasoning = serde_json::json!({"chain": ["observed", "concluded"]});
+
+        let entry = log.append(tx_id, entity_id, serde_json::json!({"x": 1}), reasoning.clone()).unwrap();
+
+        let fetched = log.get_entry(Uuid::nil(), tx_id, entry.id, entity_id).unwrap().unwrap();
+        assert_eq!(fetched.reasoning, reasoning);
+        assert_eq!(fetched.id, entry.id);
+        assert_eq!(fetched.entity_id, entity_id);
+
+        // Non-existent entry returns None
+        let missing = log.get_entry(Uuid::nil(), tx_id, Uuid::now_v7(), entity_id).unwrap();
+        assert!(missing.is_none());
     }
 
     #[test]

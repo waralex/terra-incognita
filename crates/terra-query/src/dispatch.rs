@@ -80,5 +80,6 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_json::
         }
         CommandResult::EntityDetail(projection) => serde_json::to_value(&projection).unwrap(),
         CommandResult::LogEntries(entries) => serde_json::to_value(&entries).unwrap(),
+        CommandResult::BranchState(state) => serde_json::to_value(&state).unwrap(),
     }
 }

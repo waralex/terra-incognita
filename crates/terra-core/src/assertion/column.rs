@@ -130,6 +130,41 @@ impl Column {
         Ok(latest)
     }
 
+    /// Returns cells for a given property+entity where log_entry_id > the given threshold.
+    pub fn list_after(
+        &self,
+        property_id: Uuid,
+        entity_id: Uuid,
+        after_log_entry_id: Uuid,
+    ) -> Result<Vec<ColumnCell>, LogError> {
+        let cf = self.cf()?;
+        let prefix = ColumnKey::prefix_branch_property(&super::MAIN_BRANCH, &property_id);
+        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        let threshold = *after_log_entry_id.as_bytes();
+
+        let mut cells = Vec::new();
+        for item in iter {
+            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+            let k = ColumnKey::decode(&raw_key)?;
+            if k.entity_id == entity_id && *k.log_entry_id.as_bytes() > threshold {
+                let value: serde_json::Value = serde_json::from_slice(&val)
+                    .map_err(|e| LogError::Storage(e.to_string()))?;
+                cells.push(ColumnCell {
+                    branch_id: k.branch_id,
+                    property_id: k.property_id,
+                    tx_id: k.tx_id,
+                    log_entry_id: k.log_entry_id,
+                    entity_id: k.entity_id,
+                    value,
+                });
+            }
+        }
+        Ok(cells)
+    }
+
     /// Counts cells for a given property+entity where log_entry_id > the given threshold.
     pub fn count_after(
         &self,
@@ -305,5 +340,54 @@ mod tests {
         let k2 = ColumnKey { branch_id: branch, property_id: prop, tx_id: tx2, log_entry_id: lid, entity_id: eid };
 
         assert!(k1.encode() < k2.encode());
+    }
+
+    #[test]
+    fn list_after_matches_count_after() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = open_db(&dir);
+        let col = Column::new(Arc::clone(&db), TEST_CF);
+
+        let prop = Uuid::now_v7();
+        let entity = Uuid::now_v7();
+
+        // Create a threshold cell
+        let threshold_cell = ColumnCell {
+            branch_id: Uuid::nil(),
+            property_id: prop,
+            tx_id: Uuid::now_v7(),
+            log_entry_id: Uuid::now_v7(),
+            entity_id: entity,
+            value: serde_json::json!("before"),
+        };
+        col.put(&threshold_cell).unwrap();
+
+        // Create cells after the threshold
+        let after1 = ColumnCell {
+            branch_id: Uuid::nil(),
+            property_id: prop,
+            tx_id: Uuid::now_v7(),
+            log_entry_id: Uuid::now_v7(),
+            entity_id: entity,
+            value: serde_json::json!("after-1"),
+        };
+        let after2 = ColumnCell {
+            branch_id: Uuid::nil(),
+            property_id: prop,
+            tx_id: Uuid::now_v7(),
+            log_entry_id: Uuid::now_v7(),
+            entity_id: entity,
+            value: serde_json::json!("after-2"),
+        };
+        col.put(&after1).unwrap();
+        col.put(&after2).unwrap();
+
+        let count = col.count_after(prop, entity, threshold_cell.log_entry_id).unwrap();
+        let cells = col.list_after(prop, entity, threshold_cell.log_entry_id).unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(cells.len(), count);
+        assert_eq!(cells[0].value, serde_json::json!("after-1"));
+        assert_eq!(cells[1].value, serde_json::json!("after-2"));
     }
 }

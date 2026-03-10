@@ -1,9 +1,11 @@
 mod assert_entity;
 pub(crate) mod branch;
+pub mod branch_state;
 pub mod execute;
 mod query_entity;
 
 pub use assert_entity::AssertEntityError;
+pub use branch_state::{BranchState, BranchStateError};
 pub use execute::execute;
 pub use query_entity::{EntityProjection, ProjectionError, PropertyState};
 pub use branch::{BranchCommandError, BranchDetail, BranchSummary};
@@ -45,6 +47,11 @@ pub enum Command {
     ListBranches,
     /// List all entries in the fact log.
     ListLog,
+    /// Full branch state snapshot.
+    BranchState {
+        slug: String,
+        last_transactions: usize,
+    },
 }
 
 /// Input for creating an entity type.
@@ -196,6 +203,8 @@ pub enum CommandResult {
     BranchList(Vec<BranchSummary>),
     /// Full assertion log.
     LogEntries(Vec<LogEntry>),
+    /// Full branch state snapshot.
+    BranchState(branch_state::BranchState),
 }
 
 /// Errors from command execution.
@@ -228,4 +237,8 @@ pub enum CommandError {
     /// Branch command error.
     #[error(transparent)]
     Branch(#[from] BranchCommandError),
+
+    /// Branch state error.
+    #[error(transparent)]
+    BranchState(#[from] BranchStateError),
 }

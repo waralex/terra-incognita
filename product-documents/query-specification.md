@@ -271,56 +271,141 @@ count: 3
 
 ### entity.create
 
-Single:
+Creates a new entity and optionally asserts facts and hypotheses in one transaction.
+Everything is atomic — if validation fails, the entity is not created.
 
 ```yaml
 command: entity.create
-entity_name: brave-new-world
-entity_type: book      # optional
-context:                # optional
-  source: catalog-import-2026-03-07
+entity: brave-new-world
+description: A dystopian novel by Aldous Huxley  # optional
+reasoning: initial catalog import                 # optional, transaction-level reasoning
+facts:                                            # optional
+  - entity_type: book
+    properties:
+      page-count: {eq: 311}
+      title: A Brave New World
+    reasoning: from publisher metadata
+hypotheses:                                       # optional
+  - entity_type: book
+    properties:
+      rating: {from: 4.0, to: 4.5}
+    reasoning: estimated from similar titles
 ```
 
-Batch (all-or-nothing):
+Each fact and hypothesis carries:
+- `entity_type` — which entity type's properties are being asserted
+- `properties` — property slug → typed value (see Property Value Formats below)
+- `reasoning` — per-assertion reasoning (why this specific value)
+
+**Fact uniqueness constraint:** within a single transaction, two facts cannot assert
+the same property on the same entity type. If values are uncertain, express them as
+hypotheses instead. Violating this returns a `conflicting_facts` error.
+
+Response:
 
 ```yaml
-command: entity.create
-items:
-  - entity_name: brave-new-world
-    entity_type: book
-    context:
-      source: catalog-import-2026-03-07
-  - entity_name: aldous-huxley
-    entity_type: author
+tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+facts:
+  - id: 01901234-5678-9abc-def0-bbbbbbbbbbbb
+    timestamp: "2026-03-07T15:00:00.000000+00:00"
+    entity_id: 01901234-5678-9abc-def0-777777777777
+    tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+    properties: {page-count: {eq: 311}, title: A Brave New World}
+    reasoning: from publisher metadata
+hypotheses:
+  - id: 01901234-5678-9abc-def0-cccccccccccc
+    timestamp: "2026-03-07T15:00:00.000001+00:00"
+    entity_id: 01901234-5678-9abc-def0-777777777777
+    tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+    properties: {rating: {from: 4.0, to: 4.5}}
+    reasoning: estimated from similar titles
 ```
 
-Single response:
+### entity.assert
+
+Asserts facts and hypotheses about an existing entity. Same structure as `entity.create`
+but the entity must already exist (no `description` field).
 
 ```yaml
-id: 01901234-5678-9abc-def0-666666666666
-entity_id: 01901234-5678-9abc-def0-777777777777
+command: entity.assert
+entity: brave-new-world
+reasoning: updated analysis after second review
+facts:
+  - entity_type: book
+    properties:
+      rating: {eq: 4.2}
+    reasoning: confirmed by aggregated reviews
+hypotheses:
+  - entity_type: book
+    properties:
+      page-count: {eq: 288}
+    reasoning: different edition may have fewer pages
+```
+
+Response: same shape as `entity.create`.
+
+### entity.list
+
+Lists all active entities.
+
+```yaml
+command: entity.list
+```
+
+Response:
+
+```yaml
+- id: 01901234-5678-9abc-def0-777777777777
+  slug: brave-new-world
+- id: 01901234-5678-9abc-def0-999999999999
+  slug: aldous-huxley
+```
+
+### entity.get
+
+Returns an entity projected onto an entity type. For each property attached to the
+entity type, shows the latest fact value (or `unknown` if no fact exists) and the
+number of pending hypotheses recorded after the latest fact.
+
+```yaml
+command: entity.get
+entity: brave-new-world
 entity_type: book
-name: brave-new-world
-timestamp: "2026-03-07T15:00:00.000000+00:00"
 ```
 
-Batch response:
+Response:
 
 ```yaml
-- id: 01901234-5678-9abc-def0-666666666666
-  entity_id: 01901234-5678-9abc-def0-777777777777
-  entity_type: book
-  name: brave-new-world
-  timestamp: "2026-03-07T15:00:00.000000+00:00"
-- id: 01901234-5678-9abc-def0-888888888888
-  entity_id: 01901234-5678-9abc-def0-999999999999
-  entity_type: author
-  name: aldous-huxley
-  timestamp: "2026-03-07T15:00:00.000001+00:00"
+entity_id: 01901234-5678-9abc-def0-777777777777
+entity_slug: brave-new-world
+entity_type: book
+properties:
+  - slug: title
+    value_type: struct
+    value: A Brave New World
+    known: true
+    pending: 0
+  - slug: page-count
+    value_type: range
+    value: {eq: 311}
+    known: true
+    pending: 1
+  - slug: rating
+    value_type: range
+    value: {eq: 4.2}
+    known: true
+    pending: 0
 ```
 
-`entity_type` is a set property on the entity, not a schema constraint. If omitted,
-the entity is created without a type.
+If no fact has been recorded for a property:
+
+```yaml
+  - slug: genre
+    value_type: set
+    value: null
+    known: false
+    pending: 3
+```
 
 ### log.list
 
@@ -341,6 +426,38 @@ Response:
   context:
     source: catalog-import-2026-03-07
 ```
+
+---
+
+## Property Value Formats
+
+Property values in `facts` and `hypotheses` arrays are typed according to the
+property's `value_type`:
+
+**Set** — membership assertions:
+
+```yaml
+certification: {contains: [gold, platinum]}
+tags: {contains: [fiction], not_contains: [non-fiction]}
+```
+
+**Range** — numeric/ordinal interval or exact value:
+
+```yaml
+bpm: {eq: 128}                    # exact value
+page-count: {from: 200, to: 400}  # closed range
+rating: {from: 3.5}               # open-ended (>= 3.5)
+year: {to: 2020}                   # open-ended (<= 2020)
+```
+
+**Struct** — arbitrary JSON structure (passthrough):
+
+```yaml
+title: A Brave New World           # string shorthand
+metadata: {genre: fiction, lang: en}
+```
+
+Any value that doesn't match set or range markers is treated as struct.
 
 ---
 
@@ -401,6 +518,11 @@ Error kinds:
 | `duplicate_entity_type` | Entity type already exists |
 | `duplicate_property` | Property already exists |
 | `entity_type_not_found` | Referenced entity type not found |
-| `property_not_found` | Referenced property not found |
+| `property_not_found` | Referenced property not found or not attached to entity type |
 | `reserved_property` | Attempt to create a reserved property |
+| `entity_not_found` | Entity not found by slug |
+| `entity_already_exists` | Entity with this slug already exists (during `entity.create`) |
+| `conflicting_facts` | Two facts in the same transaction assert the same property on the same entity type |
+| `assertion_error` | Type mismatch or other assertion validation failure |
+| `storage_error` | Internal storage failure |
 | `database_error` | Internal database failure |

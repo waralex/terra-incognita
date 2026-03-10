@@ -1,3 +1,4 @@
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::assertion::{AssertionStore, EntityRecord, SessionError, SessionRecord};
@@ -15,10 +16,11 @@ pub struct SessionDetail {
 }
 
 /// Session summary for list output.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct SessionSummary {
     pub id: Uuid,
     pub slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub entity_type_count: usize,
     pub seed_count: usize,

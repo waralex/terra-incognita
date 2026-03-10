@@ -8,6 +8,8 @@ pub use execute::execute;
 pub use query_entity::{EntityProjection, ProjectionError, PropertyState};
 pub use session::{SessionCommandError, SessionDetail, SessionSummary};
 
+use serde::Serialize;
+
 use crate::assertion::{EntityError, EntityRecord, LogEntry, LogError, PropertyValue, Transaction, WriterError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
 use crate::schema::SchemaError;
@@ -132,11 +134,14 @@ pub struct AssertItem {
 }
 
 /// Result of a multi-entity transaction: per-entity facts and hypotheses.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct TransactionEntityResult {
     pub entity_id: Uuid,
+    #[serde(rename = "entity")]
     pub entity_slug: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub facts: Vec<LogEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hypotheses: Vec<LogEntry>,
 }
 

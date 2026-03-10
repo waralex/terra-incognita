@@ -1539,6 +1539,7 @@ name = "terra-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "chrono",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1546,6 +1547,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

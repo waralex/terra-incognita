@@ -407,6 +407,82 @@ If no fact has been recorded for a property:
     pending: 3
 ```
 
+### transaction
+
+Atomic multi-entity operation: introduces new entities and asserts on existing ones
+in a single transaction. All introduces are processed first, then asserts — so asserts
+can reference entities introduced in the same transaction.
+
+```yaml
+command: transaction
+reasoning: initial catalog import
+introduce:
+  - entity: brave-new-world
+    description: A dystopian novel by Aldous Huxley
+    facts:
+      - entity_type: book
+        properties:
+          title: A Brave New World
+          page-count: {eq: 311}
+        reasoning: from publisher metadata
+    hypotheses:
+      - entity_type: book
+        properties:
+          rating: {from: 4.0, to: 4.5}
+        reasoning: estimated from similar titles
+  - entity: aldous-huxley
+    description: British author
+asserts:
+  - entity: brave-new-world
+    facts:
+      - entity_type: book
+        properties:
+          rating: {eq: 4.2}
+        reasoning: confirmed by aggregated reviews
+```
+
+- `introduce` — new entities (slug + description + facts/hypotheses), same structure as `entity.create`
+- `asserts` — assertions on existing entities (or entities from the `introduce` list), same as `entity.assert`
+- Both lists are optional — can have only introduces, only asserts, or both
+- `reasoning` at transaction level: why this batch of operations was performed
+- One `tx_id` shared across all log entries in the transaction
+- Atomic: if any validation fails, nothing is written
+
+Response:
+
+```yaml
+tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+introduce:
+  - entity: brave-new-world
+    entity_id: 01901234-5678-9abc-def0-777777777777
+    facts:
+      - id: 01901234-5678-9abc-def0-bbbbbbbbbbbb
+        timestamp: "2026-03-07T15:00:00.000000+00:00"
+        entity_id: 01901234-5678-9abc-def0-777777777777
+        tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+        properties: {page-count: {eq: 311}, title: A Brave New World}
+        reasoning: from publisher metadata
+    hypotheses:
+      - id: 01901234-5678-9abc-def0-cccccccccccc
+        timestamp: "2026-03-07T15:00:00.000001+00:00"
+        entity_id: 01901234-5678-9abc-def0-777777777777
+        tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+        properties: {rating: {from: 4.0, to: 4.5}}
+        reasoning: estimated from similar titles
+  - entity: aldous-huxley
+    entity_id: 01901234-5678-9abc-def0-888888888888
+asserts:
+  - entity: brave-new-world
+    entity_id: 01901234-5678-9abc-def0-777777777777
+    facts:
+      - id: 01901234-5678-9abc-def0-dddddddddddd
+        timestamp: "2026-03-07T15:00:00.000002+00:00"
+        entity_id: 01901234-5678-9abc-def0-777777777777
+        tx_id: 01901234-5678-9abc-def0-aaaaaaaaaaaa
+        properties: {rating: {eq: 4.2}}
+        reasoning: confirmed by aggregated reviews
+```
+
 ### log.list
 
 Returns all assertion log entries in reverse chronological order.

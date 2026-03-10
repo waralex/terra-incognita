@@ -2,7 +2,7 @@ use crate::error::ApiError;
 use crate::query::{QueryDto, ResponseShape};
 use crate::state::AppState;
 use terra_core::assertion::LogEntry;
-use terra_core::command::CommandResult;
+use terra_core::command::{CommandResult, TransactionEntityResult};
 
 /// Parses a DTO into a domain command, executes it, and serializes the result.
 pub fn dispatch(dto: QueryDto, state: &AppState) -> Result<serde_yaml::Value, ApiError> {
@@ -97,6 +97,38 @@ fn serialize_result(result: CommandResult, shape: ResponseShape) -> serde_yaml::
             );
             serde_yaml::Value::Mapping(map)
         }
+        CommandResult::TransactionResult {
+            transaction,
+            introduced,
+            asserted,
+        } => {
+            let mut map = serde_yaml::Mapping::new();
+            map.insert(
+                serde_yaml::Value::String("tx_id".into()),
+                serde_yaml::to_value(&transaction.id).unwrap(),
+            );
+            if !introduced.is_empty() {
+                let items: Vec<serde_yaml::Value> = introduced
+                    .iter()
+                    .map(serialize_entity_result)
+                    .collect();
+                map.insert(
+                    serde_yaml::Value::String("introduce".into()),
+                    serde_yaml::to_value(&items).unwrap(),
+                );
+            }
+            if !asserted.is_empty() {
+                let items: Vec<serde_yaml::Value> = asserted
+                    .iter()
+                    .map(serialize_entity_result)
+                    .collect();
+                map.insert(
+                    serde_yaml::Value::String("asserts".into()),
+                    serde_yaml::to_value(&items).unwrap(),
+                );
+            }
+            serde_yaml::Value::Mapping(map)
+        }
         CommandResult::EntityList(entities) => {
             let items: Vec<serde_yaml::Value> = entities
                 .iter()
@@ -154,5 +186,33 @@ fn serialize_log_entry(entry: &LogEntry) -> serde_yaml::Value {
         serde_yaml::Value::String("reasoning".into()),
         serde_yaml::to_value(&entry.reasoning).unwrap(),
     );
+    serde_yaml::Value::Mapping(map)
+}
+
+fn serialize_entity_result(result: &TransactionEntityResult) -> serde_yaml::Value {
+    let mut map = serde_yaml::Mapping::new();
+    map.insert(
+        serde_yaml::Value::String("entity".into()),
+        serde_yaml::Value::String(result.entity_slug.clone()),
+    );
+    map.insert(
+        serde_yaml::Value::String("entity_id".into()),
+        serde_yaml::to_value(&result.entity_id).unwrap(),
+    );
+    if !result.facts.is_empty() {
+        let items: Vec<serde_yaml::Value> = result.facts.iter().map(serialize_log_entry).collect();
+        map.insert(
+            serde_yaml::Value::String("facts".into()),
+            serde_yaml::to_value(&items).unwrap(),
+        );
+    }
+    if !result.hypotheses.is_empty() {
+        let items: Vec<serde_yaml::Value> =
+            result.hypotheses.iter().map(serialize_log_entry).collect();
+        map.insert(
+            serde_yaml::Value::String("hypotheses".into()),
+            serde_yaml::to_value(&items).unwrap(),
+        );
+    }
     serde_yaml::Value::Mapping(map)
 }

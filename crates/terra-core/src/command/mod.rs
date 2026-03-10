@@ -11,6 +11,7 @@ use crate::schema::{EntityProperty, EntityType, ValueType};
 use crate::schema::SchemaError;
 
 use std::collections::HashMap;
+use uuid::Uuid;
 
 /// Domain command — plain enum without serde. All mutating variants take `Vec`.
 pub enum Command {
@@ -30,6 +31,8 @@ pub enum Command {
     CreateEntity(AssertEntityInput),
     /// Assert facts/hypotheses about an existing entity in one transaction.
     AssertEntity(AssertEntityInput),
+    /// Multi-entity transaction: introduce new entities and assert on existing ones atomically.
+    Transaction(TransactionInput),
     /// List all entities (slug + uuid).
     ListEntities,
     /// Get entity projected onto an entity type.
@@ -88,6 +91,47 @@ pub struct AssertionItem {
     pub reasoning: serde_json::Value,
 }
 
+/// Input for a multi-entity transaction.
+pub struct TransactionInput {
+    /// Transaction-level reasoning: why this batch of operations.
+    pub reasoning: serde_json::Value,
+    /// New entities to introduce (created first).
+    pub introduce: Vec<IntroduceItem>,
+    /// Assertions on existing entities (processed after introduces).
+    pub asserts: Vec<AssertItem>,
+}
+
+/// A new entity to introduce in a transaction.
+pub struct IntroduceItem {
+    /// Entity slug.
+    pub entity: String,
+    /// Entity description.
+    pub description: Option<String>,
+    /// Facts for this entity.
+    pub facts: Vec<AssertionItem>,
+    /// Hypotheses for this entity.
+    pub hypotheses: Vec<AssertionItem>,
+}
+
+/// Assertions on an existing entity in a transaction.
+pub struct AssertItem {
+    /// Entity slug (must exist or be introduced earlier in the same transaction).
+    pub entity: String,
+    /// Facts for this entity.
+    pub facts: Vec<AssertionItem>,
+    /// Hypotheses for this entity.
+    pub hypotheses: Vec<AssertionItem>,
+}
+
+/// Result of a multi-entity transaction: per-entity facts and hypotheses.
+#[derive(Debug)]
+pub struct TransactionEntityResult {
+    pub entity_id: Uuid,
+    pub entity_slug: String,
+    pub facts: Vec<LogEntry>,
+    pub hypotheses: Vec<LogEntry>,
+}
+
 /// Result of executing a command.
 #[derive(Debug)]
 pub enum CommandResult {
@@ -102,6 +146,12 @@ pub enum CommandResult {
         transaction: Transaction,
         facts: Vec<LogEntry>,
         hypotheses: Vec<LogEntry>,
+    },
+    /// Multi-entity transaction result.
+    TransactionResult {
+        transaction: Transaction,
+        introduced: Vec<TransactionEntityResult>,
+        asserted: Vec<TransactionEntityResult>,
     },
     /// Single entity type with its attached properties.
     EntityTypeDetail {

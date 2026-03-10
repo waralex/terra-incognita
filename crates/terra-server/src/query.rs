@@ -4,7 +4,8 @@ use crate::error::ApiError;
 use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
-    AssertEntityInput, AssertionItem, AttachProperty, Command, CreateEntityType, CreateProperty,
+    AssertEntityInput, AssertItem, AssertionItem, AttachProperty, Command, CreateEntityType,
+    CreateProperty, IntroduceItem, TransactionInput,
 };
 
 /// DTO for batch entity type creation items.
@@ -41,6 +42,27 @@ pub struct AssertionItemDto {
     pub properties: HashMap<String, serde_yaml::Value>,
     #[serde(default = "default_null")]
     pub reasoning: serde_yaml::Value,
+}
+
+/// DTO for an introduce item in a transaction.
+#[derive(Deserialize)]
+pub struct IntroduceItemDto {
+    pub entity: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub facts: Vec<AssertionItemDto>,
+    #[serde(default)]
+    pub hypotheses: Vec<AssertionItemDto>,
+}
+
+/// DTO for an assert item in a transaction.
+#[derive(Deserialize)]
+pub struct AssertItemDto {
+    pub entity: String,
+    #[serde(default)]
+    pub facts: Vec<AssertionItemDto>,
+    #[serde(default)]
+    pub hypotheses: Vec<AssertionItemDto>,
 }
 
 fn default_null() -> serde_yaml::Value {
@@ -107,6 +129,15 @@ pub enum QueryDto {
     GetEntity {
         entity: String,
         entity_type: String,
+    },
+    #[serde(rename = "transaction")]
+    Transaction {
+        #[serde(default = "default_null")]
+        reasoning: serde_yaml::Value,
+        #[serde(default)]
+        introduce: Vec<IntroduceItemDto>,
+        #[serde(default)]
+        asserts: Vec<AssertItemDto>,
     },
     #[serde(rename = "log.list")]
     ListLog,
@@ -285,6 +316,41 @@ impl QueryDto {
                 },
                 ResponseShape::Single,
             )),
+            QueryDto::Transaction {
+                reasoning,
+                introduce,
+                asserts,
+            } => {
+                let introduce_items = introduce
+                    .into_iter()
+                    .map(|item| {
+                        Ok(IntroduceItem {
+                            entity: item.entity,
+                            description: item.description,
+                            facts: convert_assertion_items(item.facts)?,
+                            hypotheses: convert_assertion_items(item.hypotheses)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()?;
+                let assert_items = asserts
+                    .into_iter()
+                    .map(|item| {
+                        Ok(AssertItem {
+                            entity: item.entity,
+                            facts: convert_assertion_items(item.facts)?,
+                            hypotheses: convert_assertion_items(item.hypotheses)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ApiError>>()?;
+                Ok((
+                    Command::Transaction(TransactionInput {
+                        reasoning: yaml_to_json(reasoning),
+                        introduce: introduce_items,
+                        asserts: assert_items,
+                    }),
+                    ResponseShape::Single,
+                ))
+            }
             QueryDto::ListLog => Ok((Command::ListLog, ResponseShape::Batch)),
         }
     }

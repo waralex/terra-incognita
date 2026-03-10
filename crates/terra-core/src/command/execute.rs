@@ -98,6 +98,14 @@ pub fn execute(
                 hypotheses: result.hypotheses,
             })
         }
+        Command::Transaction(input) => {
+            let result = assert_entity::execute_transaction(input, registry, store)?;
+            Ok(CommandResult::TransactionResult {
+                transaction: result.transaction,
+                introduced: result.introduced,
+                asserted: result.asserted,
+            })
+        }
         Command::ListEntities => {
             let entities = store.entities().list_active()?;
             Ok(CommandResult::EntityList(entities))

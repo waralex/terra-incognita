@@ -192,7 +192,7 @@ impl AssertionWriter {
         let now = Utc::now();
         let tx = Transaction {
             id: Uuid::now_v7(),
-            entity_id,
+            entity_id: Some(entity_id),
             reasoning: tx_reasoning,
             timestamp: now,
         };
@@ -258,6 +258,84 @@ impl AssertionWriter {
             .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
 
         Ok((tx, log_entries))
+    }
+
+    /// Writes assertions into an existing WriteBatch with a given tx_id.
+    ///
+    /// Does NOT create a Transaction record or call `db.write()` — the caller is
+    /// responsible for both. Used by multi-entity transactions where one WriteBatch
+    /// spans multiple entities and both fact/hypothesis writers.
+    pub fn write_to_batch(
+        &self,
+        batch: &mut rocksdb::WriteBatch,
+        tx_id: Uuid,
+        inputs: &[AssertionInput],
+        registry: &SchemaRegistry,
+    ) -> Result<Vec<LogEntry>, WriterError> {
+        let resolved = self.validate(inputs, registry)?;
+
+        let log_cf = self.log.cf().map_err(WriterError::Storage)?;
+        let set_cf = self.col_set.cf().map_err(WriterError::Storage)?;
+        let struct_cf = self.col_struct.cf().map_err(WriterError::Storage)?;
+        let range_cf = self.col_range.cf().map_err(WriterError::Storage)?;
+
+        let mut log_entries = Vec::with_capacity(inputs.len());
+
+        for (input, prop_types) in inputs.iter().zip(resolved.iter()) {
+            let now = Utc::now();
+            let timestamp_us = now.timestamp_micros();
+            let log_entry_id = Uuid::now_v7();
+
+            let mut props_map = serde_json::Map::new();
+            for (property_id, value) in &input.properties {
+                props_map.insert(property_id.to_string(), value.to_json()?);
+            }
+            let properties = serde_json::Value::Object(props_map);
+
+            let log_key = LogKey {
+                branch_id: super::MAIN_BRANCH,
+                timestamp_us,
+                entry_id: log_entry_id,
+                entity_id: input.entity_id,
+            };
+            let stored = serde_json::json!({
+                "properties": properties,
+                "reasoning": input.reasoning,
+                "tx_id": tx_id.to_string(),
+            });
+            let log_val = serde_json::to_vec(&stored)
+                .map_err(|e| WriterError::Storage(LogError::Storage(e.to_string())))?;
+            batch.put_cf(&log_cf, &log_key.encode(), &log_val);
+
+            for (property_id, value) in &input.properties {
+                let vt = prop_types[property_id];
+                let col_key = ColumnKey {
+                    branch_id: super::MAIN_BRANCH,
+                    property_id: *property_id,
+                    timestamp_us,
+                    log_entry_id,
+                    entity_id: input.entity_id,
+                };
+                let col_val = value.to_bytes()?;
+                let cf = match vt {
+                    ValueType::Set => &set_cf,
+                    ValueType::Struct => &struct_cf,
+                    ValueType::Range => &range_cf,
+                };
+                batch.put_cf(cf, &col_key.encode(), &col_val);
+            }
+
+            log_entries.push(LogEntry {
+                id: log_entry_id,
+                timestamp: now,
+                entity_id: input.entity_id,
+                tx_id: Some(tx_id),
+                properties,
+                reasoning: input.reasoning.clone(),
+            });
+        }
+
+        Ok(log_entries)
     }
 
     /// Validates all inputs: properties belong to entity type and value types match.
@@ -584,13 +662,13 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(tx.entity_id, entity_id);
+        assert_eq!(tx.entity_id, Some(entity_id));
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().all(|e| e.tx_id == Some(tx.id)));
 
         // Transaction is retrievable
         let loaded_tx = store.transactions().get(&tx.id).unwrap().unwrap();
-        assert_eq!(loaded_tx.entity_id, entity_id);
+        assert_eq!(loaded_tx.entity_id, Some(entity_id));
         assert_eq!(loaded_tx.reasoning, json!("analyzed spectral data and narrowed hypotheses"));
 
         // Log entries have tx_id

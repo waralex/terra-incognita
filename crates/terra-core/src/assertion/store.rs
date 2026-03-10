@@ -123,6 +123,13 @@ impl AssertionStore {
         TransactionStore::new(Arc::clone(&self.db), CF_TRANSACTIONS)
     }
 
+    /// Commits a pre-built WriteBatch atomically.
+    pub(crate) fn write_batch(&self, batch: rocksdb::WriteBatch) -> Result<(), LogError> {
+        self.db
+            .write(batch)
+            .map_err(|e| LogError::Storage(e.to_string()))
+    }
+
     // -- Entities --
 
     /// Entity store for create/delete/restore/find operations.

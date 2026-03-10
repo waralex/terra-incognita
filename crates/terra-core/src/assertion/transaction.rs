@@ -7,15 +7,19 @@ use uuid::Uuid;
 
 use super::log::LogError;
 
-/// A transaction groups related assertions about an entity.
+/// A transaction groups related assertions.
 ///
 /// Transaction-level reasoning captures *why* this batch of assertions was made
 /// (e.g. "analyzed this area and decided to narrow hypotheses"), while each
 /// individual assertion carries its own reasoning for the specific value.
+///
+/// `entity_id` is `Some` for single-entity commands (entity.create, entity.assert)
+/// and `None` for multi-entity transaction commands.
 #[derive(Debug, Clone, Serialize)]
 pub struct Transaction {
     pub id: Uuid,
-    pub entity_id: Uuid,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_id: Option<Uuid>,
     pub reasoning: serde_json::Value,
     pub timestamp: DateTime<Utc>,
 }
@@ -33,15 +37,21 @@ impl TransactionStore {
         Self { db, cf_name }
     }
 
-    /// Writes a transaction record.
-    pub fn put(&self, tx: &Transaction) -> Result<(), LogError> {
-        let cf = self.cf()?;
-        let val = serde_json::json!({
-            "entity_id": tx.entity_id,
+    fn serialize_tx(tx: &Transaction) -> serde_json::Value {
+        let mut val = serde_json::json!({
             "reasoning": tx.reasoning,
             "timestamp": tx.timestamp.to_rfc3339(),
         });
-        let val_bytes = serde_json::to_vec(&val)
+        if let Some(eid) = tx.entity_id {
+            val["entity_id"] = serde_json::Value::String(eid.to_string());
+        }
+        val
+    }
+
+    /// Writes a transaction record.
+    pub fn put(&self, tx: &Transaction) -> Result<(), LogError> {
+        let cf = self.cf()?;
+        let val_bytes = serde_json::to_vec(&Self::serialize_tx(tx))
             .map_err(|e| LogError::Storage(e.to_string()))?;
 
         self.db
@@ -56,12 +66,7 @@ impl TransactionStore {
         tx: &Transaction,
     ) -> Result<(), LogError> {
         let cf = self.cf()?;
-        let val = serde_json::json!({
-            "entity_id": tx.entity_id,
-            "reasoning": tx.reasoning,
-            "timestamp": tx.timestamp.to_rfc3339(),
-        });
-        let val_bytes = serde_json::to_vec(&val)
+        let val_bytes = serde_json::to_vec(&Self::serialize_tx(tx))
             .map_err(|e| LogError::Storage(e.to_string()))?;
 
         batch.put_cf(cf, tx.id.as_bytes(), &val_bytes);
@@ -78,8 +83,7 @@ impl TransactionStore {
 
                 let entity_id = val.get("entity_id")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| Uuid::parse_str(s).ok())
-                    .ok_or_else(|| LogError::Storage("missing entity_id in transaction".into()))?;
+                    .and_then(|s| Uuid::parse_str(s).ok());
 
                 let reasoning = val.get("reasoning").cloned()
                     .unwrap_or(serde_json::Value::Null);
@@ -127,7 +131,7 @@ mod tests {
 
         let tx = Transaction {
             id: Uuid::now_v7(),
-            entity_id: Uuid::now_v7(),
+            entity_id: Some(Uuid::now_v7()),
             reasoning: serde_json::json!("narrowed hypothesis space based on spectral analysis"),
             timestamp: Utc::now(),
         };
@@ -157,7 +161,7 @@ mod tests {
 
         let tx = Transaction {
             id: Uuid::now_v7(),
-            entity_id: Uuid::now_v7(),
+            entity_id: Some(Uuid::now_v7()),
             reasoning: serde_json::Value::Null,
             timestamp: Utc::now(),
         };

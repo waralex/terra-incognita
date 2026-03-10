@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::sync::OnceLock;
+
 use crate::llm::{self, ChatMessage, LlmConfig, LlmResult};
 use crate::store::StoreHandle;
 
@@ -265,59 +268,28 @@ impl App {
     }
 }
 
-/// System prompt placeholder — instructs the LLM on how to use terra-incognita.
+/// Loads system prompt from `prompts/system.md` relative to the executable,
+/// falling back to a few common locations.
 fn system_prompt() -> &'static str {
-    // TODO: write a comprehensive system prompt with terra-incognita API docs,
-    // examples, and response format requirements.
-    r#"You are a knowledge management agent backed by terra-incognita, an append-only epistemic store.
-
-Your EVERY response MUST be a valid JSON object that is a terra-incognita transaction.
-The transaction MUST contain:
-- "answer": your text response to the user (required)
-- "reasoning": why you are making these changes (required)
-
-The transaction MAY also contain data operations:
-- "entity_types": create new entity types
-- "properties": create new properties
-- "attach": attach properties to entity types
-- "introduce": create new entities with assertions
-- "asserts": make assertions on existing entities
-- "hide" / "unhide": visibility changes
-
-Property value formats:
-- Set: {"contains": [...], "not_contains": [...]}
-- Range: {"eq": value} or {"from": v1, "to": v2}
-- Struct: any JSON value
-
-Example response (creating a person):
-{
-  "answer": "Created person entity for John with age and city.",
-  "reasoning": "User described a person, decomposing into structured data.",
-  "entity_types": [{"slug": "person"}],
-  "properties": [
-    {"slug": "name", "value_type": "set"},
-    {"slug": "age", "value_type": "range"},
-    {"slug": "city", "value_type": "set"}
-  ],
-  "attach": [
-    {"entity_type": "person", "slug": "name"},
-    {"entity_type": "person", "slug": "age"},
-    {"entity_type": "person", "slug": "city"}
-  ],
-  "introduce": [{
-    "entity": "john",
-    "facts": [{
-      "entity_type": "person",
-      "properties": {
-        "name": {"contains": ["John"]},
-        "age": {"eq": 30},
-        "city": {"contains": ["Moscow"]}
-      },
-      "reasoning": "User stated these facts directly."
-    }]
-  }]
-}
-
-If no data changes are needed, you MUST still provide reasoning explaining why.
-The current branch state is provided below — use it to understand what already exists."#
+    static PROMPT: OnceLock<String> = OnceLock::new();
+    PROMPT.get_or_init(|| {
+        let candidates = [
+            // Next to the executable (cargo run sets this to target/debug/)
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .map(|d| d.join("prompts/system.md")),
+            // Relative to cwd (typical for `cargo run -p terra-agent`)
+            Some(PathBuf::from("crates/terra-agent/prompts/system.md")),
+            // Direct relative
+            Some(PathBuf::from("prompts/system.md")),
+        ];
+        for candidate in candidates.into_iter().flatten() {
+            if let Ok(content) = std::fs::read_to_string(&candidate) {
+                return content;
+            }
+        }
+        // Minimal fallback if file not found
+        "You are a knowledge management agent. Respond with a JSON transaction containing \"answer\" and \"reasoning\".".into()
+    })
 }

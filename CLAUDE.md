@@ -75,22 +75,59 @@ the requested time interval, plus all hypotheses that follow it. This gives the 
 the current best understanding together with open questions. If no fact exists,
 all hypotheses are returned.
 
+## Transactions
+
+Transaction is the single mutation primitive. All writes — schema creation, property
+attachment, entity introduction, assertions, visibility changes — happen inside a
+transaction and commit atomically.
+
+**tx_id** (UUID v7) replaces timestamps in all storage keys. UUID v7 is time-ordered
+(same byte sort as i64 timestamps) but carries identity. Enables "show me state at tx X",
+future rebase, cherry-pick.
+
+**Processing order** within a transaction:
+1. `entity_types` — create types
+2. `properties` — create properties
+3. `attach` — attach properties to types
+4. `hide` / `unhide` — visibility changes
+5. `introduce` — create entities with assertions
+6. `asserts` — assertions on existing/introduced entities
+
 ## Branches
 
 Branches are the unit of isolated exploration. A branch inherits schema, entities, and
-assertions from its parent at the moment of creation (`branch_point_us`), then evolves
+assertions from its parent at the moment of creation (`branch_point_tx`), then evolves
 independently. No physical copying — reads walk the ancestry chain with temporal filtering.
 
 **Main branch** (`Uuid::nil()`) is implicit, always exists, has no record stored.
 
-**Ancestry chain**: `[self, parent, ..., main]` — precomputed at creation. Max depth: 8.
+**Ancestry chain**: `Vec<(Uuid, Uuid)>` = `[(branch_id, branch_point_tx)]` — precomputed
+at creation. Max depth: 8. Temporal filtering uses UUID v7 byte comparison:
+`tx_id <= branch_point_tx`.
 
 **Schema inheritance**: A child branch sees all schema items created in ancestors before
-its `branch_point_us`. Writes always go to the current branch. Slug uniqueness is checked
+its `branch_point_tx`. Writes always go to the current branch. Slug uniqueness is checked
 across the entire ancestry chain.
 
-**Seed entities**: Entities selected at branch creation as the working set.
-**Introduced entities**: New entities created within the branch.
+**BranchRecord**: `{id, slug, reasoning, created_from_tx, ancestry}`. Parent is derived
+from `created_from_tx` → transaction → `branch_id`. No separate `parent_id` field.
+
+## Visibility
+
+Visibility controls which items are in scope on a branch. Items can be hidden or unhidden
+per branch via transactions.
+
+**Item kinds**: Entity, EntityType, Property.
+
+**Storage**: `branch_id(16) | tx_id(16) | item_kind(1) | item_id(16)` = 49 bytes.
+Value: `1` = hidden, `0` = visible. Default (no record) = visible.
+
+**Read filtering**: All read commands (`ListEntityTypes`, `GetEntityType`,
+`ListProperties`, `ListEntities`, `GetEntity`) filter out hidden items.
+
+**Write validation**: Transactions reject references to hidden items with distinct
+errors (`EntityHidden`, `EntityTypeHidden`, `PropertyHidden`) separate from not-found.
+Error messages include a hint: "exists but is hidden — use unhide to bring it into scope".
 
 ## Query Model
 
@@ -189,12 +226,15 @@ network access. Migration is cheap. That is v2. Not now.
 
 Commands are sent as YAML or JSON with a `command` field:
 
-- **Schema**: `entity-type.create`, `entity-type.list`, `entity-type.get`,
-  `property.create`, `property.list`, `property.attach`
-- **Entities**: `entity.create`, `entity.assert`, `entity.list`, `entity.get`
-- **Transactions**: `transaction` (multi-entity atomic operations)
-- **Branches**: `branch.create`, `branch.get`, `branch.list`
-- **Log**: `log.list`
+- **Writes** (single mutation primitive):
+  - `transaction` — atomic: schema ops + visibility + entity introduction + assertions
+  - `branch.create` — create branch with optional embedded transaction
+- **Reads**:
+  - `entity-type.list`, `entity-type.get` — schema types (visibility-filtered)
+  - `property.list` — schema properties (visibility-filtered)
+  - `entity.list`, `entity.get` — entities (visibility-filtered)
+  - `branch.get`, `branch.list` — branches
+  - `log.list` — fact log entries
 
 ## Non-Goals for v1
 

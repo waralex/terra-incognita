@@ -1,4 +1,4 @@
-use terra_core::assertion::{EntityError, InvestigationError};
+use terra_core::assertion::{EntityError, TaskError};
 use terra_core::command::{AssertEntityError, BranchCommandError, CommandError};
 use terra_core::schema::SchemaError;
 
@@ -116,7 +116,7 @@ CommandError::Branch(e) => {
                     BranchStateError::Storage(_) => "storage_error",
                     BranchStateError::Entity(_) => "entity_error",
                     BranchStateError::Branch(_) => "branch_error",
-                    BranchStateError::Investigation(_) => "investigation_error",
+                    BranchStateError::Task(_) => "task_error",
                 };
                 Self {
                     kind: kind.to_string(),
@@ -136,12 +136,12 @@ CommandError::Branch(e) => {
                     AssertEntityError::EntityTypeMismatch { .. } => "entity_type_mismatch",
                     AssertEntityError::MissingEntityType(_) => "missing_entity_type",
                     AssertEntityError::EmptyTransaction => "empty_transaction",
-                    AssertEntityError::InvestigationNotFound(_) => "investigation_not_found",
-                    AssertEntityError::InvestigationAlreadyExists(_) => "investigation_already_exists",
-                    AssertEntityError::InvestigationHidden(_) => "investigation_hidden",
-                    AssertEntityError::InvestigationAlreadyClosed(_) => "investigation_already_closed",
+                    AssertEntityError::TaskNotFound(_) => "task_not_found",
+                    AssertEntityError::TaskAlreadyExists(_) => "task_already_exists",
+                    AssertEntityError::TaskHidden(_) => "task_hidden",
+                    AssertEntityError::TaskAlreadyClosed(_) => "task_already_closed",
                     AssertEntityError::Entity(_)
-                    | AssertEntityError::Investigation(_)
+                    | AssertEntityError::Task(_)
                     | AssertEntityError::Writer(_)
                     | AssertEntityError::Schema(_) => "internal_error",
                 };
@@ -150,12 +150,12 @@ CommandError::Branch(e) => {
                     message: e.to_string(),
                 }
             }
-            CommandError::Investigation(e) => {
+            CommandError::Task(e) => {
                 let kind = match &e {
-                    InvestigationError::SlugExists(_) => "investigation_already_exists",
-                    InvestigationError::NotFound(_) | InvestigationError::SlugNotFound(_) => "investigation_not_found",
-                    InvestigationError::AlreadyInStatus(_, _) => "investigation_status_conflict",
-                    InvestigationError::Storage(_) => "storage_error",
+                    TaskError::SlugExists(_) => "task_already_exists",
+                    TaskError::NotFound(_) | TaskError::SlugNotFound(_) => "task_not_found",
+                    TaskError::AlreadyInStatus(_, _) => "task_status_conflict",
+                    TaskError::Storage(_) => "storage_error",
                 };
                 Self {
                     kind: kind.to_string(),

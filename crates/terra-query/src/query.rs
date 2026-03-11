@@ -6,7 +6,7 @@ use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
     AddProperties, AssertItem, AssertionItem, Command, CreateBranchInput,
     CreateEntityType, CreatePropertyDef, HideUnhideInput, IntroduceItem,
-    InvestigationCloseItem, InvestigationCreateItem, InvestigationUpdateItem,
+    TaskCloseItem, TaskCreateItem, TaskUpdateItem,
     TransactionInput,
 };
 
@@ -75,12 +75,12 @@ pub struct HideUnhideDto {
     #[serde(default)]
     pub properties: Vec<String>,
     #[serde(default)]
-    pub investigations: Vec<String>,
+    pub tasks: Vec<String>,
 }
 
-/// DTO for creating an investigation.
+/// DTO for creating a task.
 #[derive(Deserialize)]
-pub struct InvestigationCreateDto {
+pub struct TaskCreateDto {
     pub slug: String,
     #[serde(default)]
     pub goal: serde_json::Value,
@@ -88,19 +88,20 @@ pub struct InvestigationCreateDto {
     pub reasoning: String,
     #[serde(default)]
     pub context: serde_json::Value,
+    pub kind: Option<String>,
 }
 
-/// DTO for updating an investigation's notes.
+/// DTO for updating a task's notes.
 #[derive(Deserialize)]
-pub struct InvestigationUpdateDto {
+pub struct TaskUpdateDto {
     pub slug: String,
     #[serde(default)]
     pub notes: serde_json::Value,
 }
 
-/// DTO for closing an investigation.
+/// DTO for closing a task.
 #[derive(Deserialize)]
-pub struct InvestigationCloseDto {
+pub struct TaskCloseDto {
     pub slug: String,
     #[serde(default)]
     pub resolution: serde_json::Value,
@@ -139,11 +140,11 @@ pub enum QueryDto {
         #[serde(default)]
         commands: Vec<serde_json::Value>,
         #[serde(default)]
-        investigations: Vec<InvestigationCreateDto>,
+        tasks: Vec<TaskCreateDto>,
         #[serde(default)]
-        update_investigations: Vec<InvestigationUpdateDto>,
+        update_tasks: Vec<TaskUpdateDto>,
         #[serde(default)]
-        close_investigations: Vec<InvestigationCloseDto>,
+        close_tasks: Vec<TaskCloseDto>,
     },
     #[serde(rename = "branch.create")]
     CreateBranch {
@@ -206,9 +207,9 @@ impl QueryDto {
                 introduce,
                 asserts,
                 commands,
-                investigations,
-                update_investigations,
-                close_investigations,
+                tasks,
+                update_tasks,
+                close_tasks,
             } => {
                 let entity_type_items = entity_types
                     .into_iter()
@@ -272,36 +273,37 @@ impl QueryDto {
                             entities: hide.entities,
                             entity_types: hide.entity_types,
                             properties: hide.properties,
-                            investigations: hide.investigations,
+                            tasks: hide.tasks,
                         },
                         unhide: HideUnhideInput {
                             entities: unhide.entities,
                             entity_types: unhide.entity_types,
                             properties: unhide.properties,
-                            investigations: unhide.investigations,
+                            tasks: unhide.tasks,
                         },
                         introduce: introduce_items,
                         asserts: assert_items,
                         commands,
-                        investigations: investigations
+                        tasks: tasks
                             .into_iter()
-                            .map(|item| InvestigationCreateItem {
+                            .map(|item| TaskCreateItem {
                                 slug: item.slug,
                                 goal: item.goal,
                                 reasoning: item.reasoning,
                                 context: item.context,
+                                kind: item.kind,
                             })
                             .collect(),
-                        update_investigations: update_investigations
+                        update_tasks: update_tasks
                             .into_iter()
-                            .map(|item| InvestigationUpdateItem {
+                            .map(|item| TaskUpdateItem {
                                 slug: item.slug,
                                 notes: item.notes,
                             })
                             .collect(),
-                        close_investigations: close_investigations
+                        close_tasks: close_tasks
                             .into_iter()
-                            .map(|item| InvestigationCloseItem {
+                            .map(|item| TaskCloseItem {
                                 slug: item.slug,
                                 resolution: item.resolution,
                             })

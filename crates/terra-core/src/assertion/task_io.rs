@@ -7,31 +7,32 @@ use uuid::Uuid;
 use super::key::{storage_key, StorageKey};
 use super::log::LogError;
 
-/// Status of an investigation.
+/// Status of an task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum InvestigationStatus {
+pub enum TaskStatus {
     Open,
     Closed,
 }
 
-/// A single versioned record for an investigation.
+/// A single versioned record for an task.
 #[derive(Debug, Clone, Serialize)]
-pub struct InvestigationRecord {
+pub struct TaskRecord {
     pub id: Uuid,
     pub slug: String,
-    pub status: InvestigationStatus,
+    pub status: TaskStatus,
     pub goal: serde_json::Value,
     pub reasoning: String,
     pub context: serde_json::Value,
+    pub kind: Option<String>,
     pub notes: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<serde_json::Value>,
     pub tx_id: Uuid,
 }
 
-/// Low-level IO for investigation storage. Branch-aware.
-pub struct InvestigationIo {
+/// Low-level IO for task storage. Branch-aware.
+pub struct TaskIo {
     db: Arc<DB>,
     main_cf: &'static str,
     slug_cf: &'static str,
@@ -39,7 +40,7 @@ pub struct InvestigationIo {
     ancestry: Vec<(Uuid, Uuid)>,
 }
 
-impl InvestigationIo {
+impl TaskIo {
     pub(crate) fn new(
         db: Arc<DB>,
         main_cf: &'static str,
@@ -50,12 +51,12 @@ impl InvestigationIo {
         Self { db, main_cf, slug_cf, branch_id, ancestry }
     }
 
-    /// Writes an investigation record to the main CF.
-    pub fn put(&self, record: &InvestigationRecord) -> Result<(), LogError> {
+    /// Writes an task record to the main CF.
+    pub fn put(&self, record: &TaskRecord) -> Result<(), LogError> {
         let main = self.main_cf()?;
-        let key = InvestigationKey {
+        let key = TaskKey {
             branch_id: self.branch_id,
-            investigation_id: record.id,
+            task_id: record.id,
             tx_id: record.tx_id,
         }.encode();
         let val_bytes = encode_value(record)?;
@@ -64,14 +65,14 @@ impl InvestigationIo {
             .map_err(|e| LogError::Storage(e.to_string()))
     }
 
-    /// Writes an investigation record + slug index atomically.
-    pub fn put_with_index(&self, record: &InvestigationRecord) -> Result<(), LogError> {
+    /// Writes an task record + slug index atomically.
+    pub fn put_with_index(&self, record: &TaskRecord) -> Result<(), LogError> {
         let main = self.main_cf()?;
         let idx = self.slug_cf()?;
 
-        let key = InvestigationKey {
+        let key = TaskKey {
             branch_id: self.branch_id,
-            investigation_id: record.id,
+            task_id: record.id,
             tx_id: record.tx_id,
         }.encode();
         let val_bytes = encode_value(record)?;
@@ -85,13 +86,13 @@ impl InvestigationIo {
             .map_err(|e| LogError::Storage(e.to_string()))
     }
 
-    /// Reads the latest record for an investigation by UUID, walking ancestry.
-    pub fn get_latest(&self, investigation_id: &Uuid) -> Result<Option<InvestigationRecord>, LogError> {
+    /// Reads the latest record for an task by UUID, walking ancestry.
+    pub fn get_latest(&self, task_id: &Uuid) -> Result<Option<TaskRecord>, LogError> {
         let main = self.main_cf()?;
         let mut best: Option<(Uuid, Vec<u8>)> = None;
 
         for &(ancestor_id, branch_point_tx) in &self.ancestry {
-            let prefix = InvestigationKey::prefix_branch_investigation(&ancestor_id, investigation_id);
+            let prefix = TaskKey::prefix_branch_task(&ancestor_id, task_id);
             let bound = *branch_point_tx.as_bytes();
 
             let iter = self.db.prefix_iterator_cf(main, &prefix);
@@ -100,7 +101,7 @@ impl InvestigationIo {
                 if !raw_key.starts_with(&prefix) {
                     break;
                 }
-                let k = InvestigationKey::decode(&raw_key)?;
+                let k = TaskKey::decode(&raw_key)?;
                 if *k.tx_id.as_bytes() > bound {
                     continue;
                 }
@@ -114,7 +115,7 @@ impl InvestigationIo {
         match best {
             None => Ok(None),
             Some((tx_id, val_bytes)) => {
-                let record = decode_record(investigation_id, tx_id, &val_bytes)?;
+                let record = decode_record(task_id, tx_id, &val_bytes)?;
                 Ok(Some(record))
             }
         }
@@ -138,15 +139,15 @@ impl InvestigationIo {
         Ok(None)
     }
 
-    /// Scans all latest investigation records across ancestry, optionally bounded by tx_id.
-    pub fn scan_all_latest_at(&self, upper_bound: Uuid) -> Result<Vec<InvestigationRecord>, LogError> {
+    /// Scans all latest task records across ancestry, optionally bounded by tx_id.
+    pub fn scan_all_latest_at(&self, upper_bound: Uuid) -> Result<Vec<TaskRecord>, LogError> {
         let main = self.main_cf()?;
         let upper_bytes = *upper_bound.as_bytes();
         let mut latest_map: std::collections::HashMap<Uuid, (Uuid, Vec<u8>)> =
             std::collections::HashMap::new();
 
         for &(ancestor_id, branch_point_tx) in &self.ancestry {
-            let branch_prefix = InvestigationKey::prefix_branch(&ancestor_id);
+            let branch_prefix = TaskKey::prefix_branch(&ancestor_id);
             let bpt = *branch_point_tx.as_bytes();
             let bound = if upper_bytes < bpt { upper_bytes } else { bpt };
 
@@ -156,16 +157,16 @@ impl InvestigationIo {
                 if !raw_key.starts_with(&branch_prefix) {
                     break;
                 }
-                if raw_key.len() < InvestigationKey::SIZE {
+                if raw_key.len() < TaskKey::SIZE {
                     continue;
                 }
-                let k = InvestigationKey::decode(&raw_key)?;
+                let k = TaskKey::decode(&raw_key)?;
                 if *k.tx_id.as_bytes() > bound {
                     continue;
                 }
-                match latest_map.get(&k.investigation_id) {
+                match latest_map.get(&k.task_id) {
                     Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
-                    _ => { latest_map.insert(k.investigation_id, (k.tx_id, val.to_vec())); }
+                    _ => { latest_map.insert(k.task_id, (k.tx_id, val.to_vec())); }
                 }
             }
         }
@@ -191,14 +192,14 @@ impl InvestigationIo {
 }
 
 storage_key! {
-    struct InvestigationKey(48) {
+    struct TaskKey(48) {
         branch_id: Uuid,
-        investigation_id: Uuid,
+        task_id: Uuid,
         tx_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
-        prefix_branch_investigation(branch_id: Uuid, investigation_id: Uuid) -> 32,
+        prefix_branch_task(branch_id: Uuid, task_id: Uuid) -> 32,
     }
 }
 
@@ -209,8 +210,8 @@ fn encode_slug_key(branch_id: &Uuid, slug: &str) -> Vec<u8> {
     key
 }
 
-fn encode_value(record: &InvestigationRecord) -> Result<Vec<u8>, LogError> {
-    let val = serde_json::json!({
+fn encode_value(record: &TaskRecord) -> Result<Vec<u8>, LogError> {
+    let mut val = serde_json::json!({
         "slug": record.slug,
         "status": record.status,
         "goal": record.goal,
@@ -219,10 +220,13 @@ fn encode_value(record: &InvestigationRecord) -> Result<Vec<u8>, LogError> {
         "notes": record.notes,
         "resolution": record.resolution,
     });
+    if let Some(kind) = &record.kind {
+        val["kind"] = serde_json::Value::String(kind.clone());
+    }
     serde_json::to_vec(&val).map_err(|e| LogError::Storage(e.to_string()))
 }
 
-fn decode_record(investigation_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Result<InvestigationRecord, LogError> {
+fn decode_record(task_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Result<TaskRecord, LogError> {
     let val: serde_json::Value = serde_json::from_slice(val_bytes)
         .map_err(|e| LogError::Storage(e.to_string()))?;
 
@@ -231,11 +235,11 @@ fn decode_record(investigation_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Resu
         .ok_or_else(|| LogError::Storage("missing slug".into()))?
         .to_string();
 
-    let status: InvestigationStatus = val.get("status")
+    let status: TaskStatus = val.get("status")
         .map(|v| serde_json::from_value(v.clone()))
         .transpose()
         .map_err(|e| LogError::Storage(e.to_string()))?
-        .unwrap_or(InvestigationStatus::Open);
+        .unwrap_or(TaskStatus::Open);
 
     let goal = val.get("goal").cloned().unwrap_or(serde_json::Value::Null);
     let reasoning = val.get("reasoning")
@@ -243,17 +247,19 @@ fn decode_record(investigation_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Resu
         .unwrap_or("")
         .to_string();
     let context = val.get("context").cloned().unwrap_or(serde_json::Value::Null);
+    let kind = val.get("kind").and_then(|v| v.as_str()).map(String::from);
     let notes = val.get("notes").cloned().unwrap_or(serde_json::Value::Null);
     let resolution = val.get("resolution")
         .and_then(|v| if v.is_null() { None } else { Some(v.clone()) });
 
-    Ok(InvestigationRecord {
-        id: *investigation_id,
+    Ok(TaskRecord {
+        id: *task_id,
         slug,
         status,
         goal,
         reasoning,
         context,
+        kind,
         notes,
         resolution,
         tx_id,

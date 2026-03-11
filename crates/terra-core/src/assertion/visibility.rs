@@ -13,7 +13,7 @@ pub enum ItemKind {
     Entity = 0,
     EntityType = 1,
     Property = 2,
-    Investigation = 3,
+    Task = 3,
 }
 
 storage_key! {

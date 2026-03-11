@@ -9,8 +9,8 @@ use super::branch_io::BranchIo;
 use super::column::Column;
 use super::entity::EntityStore;
 use super::entity_io::EntityIo;
-use super::investigation::InvestigationStore;
-use super::investigation_io::InvestigationIo;
+use super::task::TaskStore;
+use super::task_io::TaskIo;
 use super::log::AppendLog;
 use super::transaction::TransactionStore;
 use super::writer::AssertionWriter;
@@ -36,8 +36,8 @@ const CF_SCHEMA_PROPS: &str = "schema_props";
 const CF_SCHEMA_PROP_SLUG: &str = "schema_prop_slug";
 const CF_SCHEMA_ATTACHMENTS: &str = "schema_attachments";
 const CF_VISIBILITY: &str = "visibility";
-const CF_INVESTIGATION_MAIN: &str = "investigation_main";
-const CF_INVESTIGATION_SLUG: &str = "investigation_slug";
+const CF_TASK_MAIN: &str = "task_main";
+const CF_TASK_SLUG: &str = "task_slug";
 
 /// RocksDB-backed store owning logs and typed columns for facts and hypotheses.
 pub struct AssertionStore {
@@ -98,8 +98,8 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_SCHEMA_PROP_SLUG, entity_opts.clone()),
             ColumnFamilyDescriptor::new(CF_SCHEMA_ATTACHMENTS, schema_attach_opts),
             ColumnFamilyDescriptor::new(CF_VISIBILITY, entity_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_INVESTIGATION_MAIN, entity_opts.clone()),
-            ColumnFamilyDescriptor::new(CF_INVESTIGATION_SLUG, entity_opts),
+            ColumnFamilyDescriptor::new(CF_TASK_MAIN, entity_opts.clone()),
+            ColumnFamilyDescriptor::new(CF_TASK_SLUG, entity_opts),
         ]
     }
 
@@ -180,11 +180,11 @@ impl AssertionStore {
         EntityStore::new(EntityIo::new(Arc::clone(&self.db), CF_ENTITY_MAIN, CF_ENTITY_SLUG, branch_id, ancestry))
     }
 
-    // -- Investigations --
+    // -- Tasks --
 
-    /// Investigation store for create/update/close/list operations (branch-aware).
-    pub fn investigations(&self, branch_id: Uuid, ancestry: Vec<(Uuid, Uuid)>) -> InvestigationStore {
-        InvestigationStore::new(InvestigationIo::new(Arc::clone(&self.db), CF_INVESTIGATION_MAIN, CF_INVESTIGATION_SLUG, branch_id, ancestry))
+    /// Task store for create/update/close/list operations (branch-aware).
+    pub fn tasks(&self, branch_id: Uuid, ancestry: Vec<(Uuid, Uuid)>) -> TaskStore {
+        TaskStore::new(TaskIo::new(Arc::clone(&self.db), CF_TASK_MAIN, CF_TASK_SLUG, branch_id, ancestry))
     }
 
     // -- Branches --

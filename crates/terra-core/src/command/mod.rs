@@ -10,7 +10,7 @@ pub use branch::{BranchCommandError, BranchDetail, BranchSummary};
 
 use serde::Serialize;
 
-use crate::assertion::{EntityError, EntityRecord, InvestigationError, LogEntry, LogError, PropertyValue, Transaction, WriterError};
+use crate::assertion::{EntityError, EntityRecord, LogEntry, LogError, PropertyValue, TaskError, Transaction, WriterError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
 use crate::schema::SchemaError;
 
@@ -101,12 +101,12 @@ pub struct TransactionInput {
     pub introduce: Vec<IntroduceItem>,
     /// Assertions on existing entities (processed after introduces).
     pub asserts: Vec<AssertItem>,
-    /// New investigations to create.
-    pub investigations: Vec<InvestigationCreateItem>,
-    /// Existing investigations to update (notes).
-    pub update_investigations: Vec<InvestigationUpdateItem>,
-    /// Investigations to close with a resolution.
-    pub close_investigations: Vec<InvestigationCloseItem>,
+    /// New tasks to create.
+    pub tasks: Vec<TaskCreateItem>,
+    /// Existing tasks to update (notes).
+    pub update_tasks: Vec<TaskUpdateItem>,
+    /// Tasks to close with a resolution.
+    pub close_tasks: Vec<TaskCloseItem>,
 }
 
 /// Items to hide or unhide on a branch, referenced by slug.
@@ -115,7 +115,7 @@ pub struct HideUnhideInput {
     pub entities: Vec<String>,
     pub entity_types: Vec<String>,
     pub properties: Vec<String>,
-    pub investigations: Vec<String>,
+    pub tasks: Vec<String>,
 }
 
 /// A new entity to introduce in a transaction.
@@ -154,22 +154,23 @@ pub struct TransactionEntityResult {
     pub hypotheses: Vec<LogEntry>,
 }
 
-/// A new investigation to create in a transaction.
-pub struct InvestigationCreateItem {
+/// A new task to create in a transaction.
+pub struct TaskCreateItem {
     pub slug: String,
     pub goal: serde_json::Value,
     pub reasoning: String,
     pub context: serde_json::Value,
+    pub kind: Option<String>,
 }
 
-/// An update to an existing investigation's notes.
-pub struct InvestigationUpdateItem {
+/// An update to an existing task's notes.
+pub struct TaskUpdateItem {
     pub slug: String,
     pub notes: serde_json::Value,
 }
 
-/// Close an investigation with a resolution.
-pub struct InvestigationCloseItem {
+/// Close a task with a resolution.
+pub struct TaskCloseItem {
     pub slug: String,
     pub resolution: serde_json::Value,
 }
@@ -242,7 +243,7 @@ pub enum CommandError {
     #[error(transparent)]
     BranchState(#[from] BranchStateError),
 
-    /// Investigation operation error.
+    /// Task operation error.
     #[error(transparent)]
-    Investigation(#[from] InvestigationError),
+    Task(#[from] TaskError),
 }

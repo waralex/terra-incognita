@@ -12,7 +12,7 @@ pub struct BranchState {
     pub schema: SchemaSnapshot,
     pub entities: Vec<EntityState>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub investigations: Vec<InvestigationSnapshot>,
+    pub tasks: Vec<TaskSnapshot>,
     pub recent_transactions: Vec<TransactionSnapshot>,
 }
 
@@ -102,14 +102,16 @@ pub struct TransactionSnapshot {
     pub timestamp: DateTime<Utc>,
 }
 
-/// Open investigation in the branch state.
+/// Open task in the branch state.
 #[derive(Debug, Serialize)]
-pub struct InvestigationSnapshot {
+pub struct TaskSnapshot {
     pub id: Uuid,
     pub slug: String,
     pub goal: serde_json::Value,
     pub reasoning: String,
     pub context: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     pub notes: serde_json::Value,
     pub tx_id: Uuid,
@@ -134,7 +136,7 @@ pub enum BranchStateError {
     Branch(#[from] crate::assertion::BranchError),
 
     #[error(transparent)]
-    Investigation(#[from] crate::assertion::InvestigationError),
+    Task(#[from] crate::assertion::TaskError),
 }
 
 /// Builds a complete branch state snapshot.
@@ -230,20 +232,21 @@ pub fn build_state(
         });
     }
 
-    // 4. Open investigations
-    let inv_store = store.investigations(registry.branch_id(), capped.clone());
-    let all_investigations = inv_store.list_open_at(bound)?;
-    let investigations: Vec<InvestigationSnapshot> = all_investigations
+    // 4. Open tasks
+    let task_store = store.tasks(registry.branch_id(), capped.clone());
+    let all_tasks = task_store.list_open_at(bound)?;
+    let tasks: Vec<TaskSnapshot> = all_tasks
         .into_iter()
-        .filter(|inv| vis.is_visible(&capped, ItemKind::Investigation, inv.id).unwrap_or(true))
-        .map(|inv| InvestigationSnapshot {
-            id: inv.id,
-            slug: inv.slug,
-            goal: inv.goal,
-            reasoning: inv.reasoning,
-            context: inv.context,
-            notes: inv.notes,
-            tx_id: inv.tx_id,
+        .filter(|t| vis.is_visible(&capped, ItemKind::Task, t.id).unwrap_or(true))
+        .map(|t| TaskSnapshot {
+            id: t.id,
+            slug: t.slug,
+            goal: t.goal,
+            reasoning: t.reasoning,
+            context: t.context,
+            kind: t.kind,
+            notes: t.notes,
+            tx_id: t.tx_id,
         })
         .collect();
 
@@ -268,7 +271,7 @@ pub fn build_state(
         branch: branch_info,
         schema,
         entities: entity_states,
-        investigations,
+        tasks,
         recent_transactions,
     })
 }

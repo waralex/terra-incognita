@@ -319,7 +319,7 @@ body {
 .badge-fact { background: rgba(63,185,80,0.15); color: var(--green); }
 .badge-hyp { background: rgba(188,140,255,0.15); color: var(--purple); }
 .badge-new { background: rgba(88,166,255,0.15); color: var(--accent); }
-/* Investigation card */
+/* Task card */
 .inv {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -386,12 +386,12 @@ body {
     <div class="tabs">
       <button class="tab active" data-tab="entities">Entities</button>
       <button class="tab" data-tab="hypotheses">Hypotheses</button>
-      <button class="tab" data-tab="investigations">Investigations</button>
+      <button class="tab" data-tab="tasks">Tasks</button>
       <button class="tab" data-tab="assertions">Assertions</button>
     </div>
     <div id="tab-entities" class="tab-content active"></div>
     <div id="tab-hypotheses" class="tab-content"></div>
-    <div id="tab-investigations" class="tab-content"></div>
+    <div id="tab-tasks" class="tab-content"></div>
     <div id="tab-assertions" class="tab-content">
       <div class="tx-hint">Click a transaction to see its assertions</div>
     </div>
@@ -440,8 +440,8 @@ async function loadData() {
     DATA = await res.json();
     const txCount = (DATA.recent_transactions || []).length;
     const entCount = (DATA.entities || []).length;
-    const invCount = (DATA.investigations || []).length;
-    statusEl.textContent = `${txCount} tx, ${entCount} entities` + (invCount ? `, ${invCount} inv` : '');
+    const taskCount = (DATA.tasks || []).length;
+    statusEl.textContent = `${txCount} tx, ${entCount} entities` + (taskCount ? `, ${taskCount} tasks` : '');
     render();
   } catch (e) {
     statusEl.textContent = '';
@@ -457,7 +457,7 @@ async function selectTransaction(txId) {
     renderTransactions();
     renderEntities();
     renderHypotheses();
-    renderInvestigations();
+    renderTasks();
     renderAssertions();
     return;
   }
@@ -474,7 +474,7 @@ async function selectTransaction(txId) {
     TX_STATE = await res.json();
     renderEntities();
     renderHypotheses();
-    renderInvestigations();
+    renderTasks();
     renderAssertions();
   } catch (e) {
     el.innerHTML = `<div class="status error">Failed: ${esc(e.message)}</div>`;
@@ -485,7 +485,7 @@ function render() {
   renderTransactions();
   renderEntities();
   renderHypotheses();
-  renderInvestigations();
+  renderTasks();
   renderAssertions();
 }
 
@@ -670,26 +670,27 @@ function renderHypothesesFromEntities(el, entities) {
   ).join('');
 }
 
-// --- Investigations (open investigations) ---
-function renderInvestigations() {
-  const el = document.getElementById('tab-investigations');
+// --- Tasks (open tasks) ---
+function renderTasks() {
+  const el = document.getElementById('tab-tasks');
   const source = (selectedTxId && TX_STATE) ? TX_STATE : DATA;
-  const invs = source.investigations || [];
+  const items = source.tasks || [];
 
-  if (!invs.length) {
-    el.innerHTML = '<div class="no-data">No open investigations</div>';
+  if (!items.length) {
+    el.innerHTML = '<div class="no-data">No open tasks</div>';
     return;
   }
 
-  el.innerHTML = invs.map(inv => {
-    const hl = selectedTxId && inv.tx_id === selectedTxId;
-    const goal = typeof inv.goal === 'string' ? inv.goal : fmtVal(inv.goal);
-    const context = inv.context && inv.context !== null ? fmtVal(inv.context) : '';
-    const notes = inv.notes && inv.notes !== null ? fmtVal(inv.notes) : '';
+  el.innerHTML = items.map(t => {
+    const hl = selectedTxId && t.tx_id === selectedTxId;
+    const goal = typeof t.goal === 'string' ? t.goal : fmtVal(t.goal);
+    const context = t.context && t.context !== null ? fmtVal(t.context) : '';
+    const notes = t.notes && t.notes !== null ? fmtVal(t.notes) : '';
+    const kindBadge = t.kind ? ` <span class="badge badge-inv">${esc(t.kind)}</span>` : '';
 
     return `<div class="inv open">
       <div class="inv-header" onclick="this.parentElement.classList.toggle('open')">
-        <span class="inv-slug">${esc(inv.slug)}</span>
+        <span class="inv-slug">${esc(t.slug)}</span>${kindBadge}
         ${hl ? ' <span class="badge badge-new">this tx</span>' : ''}
       </div>
       <div class="inv-body">
@@ -697,9 +698,9 @@ function renderInvestigations() {
           <div class="inv-field-label">Goal</div>
           <div class="inv-field-value">${esc(goal)}</div>
         </div>
-        ${inv.reasoning ? `<div class="inv-field">
+        ${t.reasoning ? `<div class="inv-field">
           <div class="inv-field-label">Reasoning</div>
-          <div class="inv-field-value" style="color:var(--text2);font-style:italic">${esc(inv.reasoning)}</div>
+          <div class="inv-field-value" style="color:var(--text2);font-style:italic">${esc(t.reasoning)}</div>
         </div>` : ''}
         ${context ? `<div class="inv-field">
           <div class="inv-field-label">Context</div>
@@ -746,28 +747,29 @@ function renderAssertions() {
     <div style="font-weight:500">${esc(txQ)} <span style="color:var(--text2);font-weight:400">${esc(txTime)}</span></div>
   </div>`;
 
-  // Investigation operations from this transaction
-  const invItems = [];
-  for (const inv of (TX_STATE.investigations || [])) {
-    if (inv.tx_id === selectedTxId) {
-      invItems.push(inv);
+  // Task operations from this transaction
+  const taskItems = [];
+  for (const t of (TX_STATE.tasks || [])) {
+    if (t.tx_id === selectedTxId) {
+      taskItems.push(t);
     }
   }
 
-  if (!items.length && !invItems.length) {
-    html += '<div class="no-data">No facts, hypotheses, or investigation changes in this transaction (schema-only or empty)</div>';
+  if (!items.length && !taskItems.length) {
+    html += '<div class="no-data">No facts, hypotheses, or task changes in this transaction (schema-only or empty)</div>';
   }
 
-  if (invItems.length) {
+  if (taskItems.length) {
     html += `<div style="margin-bottom:12px">
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px">Investigations</div>
-      ${invItems.map(inv => {
-        const goal = typeof inv.goal === 'string' ? inv.goal : fmtVal(inv.goal);
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text2);margin-bottom:6px">Tasks</div>
+      ${taskItems.map(t => {
+        const goal = typeof t.goal === 'string' ? t.goal : fmtVal(t.goal);
+        const kindBadge = t.kind ? ` <span class="badge badge-inv">${esc(t.kind)}</span>` : '';
         return `<div class="assertion">
-          <span class="badge badge-inv">investigation</span>
-          <span class="inv-slug" style="margin-left:6px">${esc(inv.slug)}</span>
+          <span class="badge badge-inv">task</span>${kindBadge}
+          <span class="inv-slug" style="margin-left:6px">${esc(t.slug)}</span>
           <div style="margin-top:4px;font-size:13px;color:var(--text)">${esc(goal)}</div>
-          ${inv.reasoning ? `<div class="hyp-reasoning">${esc(inv.reasoning)}</div>` : ''}
+          ${t.reasoning ? `<div class="hyp-reasoning">${esc(t.reasoning)}</div>` : ''}
         </div>`;
       }).join('')}
     </div>`;

@@ -200,13 +200,9 @@ impl App {
 
             match result {
                 Ok(LlmResult { answer, transaction_yaml, usage, commands }) => {
-                    let token_info = match &usage {
-                        Some(u) => {
-                            self.total_tokens += u.total_tokens;
-                            format!(" [{}+{}={}tok]", u.prompt_tokens, u.completion_tokens, u.total_tokens)
-                        }
-                        None => String::new(),
-                    };
+                    if let Some(u) = &usage {
+                        self.total_tokens += u.total_tokens;
+                    }
 
                     if !answer.is_empty() {
                         self.messages.push(Message {
@@ -218,25 +214,12 @@ impl App {
                     // Dispatch transaction if it has content
                     if !transaction_yaml.is_empty() {
                         let dispatch_yaml = inject_commands(&transaction_yaml, &compiled_commands);
-                        match self.store.dispatch(&dispatch_yaml, &self.branch) {
-                            Ok(yaml) => {
-                                self.messages.push(Message {
-                                    role: Role::System,
-                                    text: format!("tx committed{token_info}\n{}", yaml.trim()),
-                                });
-                            }
-                            Err(e) => {
-                                self.messages.push(Message {
-                                    role: Role::System,
-                                    text: format!("tx failed{token_info}: {e}"),
-                                });
-                            }
+                        if let Err(e) = self.store.dispatch(&dispatch_yaml, &self.branch) {
+                            self.messages.push(Message {
+                                role: Role::System,
+                                text: format!("tx failed: {e}"),
+                            });
                         }
-                    } else if !token_info.is_empty() {
-                        self.messages.push(Message {
-                            role: Role::System,
-                            text: format!("no transaction{token_info}"),
-                        });
                     }
 
                     // Execute commands if any
@@ -248,7 +231,7 @@ impl App {
 
                     self.messages.push(Message {
                         role: Role::System,
-                        text: format!("executed {} command(s), calling LLM again...", compiled_commands.len()),
+                        text: "thinking...".into(),
                     });
                 }
                 Err(e) => {

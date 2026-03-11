@@ -28,6 +28,8 @@ pub enum EntityError {
 }
 
 /// Mid-level entity operations: create, delete, restore, find.
+///
+/// Branch-aware: writes go to the configured branch, reads walk the ancestry chain.
 pub struct EntityStore {
     io: EntityIo,
 }
@@ -172,7 +174,7 @@ mod tests {
     #[test]
     fn create_entity() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let rec = entities.create("alpha", Some("First entity")).unwrap();
         assert_eq!(rec.slug, "alpha");
@@ -183,7 +185,7 @@ mod tests {
     #[test]
     fn create_duplicate_slug_fails() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         entities.create("alpha", None).unwrap();
         let err = entities.create("alpha", None).unwrap_err();
@@ -193,7 +195,7 @@ mod tests {
     #[test]
     fn get_by_uuid_and_slug() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let created = entities.create("bravo", None).unwrap();
 
@@ -209,7 +211,7 @@ mod tests {
     #[test]
     fn delete_and_restore() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let created = entities.create("charlie", None).unwrap();
         assert!(entities.is_active(&created.id).unwrap());
@@ -227,7 +229,7 @@ mod tests {
     #[test]
     fn delete_already_deleted_fails() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let created = entities.create("delta", None).unwrap();
         entities.delete(&created.id).unwrap();
@@ -239,7 +241,7 @@ mod tests {
     #[test]
     fn restore_already_active_fails() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let created = entities.create("echo", None).unwrap();
         let err = entities.restore(&created.id).unwrap_err();
@@ -249,7 +251,7 @@ mod tests {
     #[test]
     fn delete_nonexistent_fails() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let err = entities.delete(&Uuid::now_v7()).unwrap_err();
         assert!(matches!(err, EntityError::NotFound(_)));
@@ -258,7 +260,7 @@ mod tests {
     #[test]
     fn list_active_excludes_deleted() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let a = entities.create("one", None).unwrap();
         entities.create("two", None).unwrap();
@@ -275,7 +277,7 @@ mod tests {
     #[test]
     fn history_tracks_all_changes() {
         let (store, _dir) = setup();
-        let entities = store.entities();
+        let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
         let created = entities.create("foxtrot", None).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1));

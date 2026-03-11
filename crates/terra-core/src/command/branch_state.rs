@@ -192,7 +192,7 @@ pub fn build_state(
     };
 
     // 3. Entity states
-    let entities = store.entities().list_active_at(bound)?;
+    let entities = store.entities(registry.branch_id(), capped.clone()).list_active_at(bound)?;
     let visible_entities: Vec<_> = entities
         .into_iter()
         .filter(|e| vis.is_visible(&capped, ItemKind::Entity, e.id).unwrap_or(true))
@@ -228,12 +228,14 @@ pub fn build_state(
             }
         }
 
-        entity_states.push(EntityState {
-            id: entity.id,
-            slug: entity.slug.clone(),
-            description: entity.description.clone(),
-            types: type_states,
-        });
+        if !type_states.is_empty() {
+            entity_states.push(EntityState {
+                id: entity.id,
+                slug: entity.slug.clone(),
+                description: entity.description.clone(),
+                types: type_states,
+            });
+        }
     }
 
     // 4. Recent transactions

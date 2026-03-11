@@ -179,7 +179,7 @@ pub fn execute_transaction(
 
     // Phase 1: Validate assertions before any entity mutation
 
-    let entities = store.entities();
+    let entities = store.entities(registry.branch_id(), registry.ancestry().to_vec());
     let vis = store.visibility();
     let ancestry = registry.ancestry();
 
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(result.introduced[0].facts.len(), 1);
         assert!(result.introduced[0].hypotheses.is_empty());
 
-        let entity = store.entities().get_by_slug("song-1").unwrap().unwrap();
+        let entity = store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("song-1").unwrap().unwrap();
         assert_eq!(entity.description.as_deref(), Some("A great song"));
 
         let log = store.facts().list().unwrap();
@@ -656,7 +656,7 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        store.entities().create("song-3", None).unwrap();
+        store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).create("song-3", None).unwrap();
 
         let result = execute_transaction(
             tx_input(
@@ -715,7 +715,7 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        store.entities().create("dupe", None).unwrap();
+        store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).create("dupe", None).unwrap();
 
         let err = execute_transaction(
             tx_input(
@@ -775,7 +775,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, AssertEntityError::ConflictingFacts { .. }));
-        assert!(store.entities().get_by_slug("conflict").unwrap().is_none());
+        assert!(store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("conflict").unwrap().is_none());
     }
 
     #[test]
@@ -941,8 +941,8 @@ mod tests {
         assert!(result.introduced[0].facts[0].tx_id == tx_id);
         assert!(result.introduced[1].facts[0].tx_id == tx_id);
 
-        assert!(store.entities().get_by_slug("song-a").unwrap().is_some());
-        assert!(store.entities().get_by_slug("song-b").unwrap().is_some());
+        assert!(store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("song-a").unwrap().is_some());
+        assert!(store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("song-b").unwrap().is_some());
     }
 
     #[test]
@@ -950,7 +950,7 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        store.entities().create("existing-song", None).unwrap();
+        store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).create("existing-song", None).unwrap();
 
         let result = execute_transaction(
             tx_input(
@@ -1083,7 +1083,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(err, AssertEntityError::ConflictingFacts { .. }));
-        assert!(store.entities().get_by_slug("conflict").unwrap().is_none());
+        assert!(store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("conflict").unwrap().is_none());
     }
 
     #[test]
@@ -1091,7 +1091,7 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        store.entities().create("taken", None).unwrap();
+        store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).create("taken", None).unwrap();
 
         let err = execute_transaction(
             tx_input(
@@ -1336,10 +1336,10 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg);
 
-        store.entities().create("song", None).unwrap();
+        store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).create("song", None).unwrap();
 
         // Hide entity "song"
-        let entity_rec = store.entities().get_by_slug("song").unwrap().unwrap();
+        let entity_rec = store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("song").unwrap().unwrap();
         let tx = Transaction {
             id: Uuid::now_v7(),
             branch_id: MAIN_BRANCH,
@@ -1381,8 +1381,8 @@ mod tests {
         setup_schema(&reg);
 
         // Create and hide entity
-        store.entities().create("taken", None).unwrap();
-        let entity_rec = store.entities().get_by_slug("taken").unwrap().unwrap();
+        store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).create("taken", None).unwrap();
+        let entity_rec = store.entities(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]).get_by_slug("taken").unwrap().unwrap();
         let tx = Transaction {
             id: Uuid::now_v7(),
             branch_id: MAIN_BRANCH,

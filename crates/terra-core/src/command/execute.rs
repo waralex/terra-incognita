@@ -58,7 +58,7 @@ pub fn execute(
             })
         }
         Command::ListEntities => {
-            let entities = store.entities().list_active()?;
+            let entities = store.entities(registry.branch_id(), registry.ancestry().to_vec()).list_active()?;
             let vis = store.visibility();
             let ancestry = registry.ancestry();
             let entities = entities
@@ -97,7 +97,7 @@ mod tests {
         AssertionItem, CreateEntityType, CreateProperty, HideUnhideInput,
         IntroduceItem, TransactionInput,
     };
-    use crate::assertion::{PropertyValue, RangeValue, MAIN_BRANCH};
+    use crate::assertion::{PropertyValue, RangeValue, SetValue, MAIN_BRANCH};
     use crate::schema::ValueType;
     use std::collections::HashMap;
     use uuid::Uuid;
@@ -656,7 +656,15 @@ mod tests {
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![
-                    IntroduceItem { entity: "visible".into(), description: None, facts: vec![], hypotheses: vec![] },
+                    IntroduceItem {
+                        entity: "visible".into(), description: None,
+                        facts: vec![AssertionItem {
+                            entity_type: "track".into(),
+                            properties: HashMap::from([("certification".into(), PropertyValue::Set(SetValue { contains: vec![serde_json::json!("gold")], not_contains: vec![] }))]),
+                            reasoning: serde_json::json!("test"),
+                        }],
+                        hypotheses: vec![],
+                    },
                     IntroduceItem { entity: "hidden".into(), description: None, facts: vec![], hypotheses: vec![] },
                 ],
                 asserts: vec![],

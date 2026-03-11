@@ -26,86 +26,90 @@ pub struct EntityRecord {
 }
 
 /// Low-level IO for entity storage: main CF (uuid+timestamp → body) and slug index CF (slug → uuid).
+///
+/// Branch-aware: writes go to `branch_id`, reads walk the ancestry chain.
 pub struct EntityIo {
     db: Arc<DB>,
     main_cf: &'static str,
     slug_cf: &'static str,
+    branch_id: Uuid,
+    ancestry: Vec<(Uuid, Uuid)>,
 }
 
 impl EntityIo {
-    pub(crate) fn new(db: Arc<DB>, main_cf: &'static str, slug_cf: &'static str) -> Self {
-        Self { db, main_cf, slug_cf }
+    pub(crate) fn new(
+        db: Arc<DB>,
+        main_cf: &'static str,
+        slug_cf: &'static str,
+        branch_id: Uuid,
+        ancestry: Vec<(Uuid, Uuid)>,
+    ) -> Self {
+        Self { db, main_cf, slug_cf, branch_id, ancestry }
     }
 
-    /// Writes an entity record to the main CF.
+    /// Writes an entity record to the main CF under `self.branch_id`.
     pub fn put(&self, record: &EntityRecord) -> Result<(), LogError> {
         let main = self.main_cf()?;
         let key = EntityKey {
-            branch_id: super::MAIN_BRANCH,
+            branch_id: self.branch_id,
             entity_id: record.id,
             tx_id: record.tx_id,
         }.encode();
-        let val = serde_json::json!({
-            "slug": record.slug,
-            "status": record.status,
-            "description": record.description,
-        });
-        let val_bytes = serde_json::to_vec(&val)
-            .map_err(|e| LogError::Storage(e.to_string()))?;
+        let val_bytes = encode_value(record)?;
 
         self.db
             .put_cf(main, &key, &val_bytes)
             .map_err(|e| LogError::Storage(e.to_string()))
     }
 
-    /// Writes an entity record + slug index atomically.
+    /// Writes an entity record + slug index atomically under `self.branch_id`.
     pub fn put_with_index(&self, record: &EntityRecord) -> Result<(), LogError> {
         let main = self.main_cf()?;
         let idx = self.slug_cf()?;
 
         let key = EntityKey {
-            branch_id: super::MAIN_BRANCH,
+            branch_id: self.branch_id,
             entity_id: record.id,
             tx_id: record.tx_id,
         }.encode();
-        let val = serde_json::json!({
-            "slug": record.slug,
-            "status": record.status,
-            "description": record.description,
-        });
-        let val_bytes = serde_json::to_vec(&val)
-            .map_err(|e| LogError::Storage(e.to_string()))?;
+        let val_bytes = encode_value(record)?;
 
         let mut batch = rocksdb::WriteBatch::default();
         batch.put_cf(main, &key, &val_bytes);
-        batch.put_cf(idx, &encode_slug_key(&super::MAIN_BRANCH, &record.slug), record.id.as_bytes());
+        batch.put_cf(idx, &encode_slug_key(&self.branch_id, &record.slug), record.id.as_bytes());
 
         self.db
             .write(batch)
             .map_err(|e| LogError::Storage(e.to_string()))
     }
 
-    /// Reads the latest record for an entity by UUID (last entry by timestamp).
+    /// Reads the latest record for an entity by UUID, walking the ancestry chain.
     pub fn get_latest(&self, entity_id: &Uuid) -> Result<Option<EntityRecord>, LogError> {
         let main = self.main_cf()?;
-        let prefix = EntityKey::prefix_branch_entity(&super::MAIN_BRANCH, entity_id);
+        let mut best: Option<(Uuid, Vec<u8>)> = None;
 
-        let mut latest: Option<(Uuid, Vec<u8>)> = None;
-        let iter = self.db.prefix_iterator_cf(main, &prefix);
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let prefix = EntityKey::prefix_branch_entity(&ancestor_id, entity_id);
+            let bound = *branch_point_tx.as_bytes();
 
-        for item in iter {
-            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            if !raw_key.starts_with(&prefix) {
-                break;
-            }
-            let k = EntityKey::decode(&raw_key)?;
-            match &latest {
-                Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
-                _ => latest = Some((k.tx_id, val.to_vec())),
+            let iter = self.db.prefix_iterator_cf(main, &prefix);
+            for item in iter {
+                let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+                if !raw_key.starts_with(&prefix) {
+                    break;
+                }
+                let k = EntityKey::decode(&raw_key)?;
+                if *k.tx_id.as_bytes() > bound {
+                    continue;
+                }
+                match &best {
+                    Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
+                    _ => best = Some((k.tx_id, val.to_vec())),
+                }
             }
         }
 
-        match latest {
+        match best {
             None => Ok(None),
             Some((tx_id, val_bytes)) => {
                 let record = decode_record(entity_id, tx_id, &val_bytes)?;
@@ -114,62 +118,78 @@ impl EntityIo {
         }
     }
 
-    /// Reads all records for an entity by UUID, ordered by timestamp.
+    /// Reads all records for an entity by UUID across ancestry, ordered by timestamp.
     pub fn get_history(&self, entity_id: &Uuid) -> Result<Vec<EntityRecord>, LogError> {
         let main = self.main_cf()?;
-        let prefix = EntityKey::prefix_branch_entity(&super::MAIN_BRANCH, entity_id);
-
         let mut records = Vec::new();
-        let iter = self.db.prefix_iterator_cf(main, &prefix);
 
-        for item in iter {
-            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            if !raw_key.starts_with(&prefix) {
-                break;
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let prefix = EntityKey::prefix_branch_entity(&ancestor_id, entity_id);
+            let bound = *branch_point_tx.as_bytes();
+
+            let iter = self.db.prefix_iterator_cf(main, &prefix);
+            for item in iter {
+                let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+                if !raw_key.starts_with(&prefix) {
+                    break;
+                }
+                let k = EntityKey::decode(&raw_key)?;
+                if *k.tx_id.as_bytes() > bound {
+                    continue;
+                }
+                records.push(decode_record(entity_id, k.tx_id, &val)?);
             }
-            let k = EntityKey::decode(&raw_key)?;
-            records.push(decode_record(entity_id, k.tx_id, &val)?);
         }
 
+        records.sort_by(|a, b| a.tx_id.as_bytes().cmp(b.tx_id.as_bytes()));
         Ok(records)
     }
 
-    /// Looks up a UUID by slug from the index CF.
+    /// Looks up a UUID by slug from the index CF, walking the ancestry chain.
     pub fn get_uuid_by_slug(&self, slug: &str) -> Result<Option<Uuid>, LogError> {
         let idx = self.slug_cf()?;
-        let key = encode_slug_key(&super::MAIN_BRANCH, slug);
-        match self.db.get_cf(idx, &key) {
-            Ok(Some(bytes)) => {
-                let uuid = Uuid::from_slice(&bytes)
-                    .map_err(|e| LogError::Storage(e.to_string()))?;
-                Ok(Some(uuid))
+        for &(ancestor_id, _) in &self.ancestry {
+            let key = encode_slug_key(&ancestor_id, slug);
+            match self.db.get_cf(idx, &key) {
+                Ok(Some(bytes)) => {
+                    let uuid = Uuid::from_slice(&bytes)
+                        .map_err(|e| LogError::Storage(e.to_string()))?;
+                    return Ok(Some(uuid));
+                }
+                Ok(None) => continue,
+                Err(e) => return Err(LogError::Storage(e.to_string())),
             }
-            Ok(None) => Ok(None),
-            Err(e) => Err(LogError::Storage(e.to_string())),
         }
+        Ok(None)
     }
 
-    /// Iterates all entries in the main CF on the main branch. Returns all latest records.
+    /// Iterates all entries across ancestry. Returns all latest records.
     pub fn scan_all_latest(&self) -> Result<Vec<EntityRecord>, LogError> {
         let main = self.main_cf()?;
-        let branch_prefix = EntityKey::prefix_branch(&super::MAIN_BRANCH);
         let mut latest_map: std::collections::HashMap<Uuid, (Uuid, Vec<u8>)> =
             std::collections::HashMap::new();
 
-        let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
-        for item in iter {
-            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            if !raw_key.starts_with(&branch_prefix) {
-                break;
-            }
-            if raw_key.len() < EntityKey::SIZE {
-                continue;
-            }
-            let k = EntityKey::decode(&raw_key)?;
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let branch_prefix = EntityKey::prefix_branch(&ancestor_id);
+            let bound = *branch_point_tx.as_bytes();
 
-            match latest_map.get(&k.entity_id) {
-                Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
-                _ => { latest_map.insert(k.entity_id, (k.tx_id, val.to_vec())); }
+            let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
+            for item in iter {
+                let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+                if !raw_key.starts_with(&branch_prefix) {
+                    break;
+                }
+                if raw_key.len() < EntityKey::SIZE {
+                    continue;
+                }
+                let k = EntityKey::decode(&raw_key)?;
+                if *k.tx_id.as_bytes() > bound {
+                    continue;
+                }
+                match latest_map.get(&k.entity_id) {
+                    Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
+                    _ => { latest_map.insert(k.entity_id, (k.tx_id, val.to_vec())); }
+                }
             }
         }
 
@@ -183,28 +203,33 @@ impl EntityIo {
     /// Like `scan_all_latest` but only considers records where tx_id <= upper_bound.
     pub fn scan_all_latest_at(&self, upper_bound: Uuid) -> Result<Vec<EntityRecord>, LogError> {
         let main = self.main_cf()?;
-        let branch_prefix = EntityKey::prefix_branch(&super::MAIN_BRANCH);
-        let bound = *upper_bound.as_bytes();
+        let upper_bytes = *upper_bound.as_bytes();
         let mut latest_map: std::collections::HashMap<Uuid, (Uuid, Vec<u8>)> =
             std::collections::HashMap::new();
 
-        let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
-        for item in iter {
-            let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
-            if !raw_key.starts_with(&branch_prefix) {
-                break;
-            }
-            if raw_key.len() < EntityKey::SIZE {
-                continue;
-            }
-            let k = EntityKey::decode(&raw_key)?;
-            if *k.tx_id.as_bytes() > bound {
-                continue;
-            }
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let branch_prefix = EntityKey::prefix_branch(&ancestor_id);
+            let bpt = *branch_point_tx.as_bytes();
+            let bound = if upper_bytes < bpt { upper_bytes } else { bpt };
 
-            match latest_map.get(&k.entity_id) {
-                Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
-                _ => { latest_map.insert(k.entity_id, (k.tx_id, val.to_vec())); }
+            let iter = self.db.prefix_iterator_cf(main, &branch_prefix);
+            for item in iter {
+                let (raw_key, val) = item.map_err(|e| LogError::Storage(e.to_string()))?;
+                if !raw_key.starts_with(&branch_prefix) {
+                    break;
+                }
+                if raw_key.len() < EntityKey::SIZE {
+                    continue;
+                }
+                let k = EntityKey::decode(&raw_key)?;
+                if *k.tx_id.as_bytes() > bound {
+                    continue;
+                }
+
+                match latest_map.get(&k.entity_id) {
+                    Some((prev_tx, _)) if k.tx_id.as_bytes() <= prev_tx.as_bytes() => {}
+                    _ => { latest_map.insert(k.entity_id, (k.tx_id, val.to_vec())); }
+                }
             }
         }
 
@@ -247,6 +272,15 @@ fn encode_slug_key(branch_id: &Uuid, slug: &str) -> Vec<u8> {
     key
 }
 
+fn encode_value(record: &EntityRecord) -> Result<Vec<u8>, LogError> {
+    let val = serde_json::json!({
+        "slug": record.slug,
+        "status": record.status,
+        "description": record.description,
+    });
+    serde_json::to_vec(&val).map_err(|e| LogError::Storage(e.to_string()))
+}
+
 fn decode_record(entity_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Result<EntityRecord, LogError> {
     let val: serde_json::Value = serde_json::from_slice(val_bytes)
         .map_err(|e| LogError::Storage(e.to_string()))?;
@@ -282,6 +316,11 @@ mod tests {
 
     const MAIN_CF: &str = "entity_main";
     const SLUG_CF: &str = "entity_slug";
+    const MAIN_BRANCH: Uuid = Uuid::nil();
+
+    fn main_ancestry() -> Vec<(Uuid, Uuid)> {
+        vec![(MAIN_BRANCH, Uuid::max())]
+    }
 
     fn open_db(dir: &tempfile::TempDir) -> Arc<DB> {
         let mut opts = Options::default();
@@ -308,11 +347,15 @@ mod tests {
         }
     }
 
+    fn io(db: &Arc<DB>) -> EntityIo {
+        EntityIo::new(Arc::clone(db), MAIN_CF, SLUG_CF, MAIN_BRANCH, main_ancestry())
+    }
+
     #[test]
     fn put_and_get_latest() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
+        let io = io(&db);
 
         let id = Uuid::now_v7();
         let rec = record(id, "alpha", EntityStatus::Active);
@@ -328,7 +371,7 @@ mod tests {
     fn get_latest_returns_none_for_unknown() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
+        let io = io(&db);
 
         assert!(io.get_latest(&Uuid::now_v7()).unwrap().is_none());
     }
@@ -337,7 +380,7 @@ mod tests {
     fn put_with_index_and_lookup_by_slug() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
+        let io = io(&db);
 
         let id = Uuid::now_v7();
         let rec = record(id, "bravo", EntityStatus::Active);
@@ -353,7 +396,7 @@ mod tests {
     fn history_tracks_status_changes() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
+        let io = io(&db);
 
         let id = Uuid::now_v7();
         io.put(&record(id, "charlie", EntityStatus::Active)).unwrap();
@@ -374,7 +417,7 @@ mod tests {
     fn scan_all_latest() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
-        let io = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF);
+        let io = io(&db);
 
         let id1 = Uuid::now_v7();
         let id2 = Uuid::now_v7();
@@ -391,6 +434,55 @@ mod tests {
 
         let e2 = all.iter().find(|r| r.id == id2).unwrap();
         assert_eq!(e2.status, EntityStatus::Active);
+    }
+
+    #[test]
+    fn branch_isolation() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = open_db(&dir);
+
+        let branch_a = Uuid::now_v7();
+        let branch_b = Uuid::now_v7();
+
+        let io_a = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF, branch_a, vec![(branch_a, Uuid::max())]);
+        let io_b = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF, branch_b, vec![(branch_b, Uuid::max())]);
+
+        let id = Uuid::now_v7();
+        io_a.put_with_index(&record(id, "only_a", EntityStatus::Active)).unwrap();
+
+        // Branch A sees it
+        assert!(io_a.get_latest(&id).unwrap().is_some());
+        assert!(io_a.get_uuid_by_slug("only_a").unwrap().is_some());
+
+        // Branch B does not
+        assert!(io_b.get_latest(&id).unwrap().is_none());
+        assert!(io_b.get_uuid_by_slug("only_a").unwrap().is_none());
+    }
+
+    #[test]
+    fn child_branch_sees_parent_entities() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = open_db(&dir);
+
+        let parent = Uuid::now_v7();
+        let io_parent = EntityIo::new(Arc::clone(&db), MAIN_CF, SLUG_CF, parent, vec![(parent, Uuid::max())]);
+
+        let id = Uuid::now_v7();
+        io_parent.put_with_index(&record(id, "from_parent", EntityStatus::Active)).unwrap();
+
+        // Child branch inherits parent
+        let child = Uuid::now_v7();
+        let io_child = EntityIo::new(
+            Arc::clone(&db), MAIN_CF, SLUG_CF, child,
+            vec![(child, Uuid::max()), (parent, Uuid::max())],
+        );
+
+        assert!(io_child.get_latest(&id).unwrap().is_some());
+        assert!(io_child.get_uuid_by_slug("from_parent").unwrap().is_some());
+
+        let all = io_child.scan_all_latest().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].slug, "from_parent");
     }
 
     #[test]

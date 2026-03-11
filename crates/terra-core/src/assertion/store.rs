@@ -169,9 +169,9 @@ impl AssertionStore {
 
     // -- Entities --
 
-    /// Entity store for create/delete/restore/find operations.
-    pub fn entities(&self) -> EntityStore {
-        EntityStore::new(EntityIo::new(Arc::clone(&self.db), CF_ENTITY_MAIN, CF_ENTITY_SLUG))
+    /// Entity store for create/delete/restore/find operations (branch-aware).
+    pub fn entities(&self, branch_id: Uuid, ancestry: Vec<(Uuid, Uuid)>) -> EntityStore {
+        EntityStore::new(EntityIo::new(Arc::clone(&self.db), CF_ENTITY_MAIN, CF_ENTITY_SLUG, branch_id, ancestry))
     }
 
     // -- Branches --

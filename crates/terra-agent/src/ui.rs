@@ -43,6 +43,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  "),
         Span::styled("[Ctrl+B: switch session]", Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
+        Span::styled("[C-y: copy state]", Style::default().fg(Color::DarkGray)),
+        Span::raw("  "),
         Span::styled("[Ctrl+C: quit]", Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(format!("{}tok", app.total_tokens), Style::default().fg(Color::Yellow)),

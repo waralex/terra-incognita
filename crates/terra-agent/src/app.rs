@@ -244,6 +244,27 @@ impl App {
         self.panel_scroll = self.panel_scroll.saturating_sub(10);
     }
 
+    /// Copies branch state to system clipboard.
+    pub fn copy_state_to_clipboard(&mut self) {
+        let state = self.store.fetch_state(&self.branch).unwrap_or_default();
+        let ok = std::process::Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write;
+                if let Some(ref mut stdin) = child.stdin {
+                    stdin.write_all(state.as_bytes())?;
+                }
+                child.wait()
+            })
+            .is_ok();
+
+        self.messages.push(Message {
+            role: Role::System,
+            text: if ok { "State copied to clipboard".into() } else { "Failed to copy to clipboard".into() },
+        });
+    }
+
     /// Moves cursor left in input (by one char boundary).
     pub fn cursor_left(&mut self) {
         if self.cursor_pos > 0 {

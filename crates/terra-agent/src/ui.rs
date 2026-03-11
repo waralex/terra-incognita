@@ -46,6 +46,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled("[Ctrl+C: quit]", Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
         Span::styled(format!("{}tok", app.total_tokens), Style::default().fg(Color::Yellow)),
+        Span::raw("  "),
+        Span::styled(format!("state: ~{}tok", app.state_tokens), Style::default().fg(Color::DarkGray)),
     ]);
     let bar = Paragraph::new(text).style(Style::default().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(bar, area);

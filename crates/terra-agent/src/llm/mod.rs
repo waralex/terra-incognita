@@ -65,7 +65,7 @@ pub struct LlmResult {
 const MAX_OUTPUT_TOKENS: usize = 4096;
 
 /// Rough token estimate: ~4 chars per token for English/mixed content.
-fn estimate_tokens(text: &str) -> usize {
+pub fn estimate_tokens(text: &str) -> usize {
     (text.len() + 3) / 4
 }
 

@@ -41,6 +41,7 @@ pub struct App {
     pub wants_switch_session: bool,
     pub scroll_offset: usize,
     pub total_tokens: usize,
+    pub state_tokens: usize,
     store: StoreHandle,
     mode: Mode,
     /// Conversation history for LLM context (last N exchanges).
@@ -68,6 +69,7 @@ impl App {
             wants_switch_session: false,
             scroll_offset: 0,
             total_tokens: 0,
+            state_tokens: 0,
             store,
             mode,
             llm_history: Vec::new(),
@@ -117,6 +119,7 @@ impl App {
             Mode::Llm(_) => self.dispatch_llm(input),
         }
 
+        self.update_state_tokens();
         if self.show_side_panel {
             self.refresh_side_panel();
         }
@@ -308,11 +311,17 @@ impl App {
         }
     }
 
+    fn update_state_tokens(&mut self) {
+        let state = self.store.fetch_state(&self.branch).unwrap_or_default();
+        self.state_tokens = llm::estimate_tokens(&state);
+    }
+
     fn refresh_side_panel(&mut self) {
         self.side_panel_content = match self.store.fetch_state(&self.branch) {
             Ok(yaml) => yaml,
             Err(e) => e,
         };
+        self.state_tokens = llm::estimate_tokens(&self.side_panel_content);
     }
 }
 

@@ -7,6 +7,7 @@ use crate::store::StoreHandle;
 
 const MAX_RETRIES: usize = 2;
 const MAX_COMMAND_ROUNDS: usize = 3;
+const MAX_COMMANDS_PER_ROUND: usize = 3;
 
 /// Message role in the chat log.
 #[derive(Clone)]
@@ -259,10 +260,11 @@ impl App {
         }
     }
 
-    /// Executes LLM commands and returns compiled results.
+    /// Executes LLM commands (up to MAX_COMMANDS_PER_ROUND) and returns compiled results.
     fn execute_commands(&mut self, commands: &[LlmCommand]) -> Vec<serde_json::Value> {
         commands
             .iter()
+            .take(MAX_COMMANDS_PER_ROUND)
             .map(|cmd| {
                 let mut compiled = serde_json::to_value(cmd).unwrap_or_default();
 
@@ -528,21 +530,30 @@ fn inject_commands(transaction_yaml: &str, commands: &[serde_json::Value]) -> St
     serde_yaml::to_string(&val).unwrap_or_else(|_| transaction_yaml.to_string())
 }
 
-/// Loads system prompt from `prompts/system.md` relative to the executable,
-/// falling back to a few common locations.
+/// Loads system prompt from a file.
+///
+/// Resolution order:
+/// 1. `TERRA_AGENT_PROMPT` env var — exact file path or bare name (resolved to `prompts/{name}.md`)
+/// 2. Default: `prompts/system.md`
 fn system_prompt() -> &'static str {
     static PROMPT: OnceLock<String> = OnceLock::new();
     PROMPT.get_or_init(|| {
+        let prompt_file = match std::env::var("TERRA_AGENT_PROMPT") {
+            Ok(val) if val.contains('/') || val.contains('.') => val,
+            Ok(name) => format!("prompts/{name}.md"),
+            Err(_) => "prompts/system.md".into(),
+        };
+
         let candidates = [
             // Next to the executable (cargo run sets this to target/debug/)
             std::env::current_exe()
                 .ok()
                 .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .map(|d| d.join("prompts/system.md")),
+                .map(|d| d.join(&prompt_file)),
             // Relative to cwd (typical for `cargo run -p terra-agent`)
-            Some(PathBuf::from("crates/terra-agent/prompts/system.md")),
+            Some(PathBuf::from(format!("crates/terra-agent/{prompt_file}"))),
             // Direct relative
-            Some(PathBuf::from("prompts/system.md")),
+            Some(PathBuf::from(&prompt_file)),
         ];
         for candidate in candidates.into_iter().flatten() {
             if let Ok(content) = std::fs::read_to_string(&candidate) {

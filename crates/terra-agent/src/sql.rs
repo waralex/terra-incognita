@@ -67,8 +67,10 @@ impl SqlTool {
         Ok(Self { connection_string, rt, database })
     }
 
-    /// Executes a SQL query and returns JSON results.
+    /// Executes a read-only SQL query and returns JSON results.
+    /// Rejects statements containing mutating keywords.
     pub fn execute(&self, sql: &str) -> Result<SqlResult, String> {
+        reject_mutating(sql)?;
         self.rt.block_on(self.execute_async(sql))
     }
 
@@ -165,6 +167,20 @@ fn column_to_json(row: &Row, idx: usize, col_type: &Type) -> serde_json::Value {
     try_get!(bool);
 
     serde_json::Value::Null
+}
+
+const FORBIDDEN_KEYWORDS: &[&str] = &[
+    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE",
+];
+
+fn reject_mutating(sql: &str) -> Result<(), String> {
+    let upper = sql.to_ascii_uppercase();
+    for kw in FORBIDDEN_KEYWORDS {
+        if upper.split_ascii_whitespace().any(|w| w == *kw) {
+            return Err(format!("rejected: {kw} statements are not allowed (read-only mode)"));
+        }
+    }
+    Ok(())
 }
 
 fn whoami() -> String {

@@ -8,7 +8,7 @@ mod ui;
 use std::io;
 use std::path::PathBuf;
 
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -65,7 +65,7 @@ fn main() -> io::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 

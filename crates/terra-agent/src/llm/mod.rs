@@ -91,8 +91,9 @@ pub fn call_llm(
     branch_state: &str,
     user_message: &str,
 ) -> Result<LlmResult, String> {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
     let full_system = format!(
-        "{system_prompt}\n\n# Current branch state\n```yaml\n{branch_state}\n```"
+        "{system_prompt}\n\n# Current time\n{now}\n\n# Current branch state\n```yaml\n{branch_state}\n```"
     );
 
     let messages = vec![ChatMessage {

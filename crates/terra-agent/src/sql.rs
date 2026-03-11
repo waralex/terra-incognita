@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use serde::Serialize;
 use tokio::runtime::Runtime;
+use rust_decimal::prelude::ToPrimitive;
 use tokio_postgres::types::Type;
 use tokio_postgres::{Client, NoTls, Row};
 
@@ -148,15 +149,87 @@ fn column_to_json(row: &Row, idx: usize, col_type: &Type) -> serde_json::Value {
         };
     }
 
+    macro_rules! try_get_str {
+        ($t:ty) => {
+            match row.try_get::<_, Option<$t>>(idx) {
+                Ok(Some(v)) => return serde_json::Value::String(v.to_string()),
+                Ok(None) => return serde_json::Value::Null,
+                Err(_) => {}
+            }
+        };
+    }
+
     match *col_type {
+        // Booleans
         Type::BOOL => try_get!(bool),
+
+        // Integers
         Type::INT2 => try_get!(i16),
-        Type::INT4 => try_get!(i32),
+        Type::INT4 | Type::OID => try_get!(i32),
         Type::INT8 => try_get!(i64),
+
+        // Floats
         Type::FLOAT4 => try_get!(f32),
         Type::FLOAT8 => try_get!(f64),
-        Type::TEXT | Type::VARCHAR | Type::NAME | Type::BPCHAR => try_get!(String),
+
+        // Numeric/Decimal — no native Rust type without rust_decimal
+        Type::NUMERIC => {
+            match row.try_get::<_, Option<rust_decimal::Decimal>>(idx) {
+                Ok(Some(d)) => {
+                    if let Some(f) = d.to_f64() {
+                        return serde_json::Value::from(f);
+                    }
+                    return serde_json::Value::String(d.to_string());
+                }
+                Ok(None) => return serde_json::Value::Null,
+                Err(_) => {}
+            }
+        }
+
+        // Strings
+        Type::TEXT | Type::VARCHAR | Type::NAME | Type::BPCHAR | Type::CHAR => try_get!(String),
+
+        // Date & time — serialize as ISO strings
+        Type::DATE => try_get_str!(chrono::NaiveDate),
+        Type::TIME => try_get_str!(chrono::NaiveTime),
+        Type::TIMESTAMP => try_get_str!(chrono::NaiveDateTime),
+        Type::TIMESTAMPTZ => try_get_str!(chrono::DateTime<chrono::Utc>),
+        Type::INTERVAL => {
+            // Interval has no chrono mapping; read raw fields
+            match row.try_get::<_, Option<String>>(idx) {
+                Ok(Some(s)) => return serde_json::Value::String(s),
+                Ok(None) => return serde_json::Value::Null,
+                Err(_) => {}
+            }
+        }
+
+        // UUID
+        Type::UUID => try_get_str!(uuid::Uuid),
+
+        // JSON
         Type::JSON | Type::JSONB => try_get!(serde_json::Value),
+
+        // Arrays of common types
+        Type::BOOL_ARRAY => try_get!(Vec<bool>),
+        Type::INT2_ARRAY => try_get!(Vec<i16>),
+        Type::INT4_ARRAY => try_get!(Vec<i32>),
+        Type::INT8_ARRAY => try_get!(Vec<i64>),
+        Type::FLOAT4_ARRAY => try_get!(Vec<f32>),
+        Type::FLOAT8_ARRAY => try_get!(Vec<f64>),
+        Type::TEXT_ARRAY | Type::VARCHAR_ARRAY => try_get!(Vec<String>),
+
+        // Bytea — hex-encode for JSON
+        Type::BYTEA => {
+            match row.try_get::<_, Option<Vec<u8>>>(idx) {
+                Ok(Some(bytes)) => {
+                    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                    return serde_json::Value::String(format!("\\x{hex}"));
+                }
+                Ok(None) => return serde_json::Value::Null,
+                Err(_) => {}
+            }
+        }
+
         _ => {}
     }
 

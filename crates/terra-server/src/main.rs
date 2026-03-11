@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Router, routing::{get, post}};
 use serde::Deserialize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use terra_core::assertion::{AssertionStore, MAIN_BRANCH};
 use tracing::info;
 use uuid::Uuid;
@@ -39,9 +39,9 @@ async fn handle_query(
 ) -> Response {
     let format = content_format_from_headers(&headers);
     let ct = format.content_type_header();
-    let inner = state.lock().unwrap();
-    let registry = inner.assertions.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
-    match terra_query::dispatch(&body, format, &registry, &inner.assertions) {
+    let store = state.open_store();
+    let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
+    match terra_query::dispatch(&body, format, &registry, &store) {
         Ok(bytes) => (StatusCode::OK, [(CONTENT_TYPE, ct)], bytes).into_response(),
         Err(e) => {
             let status = error_kind_to_status(&e.kind);
@@ -69,9 +69,9 @@ async fn handle_api_state(
     State(state): State<AppState>,
     Query(params): Query<StateParams>,
 ) -> Response {
-    let inner = state.lock().unwrap();
-    let (branch_id, ancestry) = resolve_branch(&params.slug, &inner.assertions);
-    let registry = inner.assertions.schema_registry(branch_id, ancestry);
+    let store = state.open_store();
+    let (branch_id, ancestry) = resolve_branch(&params.slug, &store);
+    let registry = store.schema_registry(branch_id, ancestry);
     let mut json_body = serde_json::json!({
         "command": "branch.state",
         "slug": params.slug,
@@ -81,7 +81,7 @@ async fn handle_api_state(
         json_body["transaction_id"] = serde_json::Value::String(tx_id.clone());
     }
     let body_bytes = serde_json::to_vec(&json_body).unwrap();
-    match terra_query::dispatch(&body_bytes, terra_query::ContentFormat::Json, &registry, &inner.assertions) {
+    match terra_query::dispatch(&body_bytes, terra_query::ContentFormat::Json, &registry, &store) {
         Ok(bytes) => (
             StatusCode::OK,
             [(CONTENT_TYPE, "application/json")],
@@ -96,11 +96,11 @@ async fn handle_api_state(
 }
 
 async fn handle_api_branches(State(state): State<AppState>) -> Response {
-    let inner = state.lock().unwrap();
-    let registry = inner.assertions.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
+    let store = state.open_store();
+    let registry = store.schema_registry(MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]);
     let json_body = serde_json::json!({ "command": "branch.list" });
     let body_bytes = serde_json::to_vec(&json_body).unwrap();
-    match terra_query::dispatch(&body_bytes, terra_query::ContentFormat::Json, &registry, &inner.assertions) {
+    match terra_query::dispatch(&body_bytes, terra_query::ContentFormat::Json, &registry, &store) {
         Ok(bytes) => (
             StatusCode::OK,
             [(CONTENT_TYPE, "application/json")],
@@ -127,13 +127,14 @@ async fn main() {
         .expect("failed to create data directory");
 
     let assertions_path = config.assertions_db_path();
-    let assertions =
-        AssertionStore::open_read_only(&assertions_path).expect("failed to open assertion store (read-only)");
-    info!("assertions_db: {} (read-only)", assertions_path.display());
+    // Verify DB is accessible at startup
+    AssertionStore::open_read_only(&assertions_path)
+        .expect("failed to open assertion store (read-only)");
+    info!("assertions_db: {} (read-only, re-opened per request)", assertions_path.display());
 
-    let state: AppState = Arc::new(Mutex::new(crate::state::Inner {
-        assertions,
-    }));
+    let state: AppState = Arc::new(crate::state::Inner {
+        db_path: assertions_path,
+    });
 
     let app = Router::new()
         .route("/", get(handle_index))

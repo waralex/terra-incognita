@@ -52,7 +52,6 @@ pub fn execute(
                 transaction: result.transaction,
                 entity_types: result.entity_types,
                 properties: result.properties,
-                attached_count: result.attached_count,
                 introduced: result.introduced,
                 asserted: result.asserted,
             })
@@ -94,7 +93,7 @@ pub fn execute(
 mod tests {
     use super::*;
     use crate::command::{
-        AssertionItem, CreateEntityType, CreateProperty, HideUnhideInput,
+        AssertionItem, CreateEntityType, CreatePropertyDef, HideUnhideInput,
         IntroduceItem, TransactionInput,
     };
     use crate::assertion::{PropertyValue, RangeValue, SetValue, MAIN_BRANCH};
@@ -116,48 +115,15 @@ mod tests {
                 question: None,
                 answer: None,
                 commands: vec![],
-                entity_types: vec![],
-                properties: vec![
-                    CreateProperty {
-                        slug: "bpm".into(),
-                        value_type: ValueType::Range,
-                        description: None,
-                        entity_types: vec![],
-                    },
-                    CreateProperty {
-                        slug: "certification".into(),
-                        value_type: ValueType::Set,
-                        description: None,
-                        entity_types: vec![],
-                    },
-                ],
-                attach: vec![],
-                hide: HideUnhideInput::default(),
-                unhide: HideUnhideInput::default(),
-                introduce: vec![],
-                asserts: vec![],
-                investigations: vec![],
-                update_investigations: vec![],
-                close_investigations: vec![],
-            }),
-            reg,
-            store,
-        )
-        .unwrap();
-
-        execute(
-            Command::Transaction(TransactionInput {
-                reasoning: serde_json::json!(null),
-                question: None,
-                answer: None,
-                commands: vec![],
                 entity_types: vec![CreateEntityType {
                     slug: "track".into(),
                     description: None,
-                    properties: vec!["bpm".into(), "certification".into()],
+                    properties: vec![
+                        CreatePropertyDef { slug: "bpm".into(), value_type: ValueType::Range, description: None },
+                        CreatePropertyDef { slug: "certification".into(), value_type: ValueType::Set, description: None },
+                    ],
                 }],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![],
@@ -187,8 +153,7 @@ mod tests {
                     description: Some("Research project".into()),
                     properties: vec![],
                 }],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![],
@@ -229,15 +194,14 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![IntroduceItem {
                     entity: "song-1".into(),
+                    entity_type: "track".into(),
                     description: Some("A test song".into()),
                     facts: vec![AssertionItem {
-                        entity_type: "track".into(),
                         properties: HashMap::from([(
                             "bpm".into(),
                             PropertyValue::Range(RangeValue::Eq(serde_json::json!(128))),
@@ -281,12 +245,12 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![IntroduceItem {
                     entity: "alpha".into(),
+                    entity_type: "track".into(),
                     description: None,
                     facts: vec![],
                     hypotheses: vec![],
@@ -323,8 +287,7 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput {
                     entities: vec![],
                     entity_types: vec!["track".into()],
@@ -366,8 +329,7 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput {
                     entities: vec![],
                     entity_types: vec![],
@@ -429,13 +391,12 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![
-                    IntroduceItem { entity: "alpha".into(), description: None, facts: vec![], hypotheses: vec![] },
-                    IntroduceItem { entity: "beta".into(), description: None, facts: vec![], hypotheses: vec![] },
+                    IntroduceItem { entity: "alpha".into(), entity_type: "track".into(), description: None, facts: vec![], hypotheses: vec![] },
+                    IntroduceItem { entity: "beta".into(), entity_type: "track".into(), description: None, facts: vec![], hypotheses: vec![] },
                 ],
                 asserts: vec![],
                 investigations: vec![],
@@ -455,8 +416,7 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput {
                     entities: vec!["alpha".into()],
                     entity_types: vec![],
@@ -500,9 +460,10 @@ mod tests {
             CommandResult::BranchState(state) => {
                 assert_eq!(state.branch.slug, "main");
                 assert!(!state.schema.entity_types.is_empty());
-                assert!(!state.schema.properties.is_empty());
+                // Properties are inline in entity types
+                assert!(!state.schema.entity_types[0].properties.is_empty());
                 assert!(state.entities.is_empty());
-                // setup_schema creates 2 transactions
+                // setup_schema creates 1 transaction
                 assert!(!state.recent_transactions.is_empty());
             }
             _ => panic!("unexpected result"),
@@ -521,15 +482,14 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![IntroduceItem {
                     entity: "song-1".into(),
+                    entity_type: "track".into(),
                     description: Some("A pop track".into()),
                     facts: vec![AssertionItem {
-                        entity_type: "track".into(),
                         properties: HashMap::from([(
                             "bpm".into(),
                             PropertyValue::Range(RangeValue::Eq(serde_json::json!(128))),
@@ -559,10 +519,9 @@ mod tests {
                 let entity = &state.entities[0];
                 assert_eq!(entity.slug, "song-1");
                 assert_eq!(entity.description.as_deref(), Some("A pop track"));
-                assert_eq!(entity.types.len(), 1);
-                assert_eq!(entity.types[0].entity_type, "track");
+                assert_eq!(entity.entity_type, "track");
 
-                let bpm = entity.types[0].properties.iter().find(|p| p.slug == "bpm").unwrap();
+                let bpm = entity.properties.iter().find(|p| p.slug == "bpm").unwrap();
                 assert!(bpm.fact.is_some());
                 let fact = bpm.fact.as_ref().unwrap();
                 assert_eq!(fact.value, serde_json::json!({"eq": 128}));
@@ -586,15 +545,14 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![IntroduceItem {
                     entity: "song-2".into(),
+                    entity_type: "track".into(),
                     description: None,
                     facts: vec![AssertionItem {
-                        entity_type: "track".into(),
                         properties: HashMap::from([(
                             "bpm".into(),
                             PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
@@ -620,8 +578,7 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![],
@@ -630,7 +587,6 @@ mod tests {
                     facts: vec![],
                     hypotheses: vec![
                         AssertionItem {
-                            entity_type: "track".into(),
                             properties: HashMap::from([(
                                 "bpm".into(),
                                 PropertyValue::Range(RangeValue::Eq(serde_json::json!(122))),
@@ -638,7 +594,6 @@ mod tests {
                             reasoning: serde_json::json!("maybe higher"),
                         },
                         AssertionItem {
-                            entity_type: "track".into(),
                             properties: HashMap::from([(
                                 "bpm".into(),
                                 PropertyValue::Range(RangeValue::Eq(serde_json::json!(118))),
@@ -664,7 +619,7 @@ mod tests {
         match result {
             CommandResult::BranchState(state) => {
                 let entity = &state.entities[0];
-                let bpm = entity.types[0].properties.iter().find(|p| p.slug == "bpm").unwrap();
+                let bpm = entity.properties.iter().find(|p| p.slug == "bpm").unwrap();
                 assert!(bpm.fact.is_some());
                 assert_eq!(bpm.hypotheses.len(), 2);
                 // Check hypothesis values and reasoning
@@ -690,21 +645,19 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![
                     IntroduceItem {
-                        entity: "visible".into(), description: None,
+                        entity: "visible".into(), entity_type: "track".into(), description: None,
                         facts: vec![AssertionItem {
-                            entity_type: "track".into(),
                             properties: HashMap::from([("certification".into(), PropertyValue::Set(SetValue { contains: vec![serde_json::json!("gold")], not_contains: vec![] }))]),
                             reasoning: serde_json::json!("test"),
                         }],
                         hypotheses: vec![],
                     },
-                    IntroduceItem { entity: "hidden".into(), description: None, facts: vec![], hypotheses: vec![] },
+                    IntroduceItem { entity: "hidden".into(), entity_type: "track".into(), description: None, facts: vec![], hypotheses: vec![] },
                 ],
                 asserts: vec![],
                 investigations: vec![],
@@ -723,8 +676,7 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput {
                     entities: vec!["hidden".into()],
                     entity_types: vec![],
@@ -754,13 +706,10 @@ mod tests {
                 assert_eq!(state.entities.len(), 1);
                 assert_eq!(state.entities[0].slug, "visible");
 
-                // "bpm" should not be in properties
-                assert!(state.schema.properties.iter().all(|p| p.slug != "bpm"));
-
-                // "bpm" should not be in entity type's attached properties
+                // "bpm" should not be in entity type's properties
                 let track = state.schema.entity_types.iter().find(|t| t.slug == "track").unwrap();
-                assert!(!track.properties.contains(&"bpm".to_string()));
-                assert!(track.properties.contains(&"certification".to_string()));
+                assert!(track.properties.iter().all(|p| p.slug != "bpm"));
+                assert!(track.properties.iter().any(|p| p.slug == "certification"));
             }
             _ => panic!("unexpected result"),
         }
@@ -783,15 +732,14 @@ mod tests {
                     description: None,
                     properties: vec![],
                 }],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![IntroduceItem {
                     entity: "song-x".into(),
+                    entity_type: "track".into(),
                     description: None,
                     facts: vec![AssertionItem {
-                        entity_type: "track".into(),
                         properties: HashMap::from([(
                             "bpm".into(),
                             PropertyValue::Range(RangeValue::Eq(serde_json::json!(100))),
@@ -818,9 +766,8 @@ mod tests {
         match result {
             CommandResult::BranchState(state) => {
                 let entity = &state.entities[0];
-                // Only "track" type should appear (has assertions), not "album"
-                assert_eq!(entity.types.len(), 1);
-                assert_eq!(entity.types[0].entity_type, "track");
+                // Entity should be of type "track" (has assertions)
+                assert_eq!(entity.entity_type, "track");
             }
             _ => panic!("unexpected result"),
         }
@@ -831,7 +778,7 @@ mod tests {
         let (reg, store, _dir) = setup();
         setup_schema(&reg, &store);
 
-        // setup_schema creates 2 transactions; add 3 more
+        // setup_schema creates 1 transaction; add 3 more
         for i in 0..3 {
             execute(
                 Command::Transaction(TransactionInput {
@@ -840,8 +787,7 @@ mod tests {
                     answer: None,
                     commands: vec![],
                     entity_types: vec![],
-                    properties: vec![],
-                    attach: vec![],
+                    add_properties: vec![],
                     hide: HideUnhideInput::default(),
                     unhide: HideUnhideInput::default(),
                     introduce: vec![],
@@ -886,15 +832,14 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![IntroduceItem {
                     entity: "song-tt".into(),
+                    entity_type: "track".into(),
                     description: None,
                     facts: vec![AssertionItem {
-                        entity_type: "track".into(),
                         properties: HashMap::from([(
                             "bpm".into(),
                             PropertyValue::Range(RangeValue::Eq(serde_json::json!(120))),
@@ -925,15 +870,13 @@ mod tests {
                 answer: None,
                 commands: vec![],
                 entity_types: vec![],
-                properties: vec![],
-                attach: vec![],
+                add_properties: vec![],
                 hide: HideUnhideInput::default(),
                 unhide: HideUnhideInput::default(),
                 introduce: vec![],
                 asserts: vec![crate::command::AssertItem {
                     entity: "song-tt".into(),
                     facts: vec![AssertionItem {
-                        entity_type: "track".into(),
                         properties: HashMap::from([(
                             "bpm".into(),
                             PropertyValue::Range(RangeValue::Eq(serde_json::json!(125))),
@@ -958,7 +901,7 @@ mod tests {
         ).unwrap();
         match &result {
             CommandResult::BranchState(state) => {
-                let bpm = &state.entities[0].types[0].properties.iter()
+                let bpm = &state.entities[0].properties.iter()
                     .find(|p| p.slug == "bpm").unwrap();
                 assert_eq!(bpm.fact.as_ref().unwrap().value, serde_json::json!({"eq": 125}));
             }
@@ -973,60 +916,12 @@ mod tests {
         ).unwrap();
         match &result {
             CommandResult::BranchState(state) => {
-                let bpm = &state.entities[0].types[0].properties.iter()
+                let bpm = &state.entities[0].properties.iter()
                     .find(|p| p.slug == "bpm").unwrap();
                 assert_eq!(bpm.fact.as_ref().unwrap().value, serde_json::json!({"eq": 120}));
                 assert_eq!(bpm.fact.as_ref().unwrap().reasoning, serde_json::json!("initial"));
                 // TX2 should not be in recent transactions
                 assert!(state.recent_transactions.iter().all(|t| t.reasoning != serde_json::json!("corrected measurement")));
-            }
-            _ => panic!("unexpected"),
-        }
-    }
-
-    #[test]
-    fn transaction_creates_properties_before_entity_types() {
-        let (reg, store, _dir) = setup();
-
-        // Single transaction: entity_types reference properties defined in the same transaction.
-        // Properties must be processed first even though entity_types appear first in the input.
-        let result = execute(
-            Command::Transaction(TransactionInput {
-                reasoning: serde_json::json!("bootstrap schema in one go"),
-                question: None,
-                answer: None,
-                commands: vec![],
-                entity_types: vec![CreateEntityType {
-                    slug: "track".into(),
-                    description: None,
-                    properties: vec!["bpm".into()],
-                }],
-                properties: vec![CreateProperty {
-                    slug: "bpm".into(),
-                    value_type: ValueType::Range,
-                    description: None,
-                    entity_types: vec![],
-                }],
-                attach: vec![],
-                hide: HideUnhideInput::default(),
-                unhide: HideUnhideInput::default(),
-                introduce: vec![],
-                asserts: vec![],
-                investigations: vec![],
-                update_investigations: vec![],
-                close_investigations: vec![],
-            }),
-            &reg,
-            &store,
-        );
-
-        assert!(result.is_ok(), "expected success but got: {:?}", result.err());
-        match result.unwrap() {
-            CommandResult::TransactionResult { entity_types, properties, .. } => {
-                assert_eq!(entity_types.len(), 1);
-                assert_eq!(entity_types[0].slug, "track");
-                assert_eq!(properties.len(), 1);
-                assert_eq!(properties[0].slug, "bpm");
             }
             _ => panic!("unexpected"),
         }

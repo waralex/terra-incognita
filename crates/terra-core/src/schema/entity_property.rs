@@ -42,7 +42,7 @@ impl fmt::Display for ValueType {
     }
 }
 
-/// Registered property that can be attached to entity types.
+/// Registered property bound to an entity type.
 #[derive(Debug, Clone, Serialize)]
 pub struct EntityProperty {
     pub id: Uuid,
@@ -50,5 +50,8 @@ pub struct EntityProperty {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub value_type: ValueType,
+    /// The entity type this property belongs to. `None` for legacy records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_type_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
 }

@@ -4,11 +4,19 @@ use crate::error::QueryError;
 use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
-    AssertItem, AssertionItem, AttachProperty, Command, CreateBranchInput,
-    CreateEntityType, CreateProperty, HideUnhideInput, IntroduceItem,
+    AddProperties, AssertItem, AssertionItem, Command, CreateBranchInput,
+    CreateEntityType, CreatePropertyDef, HideUnhideInput, IntroduceItem,
     InvestigationCloseItem, InvestigationCreateItem, InvestigationUpdateItem,
     TransactionInput,
 };
+
+/// DTO for inline property definition (within entity type creation or add_properties).
+#[derive(Deserialize)]
+pub struct PropertyDefDto {
+    pub slug: String,
+    pub value_type: terra_core::schema::ValueType,
+    pub description: Option<String>,
+}
 
 /// DTO for batch entity type creation items.
 #[derive(Deserialize)]
@@ -16,30 +24,19 @@ pub struct EntityTypeItemDto {
     pub slug: String,
     pub description: Option<String>,
     #[serde(default)]
-    pub properties: Vec<String>,
+    pub properties: Vec<PropertyDefDto>,
 }
 
-/// DTO for batch property creation items.
+/// DTO for adding properties to an existing entity type.
 #[derive(Deserialize)]
-pub struct PropertyItemDto {
-    pub slug: String,
-    pub value_type: terra_core::schema::ValueType,
-    pub description: Option<String>,
-    #[serde(default)]
-    pub entity_types: Vec<String>,
-}
-
-/// DTO for batch property attachment items.
-#[derive(Deserialize)]
-pub struct AttachItemDto {
+pub struct AddPropertiesDto {
     pub entity_type: String,
-    pub slug: String,
+    pub properties: Vec<PropertyDefDto>,
 }
 
 /// DTO for a single assertion item (fact or hypothesis).
 #[derive(Deserialize)]
 pub struct AssertionItemDto {
-    pub entity_type: String,
     #[serde(default)]
     pub properties: HashMap<String, serde_json::Value>,
     #[serde(default)]
@@ -50,6 +47,7 @@ pub struct AssertionItemDto {
 #[derive(Deserialize)]
 pub struct IntroduceItemDto {
     pub entity: String,
+    pub entity_type: String,
     pub description: Option<String>,
     #[serde(default)]
     pub facts: Vec<AssertionItemDto>,
@@ -129,9 +127,7 @@ pub enum QueryDto {
         #[serde(default)]
         entity_types: Vec<EntityTypeItemDto>,
         #[serde(default)]
-        properties: Vec<PropertyItemDto>,
-        #[serde(default)]
-        attach: Vec<AttachItemDto>,
+        add_properties: Vec<AddPropertiesDto>,
         #[serde(default)]
         hide: HideUnhideDto,
         #[serde(default)]
@@ -192,20 +188,19 @@ impl QueryDto {
             QueryDto::ListEntityTypes => {
                 Ok((Command::ListEntityTypes, ResponseShape::Batch))
             }
-QueryDto::ListProperties { entity_type } => Ok((
+            QueryDto::ListProperties { entity_type } => Ok((
                 Command::ListProperties { entity_type },
                 ResponseShape::Batch,
             )),
             QueryDto::ListEntities => {
                 Ok((Command::ListEntities, ResponseShape::Batch))
             }
-QueryDto::Transaction {
+            QueryDto::Transaction {
                 reasoning,
                 question,
                 answer,
                 entity_types,
-                properties,
-                attach,
+                add_properties,
                 hide,
                 unhide,
                 introduce,
@@ -220,23 +215,28 @@ QueryDto::Transaction {
                     .map(|item| CreateEntityType {
                         slug: item.slug,
                         description: item.description,
-                        properties: item.properties,
+                        properties: item.properties
+                            .into_iter()
+                            .map(|p| CreatePropertyDef {
+                                slug: p.slug,
+                                value_type: p.value_type,
+                                description: p.description,
+                            })
+                            .collect(),
                     })
                     .collect();
-                let property_items = properties
+                let add_property_items = add_properties
                     .into_iter()
-                    .map(|item| CreateProperty {
-                        slug: item.slug,
-                        value_type: item.value_type,
-                        description: item.description,
-                        entity_types: item.entity_types,
-                    })
-                    .collect();
-                let attach_items = attach
-                    .into_iter()
-                    .map(|item| AttachProperty {
+                    .map(|item| AddProperties {
                         entity_type: item.entity_type,
-                        property: item.slug,
+                        properties: item.properties
+                            .into_iter()
+                            .map(|p| CreatePropertyDef {
+                                slug: p.slug,
+                                value_type: p.value_type,
+                                description: p.description,
+                            })
+                            .collect(),
                     })
                     .collect();
                 let introduce_items = introduce
@@ -244,6 +244,7 @@ QueryDto::Transaction {
                     .map(|item| {
                         Ok(IntroduceItem {
                             entity: item.entity,
+                            entity_type: item.entity_type,
                             description: item.description,
                             facts: convert_assertion_items(item.facts)?,
                             hypotheses: convert_assertion_items(item.hypotheses)?,
@@ -266,8 +267,7 @@ QueryDto::Transaction {
                         question,
                         answer,
                         entity_types: entity_type_items,
-                        properties: property_items,
-                        attach: attach_items,
+                        add_properties: add_property_items,
                         hide: HideUnhideInput {
                             entities: hide.entities,
                             entity_types: hide.entity_types,
@@ -365,7 +365,6 @@ fn convert_assertion_items(
                 .collect::<Result<HashMap<_, _>, QueryError>>()?;
 
             Ok(AssertionItem {
-                entity_type: item.entity_type,
                 properties,
                 reasoning: item.reasoning,
             })

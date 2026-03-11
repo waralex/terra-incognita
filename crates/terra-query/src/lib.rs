@@ -37,7 +37,7 @@ mod tests {
 
         // Setup schema and create entity via unified transaction
         dispatch_yaml(
-            "command: transaction\nentity_types:\n  - slug: track\nproperties:\n  - slug: bpm\n    value_type: range\nattach:\n  - entity_type: track\n    slug: bpm\nintroduce:\n  - entity: song-1\n",
+            "command: transaction\nentity_types:\n  - slug: track\n    properties:\n      - slug: bpm\n        value_type: range\nintroduce:\n  - entity: song-1\n    entity_type: track\n",
             &reg,
             &store,
         )

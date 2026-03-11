@@ -4,10 +4,6 @@ use uuid::Uuid;
 use terra_core::command::{BranchDetail, TransactionEntityResult};
 use terra_core::schema::{EntityProperty, EntityType};
 
-fn is_zero(v: &usize) -> bool {
-    *v == 0
-}
-
 /// Response for the unified transaction command.
 #[derive(Serialize)]
 pub struct TransactionResultResponse {
@@ -18,8 +14,6 @@ pub struct TransactionResultResponse {
     pub entity_types: Vec<EntityType>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<EntityProperty>,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub attached_count: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub introduce: Vec<TransactionEntityResult>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

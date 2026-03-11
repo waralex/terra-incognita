@@ -6,7 +6,7 @@ pub(crate) mod slug;
 
 pub use entity_property::{EntityProperty, ValueType};
 pub use entity_type::EntityType;
-pub use branch_registry::{AttachInput, EntityTypeInput, PropertyInput, BranchSchemaRegistry};
+pub use branch_registry::{AddPropertiesInput, EntityTypeInput, PropertyDef, BranchSchemaRegistry};
 
 /// Errors from schema registry operations.
 #[derive(Debug, thiserror::Error)]

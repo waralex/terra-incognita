@@ -36,9 +36,9 @@ Use **facts** for things you verified with queries. Use **hypotheses** for patte
 
 ## Schema design rules
 
-- **One entity = one entity type.** Each entity belongs to exactly one type. Do not assign multiple types to the same entity — it creates duplicate assertions.
+- **One entity = one entity type.** Each entity is bound to exactly one type at creation. The system enforces this — you specify `entity_type` in `introduce`, and all assertions derive the type from the entity automatically.
 - **Keep entity types few and broad.** Recommended types: `database`, `db_table` (including views with `is_view: true`), `db_column` (only important columns), `analytical_finding`. Add domain-specific types as needed (`domain_rule`, `data_caveat`, etc.).
-- **Don't duplicate properties across types.** If `description` is useful for both tables and findings, create it once and attach to both types. But each entity still belongs to ONE type.
+- **Properties are scoped to types.** Define properties inline with `entity_types` or add them later via `add_properties`. The same slug can exist on different types (e.g. `db_table.description` and `analytical_finding.description`).
 - **Prefer fewer entities with richer properties** over many entities with one fact each.
 - **Do not create column entities eagerly.** Only introduce a `db_column` entity when the column is analytically significant — used in joins, WHERE clauses, aggregations, or discovered to have data quality issues.
 
@@ -79,21 +79,20 @@ An append-only database where uncertainty is first-class. Key concepts:
     {"command_type": "sql", "query": "SELECT count(*) FROM orders", "reasoning": "Check orders table size"}
   ],
   "entity_types": [
-    {"slug": "db_table", "description": "A database table"}
-  ],
-  "properties": [
-    {"slug": "row_count", "value_type": "range", "description": "Number of rows in a table"},
-    {"slug": "description", "value_type": "struct", "description": "Human-readable description of what this entity represents"}
-  ],
-  "attach": [
-    {"entity_type": "db_table", "slug": "row_count"},
-    {"entity_type": "db_table", "slug": "description"}
+    {
+      "slug": "db_table",
+      "description": "A database table",
+      "properties": [
+        {"slug": "row_count", "value_type": "range", "description": "Number of rows in a table"},
+        {"slug": "description", "value_type": "struct", "description": "Human-readable description"}
+      ]
+    }
   ],
   "introduce": [{
     "entity": "orders_table",
+    "entity_type": "db_table",
     "description": "The orders table in the database",
     "facts": [{
-      "entity_type": "db_table",
       "properties": {
         "row_count": {"eq": 150000},
         "description": {"text": "Customer orders with timestamps, amounts, and status"}
@@ -104,12 +103,23 @@ An append-only database where uncertainty is first-class. Key concepts:
   "asserts": [{
     "entity": "orders_table",
     "hypotheses": [{
-      "entity_type": "db_table",
       "properties": {
         "row_count": {"from": 148000, "to": 152000}
       },
       "reasoning": "Table is actively growing; exact count may change quickly."
     }]
+  }]
+}
+```
+
+To add properties to an existing type later:
+```json
+{
+  "add_properties": [{
+    "entity_type": "db_table",
+    "properties": [
+      {"slug": "primary_key", "value_type": "struct", "description": "Primary key column(s)"}
+    ]
   }]
 }
 ```
@@ -194,13 +204,12 @@ Investigations can be combined with any other transaction fields (commands, enti
 
 ## Processing order inside a transaction
 
-1. `properties` — create new properties first
-2. `entity_types` — create new entity types (can reference properties from step 1)
-3. `attach` — attach properties to entity types
-4. `hide` / `unhide` — visibility changes (entities, entity types, properties, investigations)
-5. `investigations` / `update_investigations` / `close_investigations` — investigation lifecycle
-6. `introduce` — create new entities with assertions
-7. `asserts` — make assertions on existing or just-introduced entities
+1. `entity_types` — create new entity types with inline property definitions
+2. `add_properties` — add properties to existing entity types
+3. `hide` / `unhide` — visibility changes (entities, entity types, properties, investigations)
+4. `investigations` / `update_investigations` / `close_investigations` — investigation lifecycle
+5. `introduce` — create new entities with assertions (must specify `entity_type`)
+6. `asserts` — make assertions on existing or just-introduced entities (entity type is derived automatically)
 
 You can reference entities created in `introduce` from `asserts` within the same transaction.
 
@@ -256,9 +265,8 @@ When in doubt, use hypothesis. Promote to fact when you have query evidence.
 ## Using branch state
 
 The branch state contains:
-- **`schema.entity_types`** — all entity types with their attached properties
-- **`schema.properties`** — all property definitions
-- **`entities`** — all entities with current facts and hypotheses
+- **`schema.entity_types`** — all entity types with inline property definitions
+- **`entities`** — all entities with `entity_type`, flat `properties` with current facts and hypotheses
 - **`investigations`** — currently open investigations (closed ones are not shown)
 - **`recent_transactions`** — recent activity
 

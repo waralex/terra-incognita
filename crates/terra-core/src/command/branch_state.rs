@@ -28,17 +28,16 @@ pub struct BranchInfo {
 #[derive(Debug, Serialize)]
 pub struct SchemaSnapshot {
     pub entity_types: Vec<EntityTypeSnapshot>,
-    pub properties: Vec<PropertySnapshot>,
 }
 
-/// Entity type with attached property slugs.
+/// Entity type with inline property definitions.
 #[derive(Debug, Serialize)]
 pub struct EntityTypeSnapshot {
     pub id: Uuid,
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub properties: Vec<String>,
+    pub properties: Vec<PropertySnapshot>,
 }
 
 /// Property definition.
@@ -51,19 +50,13 @@ pub struct PropertySnapshot {
     pub description: Option<String>,
 }
 
-/// Full state of an entity across all entity types with assertions.
+/// Full state of an entity with its type and flat property assertions.
 #[derive(Debug, Serialize)]
 pub struct EntityState {
     pub id: Uuid,
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub types: Vec<EntityTypeState>,
-}
-
-/// Entity's assertions grouped by entity type.
-#[derive(Debug, Serialize)]
-pub struct EntityTypeState {
     pub entity_type: String,
     pub properties: Vec<PropertyFullState>,
 }
@@ -165,51 +158,39 @@ pub fn build_state(
 
     let vis = store.visibility();
 
-    // 2. Schema snapshot
+    // 2. Schema snapshot — entity types with inline property definitions
     let all_types = schema_reg.list_entity_types()?;
     let visible_types: Vec<_> = all_types
         .into_iter()
         .filter(|t| vis.is_visible(&capped, ItemKind::EntityType, t.id).unwrap_or(true))
         .collect();
 
-    let all_props = schema_reg.list_all_properties()?;
-    let visible_props: Vec<_> = all_props
-        .into_iter()
-        .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
-        .collect();
-
     let mut entity_type_snapshots = Vec::new();
     for et in &visible_types {
         let attached = schema_reg.list_properties_by_type_id(&et.id)?;
-        let prop_slugs: Vec<String> = attached
+        let prop_snapshots: Vec<PropertySnapshot> = attached
             .iter()
             .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
-            .map(|p| p.slug.clone())
+            .map(|p| PropertySnapshot {
+                id: p.id,
+                slug: p.slug.clone(),
+                value_type: p.value_type,
+                description: p.description.clone(),
+            })
             .collect();
         entity_type_snapshots.push(EntityTypeSnapshot {
             id: et.id,
             slug: et.slug.clone(),
             description: et.description.clone(),
-            properties: prop_slugs,
+            properties: prop_snapshots,
         });
     }
 
-    let property_snapshots: Vec<PropertySnapshot> = visible_props
-        .iter()
-        .map(|p| PropertySnapshot {
-            id: p.id,
-            slug: p.slug.clone(),
-            value_type: p.value_type,
-            description: p.description.clone(),
-        })
-        .collect();
-
     let schema = SchemaSnapshot {
         entity_types: entity_type_snapshots,
-        properties: property_snapshots,
     };
 
-    // 3. Entity states
+    // 3. Entity states — flat properties from entity's own type
     let entities = store.entities(registry.branch_id(), capped.clone()).list_active_at(bound)?;
     let visible_entities: Vec<_> = entities
         .into_iter()
@@ -218,42 +199,35 @@ pub fn build_state(
 
     let mut entity_states = Vec::new();
     for entity in &visible_entities {
-        let mut type_states = Vec::new();
+        let entity_type_id = match entity.entity_type_id {
+            Some(id) => id,
+            None => continue,
+        };
 
-        for et in &visible_types {
-            let attached = schema_reg.list_properties_by_type_id(&et.id)?;
-            let visible_attached: Vec<_> = attached
-                .into_iter()
-                .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
-                .collect();
+        let et = match visible_types.iter().find(|t| t.id == entity_type_id) {
+            Some(t) => t,
+            None => continue,
+        };
 
-            let mut prop_states = Vec::new();
-            let mut has_any_data = false;
+        let attached = schema_reg.list_properties_by_type_id(&entity_type_id)?;
+        let visible_attached: Vec<_> = attached
+            .into_iter()
+            .filter(|p| vis.is_visible(&capped, ItemKind::Property, p.id).unwrap_or(true))
+            .collect();
 
-            for prop in &visible_attached {
-                let pfs = resolve_property_full_state(entity.id, prop, bound, store)?;
-                if pfs.fact.is_some() || !pfs.hypotheses.is_empty() {
-                    has_any_data = true;
-                }
-                prop_states.push(pfs);
-            }
-
-            if has_any_data {
-                type_states.push(EntityTypeState {
-                    entity_type: et.slug.clone(),
-                    properties: prop_states,
-                });
-            }
+        let mut prop_states = Vec::new();
+        for prop in &visible_attached {
+            let pfs = resolve_property_full_state(entity.id, prop, bound, store)?;
+            prop_states.push(pfs);
         }
 
-        if !type_states.is_empty() {
-            entity_states.push(EntityState {
-                id: entity.id,
-                slug: entity.slug.clone(),
-                description: entity.description.clone(),
-                types: type_states,
-            });
-        }
+        entity_states.push(EntityState {
+            id: entity.id,
+            slug: entity.slug.clone(),
+            description: entity.description.clone(),
+            entity_type: et.slug.clone(),
+            properties: prop_states,
+        });
     }
 
     // 4. Open investigations

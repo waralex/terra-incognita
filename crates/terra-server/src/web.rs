@@ -582,52 +582,51 @@ function renderEntityList(el, entities, highlightTxId) {
     return;
   }
   const html = entities.map(e => {
-    const hasData = e.types && e.types.some(t => t.properties && t.properties.some(p => p.fact || p.hypotheses?.length));
+    const props = e.properties || [];
+    const hasData = props.some(p => p.fact || p.hypotheses?.length);
     if (!hasData) return '';
 
     return `<div class="entity open">
       <div class="entity-header" onclick="this.parentElement.classList.toggle('open')">
         <span class="entity-slug">${esc(e.slug)}</span>
         ${e.description ? `<span class="entity-desc">${esc(e.description)}</span>` : ''}
+        <span class="assertion-et">${esc(e.entity_type)}</span>
       </div>
       <div class="entity-body">
-        ${e.types.map(t => renderEntityTypeDetail(t, highlightTxId)).join('')}
+        ${renderEntityProperties(props, highlightTxId)}
       </div>
     </div>`;
   }).filter(Boolean).join('');
   el.innerHTML = html || '<div class="no-data">No entities with data</div>';
 }
 
-function renderEntityTypeDetail(t, highlightTxId) {
-  const withData = t.properties.filter(p => p.fact || p.hypotheses?.length);
+function renderEntityProperties(properties, highlightTxId) {
+  const withData = properties.filter(p => p.fact || p.hypotheses?.length);
   if (!withData.length) return '';
-  return `<div style="margin-bottom:8px">
-    <div style="font-size:11px;color:var(--text2);margin-bottom:4px">${esc(t.entity_type)}</div>
-    ${withData.map(p => {
-      const items = [];
-      if (p.fact) {
-        const hl = highlightTxId && p.fact.tx_id === highlightTxId;
-        items.push(`<div class="prop${hl ? ' highlight' : ''}">
-          <span class="prop-slug">${esc(p.slug)}</span>
-          <span class="badge badge-fact">fact</span>
-          ${hl ? '<span class="badge badge-new">this tx</span>' : ''}
-          <span class="prop-value">${esc(fmtVal(p.fact.value))}</span>
-          <span class="prop-reasoning" title="${esc(fmtReasoning(p.fact.reasoning))}">${esc(fmtReasoning(p.fact.reasoning))}</span>
-        </div>`);
-      }
-      for (const h of (p.hypotheses || [])) {
-        const hl = highlightTxId && h.tx_id === highlightTxId;
-        items.push(`<div class="prop${hl ? ' highlight' : ''}">
-          <span class="prop-slug">${esc(p.slug)}</span>
-          <span class="badge badge-hyp">hyp</span>
-          ${hl ? '<span class="badge badge-new">this tx</span>' : ''}
-          <span class="prop-value">${esc(fmtVal(h.value))}</span>
-          <span class="prop-reasoning" title="${esc(fmtReasoning(h.reasoning))}">${esc(fmtReasoning(h.reasoning))}</span>
-        </div>`);
-      }
-      return items.join('');
-    }).join('')}
-  </div>`;
+  return withData.map(p => {
+    const items = [];
+    if (p.fact) {
+      const hl = highlightTxId && p.fact.tx_id === highlightTxId;
+      items.push(`<div class="prop${hl ? ' highlight' : ''}">
+        <span class="prop-slug">${esc(p.slug)}</span>
+        <span class="badge badge-fact">fact</span>
+        ${hl ? '<span class="badge badge-new">this tx</span>' : ''}
+        <span class="prop-value">${esc(fmtVal(p.fact.value))}</span>
+        <span class="prop-reasoning" title="${esc(fmtReasoning(p.fact.reasoning))}">${esc(fmtReasoning(p.fact.reasoning))}</span>
+      </div>`);
+    }
+    for (const h of (p.hypotheses || [])) {
+      const hl = highlightTxId && h.tx_id === highlightTxId;
+      items.push(`<div class="prop${hl ? ' highlight' : ''}">
+        <span class="prop-slug">${esc(p.slug)}</span>
+        <span class="badge badge-hyp">hyp</span>
+        ${hl ? '<span class="badge badge-new">this tx</span>' : ''}
+        <span class="prop-value">${esc(fmtVal(h.value))}</span>
+        <span class="prop-reasoning" title="${esc(fmtReasoning(h.reasoning))}">${esc(fmtReasoning(h.reasoning))}</span>
+      </div>`);
+    }
+    return items.join('');
+  }).join('');
 }
 
 // --- Hypotheses (current state) ---
@@ -640,11 +639,9 @@ function renderHypotheses() {
 function renderHypothesesFromEntities(el, entities) {
   const hyps = [];
   for (const e of entities) {
-    for (const t of (e.types || [])) {
-      for (const p of (t.properties || [])) {
-        for (const h of (p.hypotheses || [])) {
-          hyps.push({ entity: e.slug, entityType: t.entity_type, prop: p.slug, ...h });
-        }
+    for (const p of (e.properties || [])) {
+      for (const h of (p.hypotheses || [])) {
+        hyps.push({ entity: e.slug, entityType: e.entity_type, prop: p.slug, ...h });
       }
     }
   }
@@ -732,15 +729,13 @@ function renderAssertions() {
   // Collect facts and hypotheses from this transaction
   const items = [];
   for (const e of (TX_STATE.entities || [])) {
-    for (const t of (e.types || [])) {
-      for (const p of (t.properties || [])) {
-        if (p.fact && p.fact.tx_id === selectedTxId) {
-          items.push({ entity: e.slug, entityType: t.entity_type, prop: p.slug, kind: 'fact', value: p.fact.value, reasoning: p.fact.reasoning });
-        }
-        for (const h of (p.hypotheses || [])) {
-          if (h.tx_id === selectedTxId) {
-            items.push({ entity: e.slug, entityType: t.entity_type, prop: p.slug, kind: 'hypothesis', value: h.value, reasoning: h.reasoning });
-          }
+    for (const p of (e.properties || [])) {
+      if (p.fact && p.fact.tx_id === selectedTxId) {
+        items.push({ entity: e.slug, entityType: e.entity_type, prop: p.slug, kind: 'fact', value: p.fact.value, reasoning: p.fact.reasoning });
+      }
+      for (const h of (p.hypotheses || [])) {
+        if (h.tx_id === selectedTxId) {
+          items.push({ entity: e.slug, entityType: e.entity_type, prop: p.slug, kind: 'hypothesis', value: h.value, reasoning: h.reasoning });
         }
       }
     }

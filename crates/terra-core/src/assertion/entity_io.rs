@@ -22,6 +22,9 @@ pub struct EntityRecord {
     pub slug: String,
     pub status: EntityStatus,
     pub description: Option<String>,
+    /// The entity type this entity belongs to. `None` for legacy records.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_type_id: Option<Uuid>,
     pub tx_id: Uuid,
 }
 
@@ -273,11 +276,14 @@ fn encode_slug_key(branch_id: &Uuid, slug: &str) -> Vec<u8> {
 }
 
 fn encode_value(record: &EntityRecord) -> Result<Vec<u8>, LogError> {
-    let val = serde_json::json!({
+    let mut val = serde_json::json!({
         "slug": record.slug,
         "status": record.status,
         "description": record.description,
     });
+    if let Some(et_id) = record.entity_type_id {
+        val["entity_type_id"] = serde_json::Value::String(et_id.to_string());
+    }
     serde_json::to_vec(&val).map_err(|e| LogError::Storage(e.to_string()))
 }
 
@@ -300,11 +306,18 @@ fn decode_record(entity_id: &Uuid, tx_id: Uuid, val_bytes: &[u8]) -> Result<Enti
         .and_then(|v| if v.is_null() { None } else { v.as_str() })
         .map(String::from);
 
+    let entity_type_id = val.get("entity_type_id")
+        .and_then(|v| v.as_str())
+        .map(|s| Uuid::parse_str(s))
+        .transpose()
+        .map_err(|e| LogError::Storage(e.to_string()))?;
+
     Ok(EntityRecord {
         id: *entity_id,
         slug,
         status,
         description,
+        entity_type_id,
         tx_id,
     })
 }
@@ -343,6 +356,7 @@ mod tests {
             slug: slug.into(),
             status,
             description: None,
+            entity_type_id: None,
             tx_id: Uuid::now_v7(),
         }
     }

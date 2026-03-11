@@ -157,13 +157,13 @@ pub fn call_llm(
     let transaction_yaml = if let Some(obj) = val.as_object() {
         let tx_keys = [
             "reasoning", "question", "answer", "timestamp",
-            "entity_types", "properties", "attach",
+            "entity_types", "add_properties",
             "hide", "unhide", "introduce", "asserts",
             "investigations", "update_investigations", "close_investigations",
         ];
         let has_mutations = obj.keys().any(|k| {
             matches!(k.as_str(),
-                "entity_types" | "properties" | "attach" |
+                "entity_types" | "add_properties" |
                 "hide" | "unhide" | "introduce" | "asserts" |
                 "investigations" | "update_investigations" | "close_investigations"
             )

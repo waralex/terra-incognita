@@ -39,11 +39,12 @@ impl EntityStore {
         Self { io }
     }
 
-    /// Creates a new entity. Generates UUID, writes active record + slug index.
+    /// Creates a new entity bound to an entity type.
     pub fn create(
         &self,
         slug: &str,
         description: Option<&str>,
+        entity_type_id: Uuid,
     ) -> Result<EntityRecord, EntityError> {
         if self.io.get_uuid_by_slug(slug)?.is_some() {
             return Err(EntityError::SlugExists(slug.to_string()));
@@ -55,6 +56,7 @@ impl EntityStore {
             slug: slug.to_string(),
             status: EntityStatus::Active,
             description: description.map(String::from),
+            entity_type_id: Some(entity_type_id),
             tx_id: Uuid::now_v7(),
         };
 
@@ -75,6 +77,7 @@ impl EntityStore {
             slug: current.slug,
             status: EntityStatus::Deleted,
             description: current.description,
+            entity_type_id: current.entity_type_id,
             tx_id: Uuid::now_v7(),
         };
 
@@ -95,6 +98,7 @@ impl EntityStore {
             slug: current.slug,
             status: EntityStatus::Active,
             description: current.description,
+            entity_type_id: current.entity_type_id,
             tx_id: Uuid::now_v7(),
         };
 
@@ -171,15 +175,20 @@ mod tests {
         (store, dir)
     }
 
+    fn dummy_type_id() -> Uuid {
+        Uuid::nil()
+    }
+
     #[test]
     fn create_entity() {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let rec = entities.create("alpha", Some("First entity")).unwrap();
+        let rec = entities.create("alpha", Some("First entity"), dummy_type_id()).unwrap();
         assert_eq!(rec.slug, "alpha");
         assert_eq!(rec.status, EntityStatus::Active);
         assert_eq!(rec.description.as_deref(), Some("First entity"));
+        assert_eq!(rec.entity_type_id, Some(dummy_type_id()));
     }
 
     #[test]
@@ -187,8 +196,8 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        entities.create("alpha", None).unwrap();
-        let err = entities.create("alpha", None).unwrap_err();
+        entities.create("alpha", None, dummy_type_id()).unwrap();
+        let err = entities.create("alpha", None, dummy_type_id()).unwrap_err();
         assert!(matches!(err, EntityError::SlugExists(_)));
     }
 
@@ -197,7 +206,7 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let created = entities.create("bravo", None).unwrap();
+        let created = entities.create("bravo", None, dummy_type_id()).unwrap();
 
         let by_id = entities.get(&created.id).unwrap().unwrap();
         assert_eq!(by_id.slug, "bravo");
@@ -213,7 +222,7 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let created = entities.create("charlie", None).unwrap();
+        let created = entities.create("charlie", None, dummy_type_id()).unwrap();
         assert!(entities.is_active(&created.id).unwrap());
 
         let deleted = entities.delete(&created.id).unwrap();
@@ -231,7 +240,7 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let created = entities.create("delta", None).unwrap();
+        let created = entities.create("delta", None, dummy_type_id()).unwrap();
         entities.delete(&created.id).unwrap();
 
         let err = entities.delete(&created.id).unwrap_err();
@@ -243,7 +252,7 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let created = entities.create("echo", None).unwrap();
+        let created = entities.create("echo", None, dummy_type_id()).unwrap();
         let err = entities.restore(&created.id).unwrap_err();
         assert!(matches!(err, EntityError::AlreadyInStatus(_, "active")));
     }
@@ -262,8 +271,8 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let a = entities.create("one", None).unwrap();
-        entities.create("two", None).unwrap();
+        let a = entities.create("one", None, dummy_type_id()).unwrap();
+        entities.create("two", None, dummy_type_id()).unwrap();
         entities.delete(&a.id).unwrap();
 
         let active = entities.list_active().unwrap();
@@ -279,7 +288,7 @@ mod tests {
         let (store, _dir) = setup();
         let entities = store.entities(crate::assertion::MAIN_BRANCH, vec![(crate::assertion::MAIN_BRANCH, Uuid::max())]);
 
-        let created = entities.create("foxtrot", None).unwrap();
+        let created = entities.create("foxtrot", None, dummy_type_id()).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1));
         entities.delete(&created.id).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(1));

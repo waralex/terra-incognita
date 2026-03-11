@@ -48,25 +48,24 @@ storage_key! {
     }
 }
 
-/// Input for creating an entity type (single item in a batch).
+/// Input for creating an entity type with inline property definitions.
 pub struct EntityTypeInput<'a> {
     pub slug: &'a str,
     pub description: Option<&'a str>,
-    pub properties: &'a [&'a str],
+    pub properties: &'a [PropertyDef<'a>],
 }
 
-/// Input for creating a property (single item in a batch).
-pub struct PropertyInput<'a> {
+/// Inline property definition (slug + value_type + description).
+pub struct PropertyDef<'a> {
     pub slug: &'a str,
     pub value_type: ValueType,
     pub description: Option<&'a str>,
-    pub entity_types: &'a [&'a str],
 }
 
-/// Input for attaching an existing property to an existing entity type.
-pub struct AttachInput<'a> {
+/// Input for adding properties to an existing entity type.
+pub struct AddPropertiesInput<'a> {
     pub entity_type: &'a str,
-    pub property: &'a str,
+    pub properties: &'a [PropertyDef<'a>],
 }
 
 /// Serialized entity type value stored in RocksDB.
@@ -84,6 +83,8 @@ struct PropertyValue {
     description: Option<String>,
     value_type: String,
     created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    entity_type_id: Option<String>,
 }
 
 /// RocksDB-backed schema registry scoped to a branch with ancestry chain walk.
@@ -112,7 +113,7 @@ impl BranchSchemaRegistry {
 
     // -- Entity Types --
 
-    /// Creates a single entity type in the current branch.
+    /// Creates a single entity type in the current branch (no inline properties).
     pub fn create_entity_type(
         &self,
         slug: &str,
@@ -120,7 +121,6 @@ impl BranchSchemaRegistry {
     ) -> Result<EntityType, SchemaError> {
         validate_slug(slug)?;
 
-        // Check slug uniqueness across ancestry
         if self.get_entity_type(slug).is_ok() {
             return Err(SchemaError::DuplicateEntityType(slug.to_string()));
         }
@@ -139,12 +139,12 @@ impl BranchSchemaRegistry {
         })
     }
 
-    /// Creates entity types in batch. All-or-nothing via WriteBatch.
+    /// Creates entity types with inline properties in batch. All-or-nothing via WriteBatch.
     pub fn create_entity_types_batch(
         &self,
         items: &[EntityTypeInput<'_>],
     ) -> Result<Vec<EntityType>, SchemaError> {
-        // Validate all first
+        // Validate all entity type slugs first
         for (i, item) in items.iter().enumerate() {
             validate_slug(item.slug).map_err(|e| SchemaError::BatchItemError {
                 index: i,
@@ -156,7 +156,6 @@ impl BranchSchemaRegistry {
                     source: Box::new(SchemaError::DuplicateEntityType(item.slug.to_string())),
                 });
             }
-            // Check for duplicate slugs within the batch
             for prev in &items[..i] {
                 if prev.slug == item.slug {
                     return Err(SchemaError::BatchItemError {
@@ -165,12 +164,26 @@ impl BranchSchemaRegistry {
                     });
                 }
             }
-            for prop_slug in item.properties {
-                if self.get_property_by_slug(prop_slug).is_err() {
+            // Validate inline property slugs
+            for (j, prop) in item.properties.iter().enumerate() {
+                validate_slug(prop.slug).map_err(|e| SchemaError::BatchItemError {
+                    index: i,
+                    source: Box::new(e),
+                })?;
+                if reserved::is_reserved(prop.slug) {
                     return Err(SchemaError::BatchItemError {
                         index: i,
-                        source: Box::new(SchemaError::PropertyNotFound(prop_slug.to_string())),
+                        source: Box::new(SchemaError::ReservedProperty(prop.slug.to_string())),
                     });
+                }
+                // Check for duplicate property slugs within the same type
+                for prev_prop in &item.properties[..j] {
+                    if prev_prop.slug == prop.slug {
+                        return Err(SchemaError::BatchItemError {
+                            index: i,
+                            source: Box::new(SchemaError::DuplicateProperty(prop.slug.to_string())),
+                        });
+                    }
                 }
             }
         }
@@ -180,10 +193,12 @@ impl BranchSchemaRegistry {
 
         let type_cf = self.cf("schema_types")?;
         let type_slug_cf = self.cf("schema_type_slug")?;
+        let prop_cf = self.cf("schema_props")?;
+        let prop_slug_cf = self.cf("schema_prop_slug")?;
         let attach_cf = self.cf("schema_attachments")?;
 
         for item in items {
-            let id = Uuid::now_v7();
+            let type_id = Uuid::now_v7();
             let now = Utc::now();
             let tx_id = Uuid::now_v7();
 
@@ -192,28 +207,53 @@ impl BranchSchemaRegistry {
                 description: item.description.map(String::from),
                 created_at: now.to_rfc3339(),
             };
-            let key = SchemaTypeKey { branch_id: self.branch_id, type_id: id, tx_id }.encode();
+            let key = SchemaTypeKey { branch_id: self.branch_id, type_id, tx_id }.encode();
             let val_bytes = serde_json::to_vec(&val)
                 .map_err(|e| SchemaError::Storage(e.to_string()))?;
             batch.put_cf(type_cf, &key, &val_bytes);
 
             let slug_key = encode_branch_slug_key(&self.branch_id, item.slug);
-            batch.put_cf(type_slug_cf, &slug_key, id.as_bytes());
+            batch.put_cf(type_slug_cf, &slug_key, type_id.as_bytes());
 
-            for prop_slug in item.properties {
-                let prop = self.get_property_by_slug(prop_slug)?;
+            // Create inline properties and attach them
+            for prop_def in item.properties {
+                let prop_id = Uuid::now_v7();
+                let prop_tx_id = Uuid::now_v7();
+                let prop_now = Utc::now();
+
+                let prop_val = PropertyValue {
+                    slug: prop_def.slug.to_string(),
+                    description: prop_def.description.map(String::from),
+                    value_type: prop_def.value_type.as_str().to_string(),
+                    created_at: prop_now.to_rfc3339(),
+                    entity_type_id: Some(type_id.to_string()),
+                };
+                let prop_key = SchemaPropertyKey { branch_id: self.branch_id, prop_id, tx_id: prop_tx_id }.encode();
+                let prop_val_bytes = serde_json::to_vec(&prop_val)
+                    .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                batch.put_cf(prop_cf, &prop_key, &prop_val_bytes);
+
+                // Scoped slug index: branch_id | type_id | slug
+                let scoped_slug_key = encode_type_slug_key(&self.branch_id, &type_id, prop_def.slug);
+                batch.put_cf(prop_slug_cf, &scoped_slug_key, prop_id.as_bytes());
+
+                // Also write global slug index for backward compat
+                let global_slug_key = encode_branch_slug_key(&self.branch_id, prop_def.slug);
+                batch.put_cf(prop_slug_cf, &global_slug_key, prop_id.as_bytes());
+
+                // Attachment record
                 let attach_tx_id = Uuid::now_v7();
                 let attach_key = SchemaAttachmentKey {
                     branch_id: self.branch_id,
-                    type_id: id,
+                    type_id,
                     tx_id: attach_tx_id,
-                    prop_id: prop.id,
+                    prop_id,
                 }.encode();
                 batch.put_cf(attach_cf, &attach_key, &[]);
             }
 
             results.push(EntityType {
-                id,
+                id: type_id,
                 slug: item.slug.to_string(),
                 description: item.description.map(String::from),
                 created_at: now,
@@ -222,6 +262,86 @@ impl BranchSchemaRegistry {
 
         self.db.write(batch).map_err(|e| SchemaError::Storage(e.to_string()))?;
         Ok(results)
+    }
+
+    /// Adds properties to an existing entity type.
+    pub fn add_properties_to_type(
+        &self,
+        items: &[AddPropertiesInput<'_>],
+    ) -> Result<Vec<EntityProperty>, SchemaError> {
+        let mut all_props = Vec::new();
+
+        for input in items {
+            let et = self.get_entity_type(input.entity_type)?;
+
+            for (j, prop) in input.properties.iter().enumerate() {
+                validate_slug(prop.slug)?;
+                if reserved::is_reserved(prop.slug) {
+                    return Err(SchemaError::ReservedProperty(prop.slug.to_string()));
+                }
+                // Check duplicate within same batch
+                for prev in &input.properties[..j] {
+                    if prev.slug == prop.slug {
+                        return Err(SchemaError::DuplicateProperty(prop.slug.to_string()));
+                    }
+                }
+                // Check if this type already has a property with this slug
+                if self.get_property_by_type_and_slug(&et.id, prop.slug).is_ok() {
+                    return Err(SchemaError::DuplicateProperty(prop.slug.to_string()));
+                }
+            }
+
+            let mut batch = rocksdb::WriteBatch::default();
+            let prop_cf = self.cf("schema_props")?;
+            let prop_slug_cf = self.cf("schema_prop_slug")?;
+            let attach_cf = self.cf("schema_attachments")?;
+
+            for prop_def in input.properties {
+                let prop_id = Uuid::now_v7();
+                let tx_id = Uuid::now_v7();
+                let now = Utc::now();
+
+                let prop_val = PropertyValue {
+                    slug: prop_def.slug.to_string(),
+                    description: prop_def.description.map(String::from),
+                    value_type: prop_def.value_type.as_str().to_string(),
+                    created_at: now.to_rfc3339(),
+                    entity_type_id: Some(et.id.to_string()),
+                };
+                let prop_key = SchemaPropertyKey { branch_id: self.branch_id, prop_id, tx_id }.encode();
+                let prop_val_bytes = serde_json::to_vec(&prop_val)
+                    .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                batch.put_cf(prop_cf, &prop_key, &prop_val_bytes);
+
+                let scoped_slug_key = encode_type_slug_key(&self.branch_id, &et.id, prop_def.slug);
+                batch.put_cf(prop_slug_cf, &scoped_slug_key, prop_id.as_bytes());
+
+                let global_slug_key = encode_branch_slug_key(&self.branch_id, prop_def.slug);
+                batch.put_cf(prop_slug_cf, &global_slug_key, prop_id.as_bytes());
+
+                let attach_tx_id = Uuid::now_v7();
+                let attach_key = SchemaAttachmentKey {
+                    branch_id: self.branch_id,
+                    type_id: et.id,
+                    tx_id: attach_tx_id,
+                    prop_id,
+                }.encode();
+                batch.put_cf(attach_cf, &attach_key, &[]);
+
+                all_props.push(EntityProperty {
+                    id: prop_id,
+                    slug: prop_def.slug.to_string(),
+                    description: prop_def.description.map(String::from),
+                    value_type: prop_def.value_type,
+                    entity_type_id: Some(et.id),
+                    created_at: now,
+                });
+            }
+
+            self.db.write(batch).map_err(|e| SchemaError::Storage(e.to_string()))?;
+        }
+
+        Ok(all_props)
     }
 
     /// Lists all entity types visible from this branch (walking ancestry).
@@ -271,8 +391,6 @@ impl BranchSchemaRegistry {
                 .map_err(|e| SchemaError::Storage(e.to_string()))? {
                 let type_id = Uuid::from_slice(&id_bytes)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
-                // Prefix scan on (branch_id, type_id) — schema items are immutable,
-                // so at most one entry per (branch_id, type_id).
                 let prefix = SchemaTypeKey::prefix_branch_type(&ancestor_id, &type_id);
                 let iter = self.db.prefix_iterator_cf(type_cf, &prefix);
                 for item in iter {
@@ -329,7 +447,7 @@ impl BranchSchemaRegistry {
 
     // -- Properties --
 
-    /// Creates a single property in the current branch.
+    /// Creates a single property in the current branch (legacy — no type binding).
     pub fn create_property(
         &self,
         slug: &str,
@@ -348,7 +466,7 @@ impl BranchSchemaRegistry {
         let id = Uuid::now_v7();
         let now = Utc::now();
 
-        self.write_property(id, slug, value_type, description, &now)?;
+        self.write_property(id, slug, value_type, description, None, &now)?;
         self.write_prop_slug_index(slug, &id)?;
 
         Ok(EntityProperty {
@@ -356,106 +474,16 @@ impl BranchSchemaRegistry {
             slug: slug.to_string(),
             description: description.map(String::from),
             value_type,
+            entity_type_id: None,
             created_at: now,
         })
-    }
-
-    /// Creates properties in batch. All-or-nothing via WriteBatch.
-    pub fn create_properties_batch(
-        &self,
-        items: &[PropertyInput<'_>],
-    ) -> Result<Vec<EntityProperty>, SchemaError> {
-        for (i, item) in items.iter().enumerate() {
-            validate_slug(item.slug).map_err(|e| SchemaError::BatchItemError {
-                index: i,
-                source: Box::new(e),
-            })?;
-            if reserved::is_reserved(item.slug) {
-                return Err(SchemaError::BatchItemError {
-                    index: i,
-                    source: Box::new(SchemaError::ReservedProperty(item.slug.to_string())),
-                });
-            }
-            if self.get_property_by_slug(item.slug).is_ok() {
-                return Err(SchemaError::BatchItemError {
-                    index: i,
-                    source: Box::new(SchemaError::DuplicateProperty(item.slug.to_string())),
-                });
-            }
-            for prev in &items[..i] {
-                if prev.slug == item.slug {
-                    return Err(SchemaError::BatchItemError {
-                        index: i,
-                        source: Box::new(SchemaError::DuplicateProperty(item.slug.to_string())),
-                    });
-                }
-            }
-            for et_slug in item.entity_types {
-                if self.get_entity_type(et_slug).is_err() {
-                    return Err(SchemaError::BatchItemError {
-                        index: i,
-                        source: Box::new(SchemaError::EntityTypeNotFound(et_slug.to_string())),
-                    });
-                }
-            }
-        }
-
-        let mut batch = rocksdb::WriteBatch::default();
-        let mut results = Vec::with_capacity(items.len());
-
-        let prop_cf = self.cf("schema_props")?;
-        let prop_slug_cf = self.cf("schema_prop_slug")?;
-        let attach_cf = self.cf("schema_attachments")?;
-
-        for item in items {
-            let id = Uuid::now_v7();
-            let now = Utc::now();
-            let tx_id = Uuid::now_v7();
-
-            let val = PropertyValue {
-                slug: item.slug.to_string(),
-                description: item.description.map(String::from),
-                value_type: item.value_type.as_str().to_string(),
-                created_at: now.to_rfc3339(),
-            };
-            let key = SchemaPropertyKey { branch_id: self.branch_id, prop_id: id, tx_id }.encode();
-            let val_bytes = serde_json::to_vec(&val)
-                .map_err(|e| SchemaError::Storage(e.to_string()))?;
-            batch.put_cf(prop_cf, &key, &val_bytes);
-
-            let slug_key = encode_branch_slug_key(&self.branch_id, item.slug);
-            batch.put_cf(prop_slug_cf, &slug_key, id.as_bytes());
-
-            for et_slug in item.entity_types {
-                let et = self.get_entity_type(et_slug)?;
-                let attach_tx_id = Uuid::now_v7();
-                let attach_key = SchemaAttachmentKey {
-                    branch_id: self.branch_id,
-                    type_id: et.id,
-                    tx_id: attach_tx_id,
-                    prop_id: id,
-                }.encode();
-                batch.put_cf(attach_cf, &attach_key, &[]);
-            }
-
-            results.push(EntityProperty {
-                id,
-                slug: item.slug.to_string(),
-                description: item.description.map(String::from),
-                value_type: item.value_type,
-                created_at: now,
-            });
-        }
-
-        self.db.write(batch).map_err(|e| SchemaError::Storage(e.to_string()))?;
-        Ok(results)
     }
 
     /// Lists all properties visible from this branch.
     pub fn list_all_properties(&self) -> Result<Vec<EntityProperty>, SchemaError> {
         let cf = self.cf("schema_props")?;
         let mut props = Vec::new();
-        let mut seen_slugs = std::collections::HashSet::new();
+        let mut seen_ids = std::collections::HashSet::new();
 
         for &(ancestor_id, branch_point_tx) in &self.ancestry {
             let prefix = SchemaPropertyKey::prefix_branch(&ancestor_id);
@@ -471,15 +499,21 @@ impl BranchSchemaRegistry {
                 let pv: PropertyValue = serde_json::from_slice(&val)
                     .map_err(|e| SchemaError::Storage(e.to_string()))?;
 
-                if seen_slugs.insert(pv.slug.clone()) {
+                if seen_ids.insert(k.prop_id) {
                     let created_at = parse_datetime(&pv.created_at)?;
                     let value_type = ValueType::from_str(&pv.value_type)
                         .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
+                    let entity_type_id = pv.entity_type_id
+                        .as_deref()
+                        .map(|s| Uuid::parse_str(s))
+                        .transpose()
+                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
                     props.push(EntityProperty {
                         id: k.prop_id,
                         slug: pv.slug,
                         description: pv.description,
                         value_type,
+                        entity_type_id,
                         created_at,
                     });
                 }
@@ -490,7 +524,7 @@ impl BranchSchemaRegistry {
         Ok(props)
     }
 
-    /// Gets a property by slug (chain walk).
+    /// Gets a property by slug (chain walk). Falls back to global slug index.
     pub fn get_property_by_slug(&self, slug: &str) -> Result<EntityProperty, SchemaError> {
         let slug_cf = self.cf("schema_prop_slug")?;
         let prop_cf = self.cf("schema_props")?;
@@ -514,11 +548,62 @@ impl BranchSchemaRegistry {
                         let created_at = parse_datetime(&pv.created_at)?;
                         let value_type = ValueType::from_str(&pv.value_type)
                             .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
+                        let entity_type_id = pv.entity_type_id
+                            .as_deref()
+                            .map(|s| Uuid::parse_str(s))
+                            .transpose()
+                            .map_err(|e| SchemaError::Storage(e.to_string()))?;
                         return Ok(EntityProperty {
                             id: prop_id,
                             slug: pv.slug,
                             description: pv.description,
                             value_type,
+                            entity_type_id,
+                            created_at,
+                        });
+                    }
+                }
+            }
+        }
+
+        Err(SchemaError::PropertyNotFound(slug.to_string()))
+    }
+
+    /// Gets a property by type-scoped slug (chain walk).
+    pub fn get_property_by_type_and_slug(&self, type_id: &Uuid, slug: &str) -> Result<EntityProperty, SchemaError> {
+        let slug_cf = self.cf("schema_prop_slug")?;
+        let prop_cf = self.cf("schema_props")?;
+
+        for &(ancestor_id, branch_point_tx) in &self.ancestry {
+            let slug_key = encode_type_slug_key(&ancestor_id, type_id, slug);
+            if let Some(id_bytes) = self.db.get_cf(slug_cf, &slug_key)
+                .map_err(|e| SchemaError::Storage(e.to_string()))? {
+                let prop_id = Uuid::from_slice(&id_bytes)
+                    .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                let prefix = SchemaPropertyKey::prefix_branch_prop(&ancestor_id, &prop_id);
+                let iter = self.db.prefix_iterator_cf(prop_cf, &prefix);
+                for item in iter {
+                    let (raw_key, val_bytes) = item.map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    if !raw_key.starts_with(&prefix) { break; }
+                    let k = SchemaPropertyKey::decode(&raw_key)
+                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                    if k.tx_id.as_bytes() <= branch_point_tx.as_bytes() {
+                        let pv: PropertyValue = serde_json::from_slice(&val_bytes)
+                            .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                        let created_at = parse_datetime(&pv.created_at)?;
+                        let value_type = ValueType::from_str(&pv.value_type)
+                            .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
+                        let entity_type_id = pv.entity_type_id
+                            .as_deref()
+                            .map(|s| Uuid::parse_str(s))
+                            .transpose()
+                            .map_err(|e| SchemaError::Storage(e.to_string()))?;
+                        return Ok(EntityProperty {
+                            id: prop_id,
+                            slug: pv.slug,
+                            description: pv.description,
+                            value_type,
+                            entity_type_id,
                             created_at,
                         });
                     }
@@ -537,7 +622,6 @@ impl BranchSchemaRegistry {
 
     /// Lists properties by entity type UUID (chain walk for attachments).
     pub fn list_properties_by_type_id(&self, entity_type_id: &Uuid) -> Result<Vec<EntityProperty>, SchemaError> {
-        // Verify entity type exists
         self.get_entity_type_by_id(entity_type_id)?;
 
         let attach_cf = self.cf("schema_attachments")?;
@@ -586,11 +670,17 @@ impl BranchSchemaRegistry {
                     let created_at = parse_datetime(&pv.created_at)?;
                     let value_type = ValueType::from_str(&pv.value_type)
                         .ok_or_else(|| SchemaError::Storage(format!("invalid value_type: {}", pv.value_type)))?;
+                    let entity_type_id = pv.entity_type_id
+                        .as_deref()
+                        .map(|s| Uuid::parse_str(s))
+                        .transpose()
+                        .map_err(|e| SchemaError::Storage(e.to_string()))?;
                     return Ok(EntityProperty {
                         id: *id,
                         slug: pv.slug,
                         description: pv.description,
                         value_type,
+                        entity_type_id,
                         created_at,
                     });
                 }
@@ -600,9 +690,9 @@ impl BranchSchemaRegistry {
         Err(SchemaError::PropertyNotFound(id.to_string()))
     }
 
-    // -- Attachments --
+    // -- Legacy Attachments (kept for backward compat reads) --
 
-    /// Attaches a property to an entity type.
+    /// Attaches a property to an entity type (legacy — use add_properties_to_type instead).
     pub fn attach_property(
         &self,
         entity_type_slug: &str,
@@ -622,47 +712,6 @@ impl BranchSchemaRegistry {
 
         self.db.put_cf(cf, &key, &[])
             .map_err(|e| SchemaError::Storage(e.to_string()))
-    }
-
-    /// Attaches properties in batch.
-    pub fn attach_properties_batch(
-        &self,
-        items: &[AttachInput<'_>],
-    ) -> Result<usize, SchemaError> {
-        // Validate all first
-        let mut resolved = Vec::with_capacity(items.len());
-        for (i, item) in items.iter().enumerate() {
-            let et = self.get_entity_type(item.entity_type).map_err(|e| {
-                SchemaError::BatchItemError {
-                    index: i,
-                    source: Box::new(e),
-                }
-            })?;
-            let prop = self.get_property_by_slug(item.property).map_err(|e| {
-                SchemaError::BatchItemError {
-                    index: i,
-                    source: Box::new(e),
-                }
-            })?;
-            resolved.push((et.id, prop.id));
-        }
-
-        let cf = self.cf("schema_attachments")?;
-        let mut batch = rocksdb::WriteBatch::default();
-
-        for (type_id, prop_id) in resolved {
-            let tx_id = Uuid::now_v7();
-            let key = SchemaAttachmentKey {
-                branch_id: self.branch_id,
-                type_id,
-                tx_id,
-                prop_id,
-            }.encode();
-            batch.put_cf(cf, &key, &[]);
-        }
-
-        self.db.write(batch).map_err(|e| SchemaError::Storage(e.to_string()))?;
-        Ok(items.len())
     }
 
     // -- Private helpers --
@@ -689,7 +738,7 @@ impl BranchSchemaRegistry {
             .map_err(|e| SchemaError::Storage(e.to_string()))
     }
 
-    fn write_property(&self, id: Uuid, slug: &str, value_type: ValueType, description: Option<&str>, created_at: &DateTime<Utc>) -> Result<(), SchemaError> {
+    fn write_property(&self, id: Uuid, slug: &str, value_type: ValueType, description: Option<&str>, entity_type_id: Option<Uuid>, created_at: &DateTime<Utc>) -> Result<(), SchemaError> {
         let cf = self.cf("schema_props")?;
         let tx_id = Uuid::now_v7();
         let key = SchemaPropertyKey { branch_id: self.branch_id, prop_id: id, tx_id }.encode();
@@ -698,6 +747,7 @@ impl BranchSchemaRegistry {
             description: description.map(String::from),
             value_type: value_type.as_str().to_string(),
             created_at: created_at.to_rfc3339(),
+            entity_type_id: entity_type_id.map(|id| id.to_string()),
         };
         let val_bytes = serde_json::to_vec(&val)
             .map_err(|e| SchemaError::Storage(e.to_string()))?;
@@ -722,6 +772,15 @@ impl BranchSchemaRegistry {
 fn encode_branch_slug_key(branch_id: &Uuid, slug: &str) -> Vec<u8> {
     let mut key = Vec::with_capacity(16 + slug.len());
     key.extend_from_slice(branch_id.as_bytes());
+    key.extend_from_slice(slug.as_bytes());
+    key
+}
+
+/// Encodes a type-scoped slug key: branch_id(16) | type_id(16) | slug.
+fn encode_type_slug_key(branch_id: &Uuid, type_id: &Uuid, slug: &str) -> Vec<u8> {
+    let mut key = Vec::with_capacity(32 + slug.len());
+    key.extend_from_slice(branch_id.as_bytes());
+    key.extend_from_slice(type_id.as_bytes());
     key.extend_from_slice(slug.as_bytes());
     key
 }
@@ -770,19 +829,49 @@ mod tests {
     }
 
     #[test]
-    fn create_property_and_attach() {
+    fn create_entity_type_with_inline_properties() {
         let (store, _dir) = setup();
         let reg = main_registry(&store);
 
-        reg.create_entity_type("research-project", None).unwrap();
-        let prop = reg.create_property("project-name", ValueType::Struct, None).unwrap();
-        assert_eq!(prop.slug, "project-name");
+        let items = vec![EntityTypeInput {
+            slug: "track",
+            description: None,
+            properties: &[
+                PropertyDef { slug: "bpm", value_type: ValueType::Range, description: None },
+                PropertyDef { slug: "certification", value_type: ValueType::Set, description: Some("RIAA cert") },
+            ],
+        }];
+        let results = reg.create_entity_types_batch(&items).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].slug, "track");
 
-        reg.attach_property("research-project", "project-name").unwrap();
+        let props = reg.list_properties("track").unwrap();
+        assert_eq!(props.len(), 2);
+        assert!(props.iter().any(|p| p.slug == "bpm"));
+        assert!(props.iter().any(|p| p.slug == "certification"));
 
-        let props = reg.list_properties("research-project").unwrap();
+        // Properties should have entity_type_id set
+        let bpm = props.iter().find(|p| p.slug == "bpm").unwrap();
+        assert_eq!(bpm.entity_type_id, Some(results[0].id));
+    }
+
+    #[test]
+    fn add_properties_to_existing_type() {
+        let (store, _dir) = setup();
+        let reg = main_registry(&store);
+
+        reg.create_entity_type("track", None).unwrap();
+        let new_props = reg.add_properties_to_type(&[AddPropertiesInput {
+            entity_type: "track",
+            properties: &[
+                PropertyDef { slug: "bpm", value_type: ValueType::Range, description: None },
+            ],
+        }]).unwrap();
+        assert_eq!(new_props.len(), 1);
+
+        let props = reg.list_properties("track").unwrap();
         assert_eq!(props.len(), 1);
-        assert_eq!(props[0].slug, "project-name");
+        assert_eq!(props[0].slug, "bpm");
     }
 
     #[test]
@@ -837,91 +926,68 @@ mod tests {
     }
 
     #[test]
-    fn batch_create_properties() {
-        let (store, _dir) = setup();
-        let reg = main_registry(&store);
-
-        let items = vec![
-            PropertyInput { slug: "name", value_type: ValueType::Struct, description: None, entity_types: &[] },
-            PropertyInput { slug: "count", value_type: ValueType::Range, description: Some("Amount"), entity_types: &[] },
-        ];
-        let results = reg.create_properties_batch(&items).unwrap();
-        assert_eq!(results.len(), 2);
-
-        let all = reg.list_all_properties().unwrap();
-        assert_eq!(all.len(), 2);
-    }
-
-    #[test]
     fn branch_isolation() {
         let (store, _dir) = setup();
 
-        // Create entity type on main
         let main_reg = main_registry(&store);
         main_reg.create_entity_type("main-type", None).unwrap();
-        main_reg.create_property("main-prop", ValueType::Set, None).unwrap();
 
-        // Create a branch
         let branches = store.branches();
         let branch = branches.create("child", serde_json::Value::Null, MAIN_BRANCH, Uuid::max()).unwrap();
         let ancestry = branches.resolve_ancestry(&branch.id).unwrap();
         let branch_reg = store.schema_registry(branch.id, ancestry);
 
-        // Branch can see main's types
         assert!(branch_reg.get_entity_type("main-type").is_ok());
 
-        // Create type only on branch
         branch_reg.create_entity_type("branch-type", None).unwrap();
 
-        // Main cannot see branch's types
         let main_types = main_reg.list_entity_types().unwrap();
         assert_eq!(main_types.len(), 1);
         assert_eq!(main_types[0].slug, "main-type");
 
-        // Branch can see both
         let branch_types = branch_reg.list_entity_types().unwrap();
         assert_eq!(branch_types.len(), 2);
     }
 
     #[test]
-    fn batch_create_entity_types_with_property_attachment() {
+    fn scoped_property_slugs() {
         let (store, _dir) = setup();
         let reg = main_registry(&store);
 
-        reg.create_property("name", ValueType::Struct, None).unwrap();
-        reg.create_property("code", ValueType::Range, None).unwrap();
-
+        // Two types can have properties with the same slug
         let items = vec![
-            EntityTypeInput { slug: "unit", description: None, properties: &["name", "code"] },
-            EntityTypeInput { slug: "location", description: None, properties: &["name"] },
+            EntityTypeInput {
+                slug: "db-table",
+                description: None,
+                properties: &[PropertyDef { slug: "description", value_type: ValueType::Struct, description: None }],
+            },
+            EntityTypeInput {
+                slug: "analytical-finding",
+                description: None,
+                properties: &[PropertyDef { slug: "description", value_type: ValueType::Struct, description: None }],
+            },
         ];
-        let results = reg.create_entity_types_batch(&items).unwrap();
-        assert_eq!(results.len(), 2);
+        let types = reg.create_entity_types_batch(&items).unwrap();
+        assert_eq!(types.len(), 2);
 
-        let unit_props = reg.list_properties("unit").unwrap();
-        assert_eq!(unit_props.len(), 2);
+        let db_props = reg.list_properties("db-table").unwrap();
+        assert_eq!(db_props.len(), 1);
+        assert_eq!(db_props[0].slug, "description");
+        assert_eq!(db_props[0].entity_type_id, Some(types[0].id));
 
-        let loc_props = reg.list_properties("location").unwrap();
-        assert_eq!(loc_props.len(), 1);
-    }
+        let af_props = reg.list_properties("analytical-finding").unwrap();
+        assert_eq!(af_props.len(), 1);
+        assert_eq!(af_props[0].slug, "description");
+        assert_eq!(af_props[0].entity_type_id, Some(types[1].id));
 
-    #[test]
-    fn batch_attach_properties() {
-        let (store, _dir) = setup();
-        let reg = main_registry(&store);
+        // Different property IDs
+        assert_ne!(db_props[0].id, af_props[0].id);
 
-        reg.create_entity_type("unit", None).unwrap();
-        reg.create_property("name", ValueType::Struct, None).unwrap();
-        reg.create_property("code", ValueType::Range, None).unwrap();
+        // Type-scoped lookup
+        let p1 = reg.get_property_by_type_and_slug(&types[0].id, "description").unwrap();
+        assert_eq!(p1.id, db_props[0].id);
 
-        let items = vec![
-            AttachInput { entity_type: "unit", property: "name" },
-            AttachInput { entity_type: "unit", property: "code" },
-        ];
-        let count = reg.attach_properties_batch(&items).unwrap();
-        assert_eq!(count, 2);
-
-        let props = reg.list_properties("unit").unwrap();
-        assert_eq!(props.len(), 2);
+        let p2 = reg.get_property_by_type_and_slug(&types[1].id, "description").unwrap();
+        assert_eq!(p2.id, af_props[0].id);
     }
 }

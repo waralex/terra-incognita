@@ -39,7 +39,6 @@ CommandResult::TransactionResult {
             transaction,
             entity_types,
             properties,
-            attached_count,
             introduced,
             asserted,
         } => serde_json::to_value(&TransactionResultResponse {
@@ -47,7 +46,6 @@ CommandResult::TransactionResult {
             answer: transaction.answer,
             entity_types,
             properties,
-            attached_count,
             introduce: introduced,
             asserts: asserted,
         })

@@ -26,7 +26,7 @@ pub enum Command {
     ListEntityTypes,
     /// List properties, optionally filtered by entity type.
     ListProperties { entity_type: Option<String> },
-    /// Unified write command: schema creation, attachments, visibility, entity introduction and assertions.
+    /// Unified write command: schema creation, visibility, entity introduction and assertions.
     Transaction(TransactionInput),
     /// List all entities (slug + uuid).
     ListEntities,
@@ -46,33 +46,29 @@ pub enum Command {
     },
 }
 
-/// Input for creating an entity type.
+/// Input for creating an entity type with inline property definitions.
 pub struct CreateEntityType {
     pub slug: String,
     pub description: Option<String>,
-    /// Property slugs to attach to the new entity type.
-    pub properties: Vec<String>,
+    /// Inline property definitions (slug + value_type + description).
+    pub properties: Vec<CreatePropertyDef>,
 }
 
-/// Input for creating a property.
-pub struct CreateProperty {
+/// Inline property definition for entity type creation.
+pub struct CreatePropertyDef {
     pub slug: String,
     pub value_type: ValueType,
     pub description: Option<String>,
-    /// Entity type slugs to attach this property to.
-    pub entity_types: Vec<String>,
 }
 
-/// Input for attaching a property to an entity type.
-pub struct AttachProperty {
+/// Input for adding properties to an existing entity type.
+pub struct AddProperties {
     pub entity_type: String,
-    pub property: String,
+    pub properties: Vec<CreatePropertyDef>,
 }
 
-/// A single fact or hypothesis: entity type + properties + reasoning.
+/// A single fact or hypothesis: properties + reasoning (entity_type derived from entity).
 pub struct AssertionItem {
-    /// Entity type slug (determines which properties are valid).
-    pub entity_type: String,
     /// Property slug → typed value.
     pub properties: HashMap<String, PropertyValue>,
     /// Per-assertion reasoning: why this specific value.
@@ -81,9 +77,9 @@ pub struct AssertionItem {
 
 /// Input for the unified transaction command.
 ///
-/// All write operations are expressed here: schema creation, property attachment,
-/// visibility changes, entity introduction, and assertions on existing entities.
-/// Processed in order: properties → entity_types → attach → hide/unhide → introduce → asserts.
+/// All write operations are expressed here: schema creation with inline properties,
+/// adding properties to existing types, visibility changes, entity introduction, and assertions.
+/// Processed in order: entity_types (with inline props) → add_properties → hide/unhide → introduce → asserts.
 pub struct TransactionInput {
     /// Transaction-level reasoning: why this batch of operations.
     pub reasoning: serde_json::Value,
@@ -93,12 +89,10 @@ pub struct TransactionInput {
     pub answer: Option<String>,
     /// Tool invocations recorded in this transaction (query, reasoning, stats — no result data).
     pub commands: Vec<serde_json::Value>,
-    /// Entity types to create (processed first).
+    /// Entity types to create with inline property definitions.
     pub entity_types: Vec<CreateEntityType>,
-    /// Properties to create (processed second).
-    pub properties: Vec<CreateProperty>,
-    /// Property-to-entity-type attachments (processed third).
-    pub attach: Vec<AttachProperty>,
+    /// Properties to add to existing entity types.
+    pub add_properties: Vec<AddProperties>,
     /// Items to hide on the current branch.
     pub hide: HideUnhideInput,
     /// Items to unhide on the current branch.
@@ -128,6 +122,8 @@ pub struct HideUnhideInput {
 pub struct IntroduceItem {
     /// Entity slug.
     pub entity: String,
+    /// Entity type slug.
+    pub entity_type: String,
     /// Entity description.
     pub description: Option<String>,
     /// Facts for this entity.
@@ -200,7 +196,6 @@ pub enum CommandResult {
         transaction: Transaction,
         entity_types: Vec<EntityType>,
         properties: Vec<EntityProperty>,
-        attached_count: usize,
         introduced: Vec<TransactionEntityResult>,
         asserted: Vec<TransactionEntityResult>,
     },

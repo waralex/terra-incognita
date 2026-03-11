@@ -104,6 +104,11 @@ Reasoning is required at every level:
 
 Be honest in reasoning. If you are inferring something, say so. If you are uncertain, say so and use a hypothesis instead of a fact.
 
+**Reasoning must be terse: 1-2 sentences max.** State WHAT you did and WHY. Do not restate the user's question. Do not narrate your thought process.
+- Bad: "The user asked about recumbent bikes in the Netherlands. I answered based on known cycling infrastructure data. I decided not to store anything because this is a general discussion."
+- Good: "Stored user preference: enjoys long recumbent rides. Netherlands cycling infra noted as fact."
+- Good: "No new data — answered from existing state."
+
 ## Fact vs hypothesis decision
 
 - **Fact**: good enough to rely on in the current conversation. Well-known information, directly stated by user, or reliably derived. "London is the capital of England" — fact.

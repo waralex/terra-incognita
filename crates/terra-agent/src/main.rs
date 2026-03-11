@@ -17,7 +17,9 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::app::{App, Mode};
-use crate::llm::LlmConfig;
+use crate::llm::anthropic::AnthropicProvider;
+use crate::llm::openai::OpenAiProvider;
+use crate::llm::LlmProviderConfig;
 use crate::session::SessionChoice;
 use crate::store::StoreHandle;
 
@@ -79,12 +81,32 @@ fn main() -> io::Result<()> {
     };
 
     // Detect mode
-    let mode = match LlmConfig::from_env() {
-        Some(mut config) => {
-            config.log_path = Some(data_dir.join("llm.log"));
-            Mode::Llm(config)
-        }
-        None => Mode::Direct,
+    let mode = if let Ok(api_key) = std::env::var("TERRA_LLM_API_KEY") {
+        let provider_name = std::env::var("TERRA_LLM_PROVIDER")
+            .unwrap_or_else(|_| "openai".into());
+
+        let (default_url, default_model) = match provider_name.as_str() {
+            "anthropic" => ("https://api.anthropic.com", "claude-sonnet-4-20250514"),
+            _ => ("https://api.openai.com/v1", "gpt-4o"),
+        };
+
+        let config = LlmProviderConfig {
+            api_key,
+            base_url: std::env::var("TERRA_LLM_BASE_URL")
+                .unwrap_or_else(|_| default_url.into()),
+            model: std::env::var("TERRA_LLM_MODEL")
+                .unwrap_or_else(|_| default_model.into()),
+            log_path: Some(data_dir.join("llm.log")),
+        };
+
+        let provider: Box<dyn crate::llm::LlmProvider> = match provider_name.as_str() {
+            "anthropic" => Box::new(AnthropicProvider::new(config)),
+            _ => Box::new(OpenAiProvider::new(config)),
+        };
+
+        Mode::Llm(provider)
+    } else {
+        Mode::Direct
     };
 
     let mut app = App::new(store.clone(), mode, branch);
@@ -111,7 +133,11 @@ fn run_loop(
             continue;
         }
         terminal.draw(|frame| ui::draw(frame, app))?;
-        event::handle_events(app)?;
+        if let Some(input) = event::handle_events(app)? {
+            // Redraw with "thinking..." before blocking on dispatch
+            terminal.draw(|frame| ui::draw(frame, app))?;
+            app.dispatch_input(&input);
+        }
     }
     Ok(())
 }

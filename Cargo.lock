@@ -1731,6 +1731,7 @@ dependencies = [
 name = "terra-agent"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crossterm",
  "native-tls",
  "ratatui",

@@ -4,16 +4,17 @@ use std::time::Duration;
 use crate::app::App;
 
 /// Polls for a crossterm event and updates app state accordingly.
-pub fn handle_events(app: &mut App) -> std::io::Result<()> {
+/// Returns Some(input) if Enter was pressed and input was taken (needs dispatch after redraw).
+pub fn handle_events(app: &mut App) -> std::io::Result<Option<String>> {
     if event::poll(Duration::from_millis(50))? {
         if let Event::Key(key) = event::read()? {
-            handle_key(app, key);
+            return Ok(handle_key(app, key));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
-fn handle_key(app: &mut App, key: KeyEvent) {
+fn handle_key(app: &mut App, key: KeyEvent) -> Option<String> {
     match (key.code, key.modifiers) {
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
@@ -21,7 +22,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
             app.wants_switch_session = true;
         }
-        (KeyCode::Enter, _) => app.submit_input(),
+        (KeyCode::Enter, _) => return app.take_input(),
         (KeyCode::Tab, _) => app.toggle_panel(),
         (KeyCode::Up, _) => app.scroll_up(),
         (KeyCode::Down, _) => app.scroll_down(),
@@ -34,4 +35,5 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => app.insert_char(c),
         _ => {}
     }
+    None
 }

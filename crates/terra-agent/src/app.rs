@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::llm::{self, ChatMessage, LlmConfig, LlmResult};
+use crate::llm::{self, ChatMessage, LlmProvider, LlmResult};
 use crate::store::StoreHandle;
 
 const MAX_RETRIES: usize = 2;
@@ -26,7 +26,7 @@ pub enum Mode {
     /// Direct YAML command dispatch (no LLM).
     Direct,
     /// LLM-assisted: user types natural language, LLM returns transactions.
-    Llm(LlmConfig),
+    Llm(Box<dyn LlmProvider>),
 }
 
 /// Application state.
@@ -40,6 +40,7 @@ pub struct App {
     pub should_quit: bool,
     pub wants_switch_session: bool,
     pub scroll_offset: usize,
+    pub total_tokens: usize,
     store: StoreHandle,
     mode: Mode,
     /// Conversation history for LLM context (last N exchanges).
@@ -66,17 +67,19 @@ impl App {
             should_quit: false,
             wants_switch_session: false,
             scroll_offset: 0,
+            total_tokens: 0,
             store,
             mode,
             llm_history: Vec::new(),
         }
     }
 
-    /// Submits the current input.
-    pub fn submit_input(&mut self) {
+    /// Takes input from the buffer. Returns Some(input) if non-empty.
+    /// Moves the message to chat immediately so UI can redraw before dispatch.
+    pub fn take_input(&mut self) -> Option<String> {
         let input = self.input.trim().to_string();
         if input.is_empty() {
-            return;
+            return None;
         }
 
         self.messages.push(Message {
@@ -87,9 +90,31 @@ impl App {
         self.cursor_pos = 0;
         self.scroll_offset = 0;
 
+        // Add pending indicator for LLM mode
+        if matches!(self.mode, Mode::Llm(_)) {
+            self.messages.push(Message {
+                role: Role::System,
+                text: "thinking...".into(),
+            });
+        }
+
+        Some(input)
+    }
+
+    /// Dispatches the input after UI has redrawn.
+    pub fn dispatch_input(&mut self, input: &str) {
+        // Remove pending message if present
+        if matches!(self.mode, Mode::Llm(_)) {
+            if let Some(last) = self.messages.last() {
+                if last.text == "thinking..." {
+                    self.messages.pop();
+                }
+            }
+        }
+
         match &self.mode {
-            Mode::Direct => self.dispatch_direct(&input),
-            Mode::Llm(_) => self.dispatch_llm(&input),
+            Mode::Direct => self.dispatch_direct(input),
+            Mode::Llm(_) => self.dispatch_llm(input),
         }
 
         if self.show_side_panel {
@@ -111,20 +136,15 @@ impl App {
 
     /// LLM mode: send to LLM, extract answer, dispatch transaction.
     fn dispatch_llm(&mut self, input: &str) {
-        // Grab config reference - need to clone for borrow checker
-        let config = match &self.mode {
-            Mode::Llm(c) => LlmConfig {
-                api_key: c.api_key.clone(),
-                base_url: c.base_url.clone(),
-                model: c.model.clone(),
-            },
+        let provider: &dyn LlmProvider = match &self.mode {
+            Mode::Llm(p) => p.as_ref(),
             _ => unreachable!(),
         };
 
         let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
 
         let result = llm::call_llm_with_retry(
-            &config,
+            provider,
             system_prompt(),
             &branch_state,
             &self.llm_history,
@@ -135,7 +155,10 @@ impl App {
         match result {
             Ok(LlmResult { answer, transaction_json, usage }) => {
                 let token_info = match &usage {
-                    Some(u) => format!(" [{}+{}={}tok]", u.prompt_tokens, u.completion_tokens, u.total_tokens),
+                    Some(u) => {
+                        self.total_tokens += u.total_tokens;
+                        format!(" [{}+{}={}tok]", u.prompt_tokens, u.completion_tokens, u.total_tokens)
+                    }
                     None => String::new(),
                 };
 

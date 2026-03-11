@@ -6,8 +6,20 @@ use super::{ChatMessage, LlmProvider, LlmProviderConfig, TokenUsage};
 struct AnthropicRequest {
     model: String,
     max_tokens: usize,
-    system: String,
+    system: Vec<SystemBlock>,
     messages: Vec<AnthropicMessage>,
+}
+
+#[derive(Serialize)]
+struct SystemBlock {
+    r#type: String,
+    text: String,
+    cache_control: CacheControl,
+}
+
+#[derive(Serialize)]
+struct CacheControl {
+    r#type: String,
 }
 
 #[derive(Serialize)]
@@ -32,6 +44,10 @@ struct ContentBlock {
 struct AnthropicUsage {
     input_tokens: usize,
     output_tokens: usize,
+    #[serde(default)]
+    cache_creation_input_tokens: usize,
+    #[serde(default)]
+    cache_read_input_tokens: usize,
 }
 
 /// Anthropic native API provider.
@@ -95,7 +111,13 @@ impl LlmProvider for AnthropicProvider {
         let request = AnthropicRequest {
             model: self.config.model.clone(),
             max_tokens,
-            system: system_with_json_hint,
+            system: vec![SystemBlock {
+                r#type: "text".into(),
+                text: system_with_json_hint,
+                cache_control: CacheControl {
+                    r#type: "ephemeral".into(),
+                },
+            }],
             messages: deduped,
         };
 
@@ -110,6 +132,7 @@ impl LlmProvider for AnthropicProvider {
         vec![
             format!("x-api-key: {}", self.config.api_key),
             "anthropic-version: 2023-06-01".to_string(),
+            "anthropic-beta: prompt-caching-2024-07-31".to_string(),
         ]
     }
 
@@ -117,10 +140,13 @@ impl LlmProvider for AnthropicProvider {
         let resp: AnthropicResponse = serde_json::from_str(body)
             .map_err(|e| format!("failed to parse Anthropic response: {e}\nbody: {body}"))?;
 
-        let usage = resp.usage.map(|u| TokenUsage {
-            prompt_tokens: u.input_tokens,
-            completion_tokens: u.output_tokens,
-            total_tokens: u.input_tokens + u.output_tokens,
+        let usage = resp.usage.map(|u| {
+            let cache_tokens = u.cache_creation_input_tokens + u.cache_read_input_tokens;
+            TokenUsage {
+                prompt_tokens: u.input_tokens + cache_tokens,
+                completion_tokens: u.output_tokens,
+                total_tokens: u.input_tokens + cache_tokens + u.output_tokens,
+            }
         });
 
         let content = resp

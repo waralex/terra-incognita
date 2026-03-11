@@ -6,8 +6,14 @@ use rust_decimal::prelude::ToPrimitive;
 use tokio_postgres::types::Type;
 use tokio_postgres::{Client, NoTls, Row};
 
-const MAX_ROWS: usize = 100;
-const MAX_RESULT_BYTES: usize = 50_000;
+const MAX_ROWS: usize = 50;
+const MAX_RESULT_BYTES: usize = 16_000;
+
+/// Checks if a SQL query already contains a LIMIT clause (rough heuristic).
+fn has_limit(sql: &str) -> bool {
+    let upper = sql.to_ascii_uppercase();
+    upper.split_ascii_whitespace().any(|w| w == "LIMIT")
+}
 
 /// SQL query result returned to the caller.
 #[derive(Serialize)]
@@ -86,9 +92,17 @@ impl SqlTool {
             }
         });
 
+        // Enforce row limit at postgres level to avoid loading huge result sets.
+        // Request MAX_ROWS+1 to detect truncation.
+        let effective_sql = if has_limit(sql) {
+            sql.to_string()
+        } else {
+            format!("SELECT * FROM ({sql}) _t LIMIT {}", MAX_ROWS + 1)
+        };
+
         let start = Instant::now();
         let rows = client
-            .query(sql, &[])
+            .query(&effective_sql, &[])
             .await
             .map_err(|e| format!("query failed: {e}"))?;
         let elapsed_ms = start.elapsed().as_millis();
@@ -103,7 +117,7 @@ impl SqlTool {
         let result = SqlResult {
             columns,
             rows: json_rows,
-            row_count: total_rows,
+            row_count: if truncated { MAX_ROWS } else { total_rows },
             truncated,
             elapsed_ms,
         };
@@ -111,8 +125,9 @@ impl SqlTool {
         let serialized_size = serde_json::to_string(&result).map_err(|e| e.to_string())?.len();
         if serialized_size > MAX_RESULT_BYTES {
             return Err(format!(
-                "result too large: {serialized_size} bytes, {total_rows} rows, {elapsed_ms}ms. \
-                 Limit is {MAX_RESULT_BYTES} bytes. Use LIMIT or narrow your SELECT columns."
+                "result too large: {serialized_size} bytes, {} rows, {elapsed_ms}ms. \
+                 Max {MAX_RESULT_BYTES} bytes. Use LIMIT, fewer columns, or aggregations.",
+                result.row_count
             ));
         }
 

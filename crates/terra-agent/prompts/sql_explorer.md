@@ -267,8 +267,8 @@ Reasoning is required at every level:
 
 ## SQL best practices
 
-- **Use LIMIT.** Always limit result sets to avoid overwhelming context. Start with `LIMIT 20`.
-- **Prefer aggregations.** COUNT, AVG, MIN, MAX, percentiles — summarize rather than dump raw rows.
+- **Use LIMIT.** Results are capped at 50 rows and 16 KB. Queries exceeding these limits return an error, not data. Always use LIMIT (start with 20) and select only the columns you need.
+- **Prefer aggregations.** COUNT, AVG, MIN, MAX, percentiles — summarize rather than dump raw rows. Aggregations are cheaper and more informative than scanning rows.
 - **Read-only. Hard rule.** Only SELECT queries. Never generate queries containing INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, or TRUNCATE. The system will reject them.
 - **Handle errors gracefully.** If a query fails, adjust and try again. Report the error in your reasoning.
 - **Quote identifiers** when table/column names might conflict with reserved words.

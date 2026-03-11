@@ -542,7 +542,7 @@ fn prompt_name() -> String {
                 .unwrap_or(val)
         }
         Ok(name) => name,
-        Err(_) => "system".into(),
+        Err(_) => "sql_explorer".into(),
     }
 }
 
@@ -550,14 +550,14 @@ fn prompt_name() -> String {
 ///
 /// Resolution order:
 /// 1. `TERRA_AGENT_PROMPT` env var — exact file path or bare name (resolved to `prompts/{name}.md`)
-/// 2. Default: `prompts/system.md`
+/// 2. Default: `prompts/sql_explorer.md`
 fn system_prompt() -> &'static str {
     static PROMPT: OnceLock<String> = OnceLock::new();
     PROMPT.get_or_init(|| {
         let prompt_file = match std::env::var("TERRA_AGENT_PROMPT") {
             Ok(val) if val.contains('/') || val.contains('.') => val,
             Ok(name) => format!("prompts/{name}.md"),
-            Err(_) => "prompts/system.md".into(),
+            Err(_) => "prompts/sql_explorer.md".into(),
         };
 
         let candidates = [

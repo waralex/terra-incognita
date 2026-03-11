@@ -74,13 +74,58 @@ To add properties to an existing entity type later:
 }
 ```
 
+## Tasks
+
+Tasks track work items — things to explore, verify, or clarify. They persist across the conversation.
+
+**Lifecycle:** open → update notes → close with resolution.
+
+The `kind` field is freeform. Recommended kinds:
+- **`"investigation"`** — explore something that needs multiple steps
+- **`"verification"`** — confirm or refute a specific claim
+- **`"clarification"`** — you need input from the user to proceed
+
+**Create** — `tasks` field:
+```json
+{
+  "tasks": [{
+    "slug": "confirm-population",
+    "goal": "Verify exact population of England",
+    "reasoning": "User questioned the 56M figure.",
+    "context": {"current_estimate": 56000000},
+    "kind": "verification"
+  }]
+}
+```
+
+**Update notes** — `update_tasks` field:
+```json
+{
+  "update_tasks": [{"slug": "confirm-population", "notes": {"latest_source": "ONS 2024: 57.1M"}}]
+}
+```
+
+**Close** — `close_tasks` field:
+```json
+{
+  "close_tasks": [{"slug": "confirm-population", "resolution": {"conclusion": "57.1M per ONS 2024"}}]
+}
+```
+
+**Rules:**
+- Close tasks when done — don't leave them open indefinitely.
+- Closing a task **must** include `asserts` with the findings as facts/hypotheses. The `resolution` field alone is not stored as knowledge.
+- Close `"clarification"` tasks when the user provides the answer. Store what they said as facts.
+- A task must be **specific and actionable**. "Verify that X" is a good task. "Think about what to do next" is not — that belongs in the answer.
+
 ## Processing order inside a transaction
 
 1. `entity_types` — create new entity types with inline property definitions
 2. `add_properties` — add properties to existing entity types
-3. `hide` / `unhide` — visibility changes
-4. `introduce` — create new entities with assertions
-5. `asserts` — make assertions on existing or just-introduced entities
+3. `hide` / `unhide` — visibility changes (entities, entity types, properties, tasks)
+4. `tasks` / `update_tasks` / `close_tasks` — task lifecycle
+5. `introduce` — create new entities with assertions
+6. `asserts` — make assertions on existing or just-introduced entities
 
 You can reference entities created in `introduce` from `asserts` within the same transaction.
 
@@ -181,6 +226,7 @@ If a user statement may matter after the last ~10 turns, it is usually worth sto
 The branch state provided to you contains the COMPLETE picture of what exists:
 - **`schema.entity_types`** — all entity types with their inline property definitions
 - **`entities`** — all entities with `entity_type`, flat `properties` with current facts and hypotheses
+- **`tasks`** — currently open tasks (closed ones are not shown)
 - **`recent_transactions`** — recent activity with questions, answers, and reasoning
 
 **Before creating ANYTHING, scan the state carefully.** If an entity type, property, or entity already exists — reuse it. Use `asserts` to add data to existing entities, not `introduce`. Use `add_properties` to extend existing types, do not recreate them.

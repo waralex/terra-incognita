@@ -1,5 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,7 @@ pub struct LlmConfig {
     pub api_key: String,
     pub base_url: String,
     pub model: String,
+    pub log_path: Option<PathBuf>,
 }
 
 impl LlmConfig {
@@ -21,7 +23,7 @@ impl LlmConfig {
             .unwrap_or_else(|_| "https://api.openai.com/v1".into());
         let model = std::env::var("TERRA_LLM_MODEL")
             .unwrap_or_else(|_| "gpt-4o".into());
-        Some(Self { api_key, base_url, model })
+        Some(Self { api_key, base_url, model, log_path: None })
     }
 }
 
@@ -138,7 +140,11 @@ pub fn call_llm(
         ));
     }
 
+    log_raw(config, "REQUEST", &body);
+
     let response_body = http_post(&config.base_url, "/chat/completions", &config.api_key, &body)?;
+
+    log_raw(config, "RESPONSE", &response_body);
 
     let resp: ChatResponse = serde_json::from_str(&response_body)
         .map_err(|e| format!("failed to parse LLM response: {e}\nbody: {response_body}"))?;
@@ -321,6 +327,16 @@ fn read_http_response<R: BufRead>(mut reader: R) -> Result<String, String> {
     }
 
     Ok(body)
+}
+
+fn log_raw(config: &LlmConfig, label: &str, data: &str) {
+    if let Some(ref path) = config.log_path {
+        use std::fs::OpenOptions;
+        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+            let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ");
+            let _ = writeln!(f, "\n=== {label} [{ts}] ===\n{data}");
+        }
+    }
 }
 
 fn read_chunked_body<R: BufRead>(reader: &mut R) -> Result<String, String> {

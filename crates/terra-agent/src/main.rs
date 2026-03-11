@@ -60,7 +60,7 @@ fn main() -> io::Result<()> {
         std::fs::create_dir_all(&data_dir)?;
     }
 
-    let store = StoreHandle::open(&db_path);
+    let store = StoreHandle::open(&db_path).with_log(data_dir.join("query.log"));
 
     // Setup terminal
     enable_raw_mode()?;
@@ -80,7 +80,10 @@ fn main() -> io::Result<()> {
 
     // Detect mode
     let mode = match LlmConfig::from_env() {
-        Some(config) => Mode::Llm(config),
+        Some(mut config) => {
+            config.log_path = Some(data_dir.join("llm.log"));
+            Mode::Llm(config)
+        }
         None => Mode::Direct,
     };
 

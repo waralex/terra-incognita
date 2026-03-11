@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use terra_core::assertion::{AssertionStore, MAIN_BRANCH};
 use terra_query::ContentFormat;
@@ -10,27 +12,46 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct StoreHandle {
     store: Arc<AssertionStore>,
+    log_path: Option<PathBuf>,
 }
 
 impl StoreHandle {
     /// Opens an AssertionStore at the given path.
     pub fn open(path: &Path) -> Self {
         let store = AssertionStore::open(path).expect("failed to open assertion store");
-        Self { store: Arc::new(store) }
+        Self { store: Arc::new(store), log_path: None }
+    }
+
+    /// Sets the query log file path.
+    pub fn with_log(mut self, path: PathBuf) -> Self {
+        self.log_path = Some(path);
+        self
     }
 
     /// Dispatches a YAML command string and returns the YAML response.
     pub fn dispatch(&self, input: &str, branch: &str) -> Result<String, String> {
+        self.log_query("QUERY", input);
         let (branch_id, ancestry) = self.resolve_branch(branch)?;
         let registry = self.store.schema_registry(branch_id, ancestry);
-        let bytes = terra_query::dispatch(input.as_bytes(), ContentFormat::Yaml, &registry, &self.store)
-            .map_err(|e| String::from_utf8_lossy(&e.serialize(ContentFormat::Yaml)).into_owned())?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        let result = terra_query::dispatch(input.as_bytes(), ContentFormat::Yaml, &registry, &self.store);
+        match &result {
+            Ok(bytes) => {
+                let yaml = String::from_utf8_lossy(bytes);
+                self.log_query("RESULT", &yaml);
+                Ok(yaml.into_owned())
+            }
+            Err(e) => {
+                let err_bytes = e.serialize(ContentFormat::Yaml);
+                let err = String::from_utf8_lossy(&err_bytes);
+                self.log_query("ERROR", &err);
+                Err(err.into_owned())
+            }
+        }
     }
 
     /// Fetches branch state as YAML for the side panel.
     pub fn fetch_state(&self, branch: &str) -> Result<String, String> {
-        let cmd = format!("command: branch.state\nbranch: {branch}");
+        let cmd = format!("command: branch.state\nslug: {branch}");
         self.dispatch(&cmd, branch)
     }
 
@@ -85,5 +106,13 @@ impl StoreHandle {
         ancestry.push((branch_id, Uuid::max()));
 
         Ok((branch_id, ancestry))
+    }
+
+    fn log_query(&self, label: &str, data: &str) {
+        if let Some(ref path) = self.log_path {
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "\n--- {label} ---\n{data}");
+            }
+        }
     }
 }

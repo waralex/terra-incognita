@@ -37,6 +37,8 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let toggle_hint = if app.show_side_panel { "Tab: hide panel" } else { "Tab: show panel" };
     let text = Line::from(vec![
         Span::styled(" terra-agent", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(format!("[{}]", app.prompt_name), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::raw(format!(" \u{00b7} branch: {}", app.branch)),
         Span::raw("  "),
         Span::styled(format!("[{toggle_hint}]"), Style::default().fg(Color::DarkGray)),

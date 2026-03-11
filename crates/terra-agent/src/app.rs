@@ -46,6 +46,7 @@ pub struct App {
     pub total_tokens: usize,
     pub state_tokens: usize,
     pub panel_scroll: usize,
+    pub prompt_name: String,
     store: StoreHandle,
     mode: Mode,
     sql_tool: Option<SqlTool>,
@@ -93,6 +94,7 @@ impl App {
             total_tokens: 0,
             state_tokens: 0,
             panel_scroll: 0,
+            prompt_name: prompt_name(),
             store,
             mode,
             sql_tool,
@@ -528,6 +530,20 @@ fn inject_commands(transaction_yaml: &str, commands: &[serde_json::Value]) -> St
         obj.insert("commands".into(), serde_json::Value::Array(stripped));
     }
     serde_yaml::to_string(&val).unwrap_or_else(|_| transaction_yaml.to_string())
+}
+
+/// Returns the human-readable prompt name from `TERRA_AGENT_PROMPT` (default: "system").
+fn prompt_name() -> String {
+    match std::env::var("TERRA_AGENT_PROMPT") {
+        Ok(val) if val.contains('/') || val.contains('.') => {
+            PathBuf::from(&val)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or(val)
+        }
+        Ok(name) => name,
+        Err(_) => "system".into(),
+    }
 }
 
 /// Loads system prompt from a file.

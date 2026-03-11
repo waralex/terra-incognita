@@ -118,6 +118,8 @@ If a transaction contains `commands`, they are executed and the results are fed 
 
 Once you have enough data, include `answer` and any data operations in the same transaction.
 
+Every command round that returns meaningful information should usually produce at least one epistemic update (fact, hypothesis, introduced entity, or visibility change). If you choose not to update state, state explicitly in `reasoning` why the result is not worth storing.
+
 ## Processing order inside a transaction
 
 1. `properties` — create new properties first

@@ -139,7 +139,10 @@ pub fn call_llm(
         .map(|arr| {
             arr.iter()
                 .filter_map(|c| {
-                    let command_type = c.get("type")?.as_str()?.to_string();
+                    let command_type = c.get("command_type")
+                        .or_else(|| c.get("type"))
+                        .and_then(|v| v.as_str())?
+                        .to_string();
                     Some(LlmCommand {
                         reasoning: c.get("reasoning").cloned().unwrap_or(serde_json::Value::Null),
                         command_type,

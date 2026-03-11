@@ -77,18 +77,16 @@ pub fn call_llm(
     provider: &dyn LlmProvider,
     system_prompt: &str,
     branch_state: &str,
-    history: &[ChatMessage],
     user_message: &str,
 ) -> Result<LlmResult, String> {
     let full_system = format!(
         "{system_prompt}\n\n# Current branch state\n```yaml\n{branch_state}\n```"
     );
 
-    let mut messages = history.to_vec();
-    messages.push(ChatMessage {
+    let messages = vec![ChatMessage {
         role: "user".into(),
         content: user_message.into(),
-    });
+    }];
 
     let body = provider.build_request_body(&full_system, &messages, MAX_OUTPUT_TOKENS)?;
 
@@ -143,31 +141,21 @@ pub fn call_llm_with_retry(
     provider: &dyn LlmProvider,
     system_prompt: &str,
     branch_state: &str,
-    history: &[ChatMessage],
     user_message: &str,
     max_retries: usize,
 ) -> Result<LlmResult, String> {
     let mut last_error = String::new();
 
     for attempt in 0..=max_retries {
-        let msgs = if attempt == 0 {
-            history.to_vec()
+        let msg = if attempt == 0 {
+            user_message.to_string()
         } else {
-            let mut m = history.to_vec();
-            m.push(ChatMessage {
-                role: "user".into(),
-                content: user_message.into(),
-            });
-            m.push(ChatMessage {
-                role: "system".into(),
-                content: format!(
-                    "Error from previous attempt: {last_error}\nPlease fix and return a valid transaction."
-                ),
-            });
-            m
+            format!(
+                "{user_message}\n\n[Error from previous attempt: {last_error}\nPlease fix and return a valid transaction.]"
+            )
         };
 
-        match call_llm(provider, system_prompt, branch_state, &msgs, user_message) {
+        match call_llm(provider, system_prompt, branch_state, &msg) {
             Ok(result) => return Ok(result),
             Err(e) => {
                 last_error = e;

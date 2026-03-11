@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::llm::{self, ChatMessage, LlmProvider, LlmResult};
+use crate::llm::{self, LlmProvider, LlmResult};
 use crate::store::StoreHandle;
 
 const MAX_RETRIES: usize = 2;
@@ -42,10 +42,9 @@ pub struct App {
     pub scroll_offset: usize,
     pub total_tokens: usize,
     pub state_tokens: usize,
+    pub panel_scroll: usize,
     store: StoreHandle,
     mode: Mode,
-    /// Conversation history for LLM context (last N exchanges).
-    llm_history: Vec<ChatMessage>,
 }
 
 impl App {
@@ -55,11 +54,30 @@ impl App {
             Mode::Direct => format!("Direct mode · branch: {branch}. Type YAML commands and press Enter."),
             Mode::Llm(_) => format!("LLM mode · branch: {branch}. Type natural language, agent will create transactions."),
         };
-        Self {
-            messages: vec![Message {
+        let mut messages = vec![Message {
+            role: Role::System,
+            text: welcome,
+        }];
+
+        // Load recent conversation history from branch transactions
+        let history = store.fetch_history(&branch, 10);
+        if !history.is_empty() {
+            messages.push(Message {
                 role: Role::System,
-                text: welcome,
-            }],
+                text: format!("── last {} exchanges ──", history.len()),
+            });
+            for (q, a) in &history {
+                messages.push(Message { role: Role::User, text: q.clone() });
+                messages.push(Message { role: Role::Agent, text: a.clone() });
+            }
+            messages.push(Message {
+                role: Role::System,
+                text: "── end of history ──".into(),
+            });
+        }
+
+        Self {
+            messages,
             input: String::new(),
             cursor_pos: 0,
             branch,
@@ -70,9 +88,9 @@ impl App {
             scroll_offset: 0,
             total_tokens: 0,
             state_tokens: 0,
+            panel_scroll: 0,
             store,
             mode,
-            llm_history: Vec::new(),
         }
     }
 
@@ -150,7 +168,6 @@ impl App {
             provider,
             system_prompt(),
             &branch_state,
-            &self.llm_history,
             input,
             MAX_RETRIES,
         );
@@ -189,18 +206,6 @@ impl App {
                     }
                 }
 
-                // Update history (keep last 10 exchanges)
-                self.llm_history.push(ChatMessage {
-                    role: "user".into(),
-                    content: input.into(),
-                });
-                self.llm_history.push(ChatMessage {
-                    role: "assistant".into(),
-                    content: answer,
-                });
-                if self.llm_history.len() > 20 {
-                    self.llm_history.drain(..2);
-                }
             }
             Err(e) => {
                 self.messages.push(Message {
@@ -227,6 +232,16 @@ impl App {
     /// Scrolls chat log down.
     pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
+    }
+
+    /// Scrolls side panel up (half-page).
+    pub fn panel_up(&mut self) {
+        self.panel_scroll = self.panel_scroll.saturating_add(10);
+    }
+
+    /// Scrolls side panel down (half-page).
+    pub fn panel_down(&mut self) {
+        self.panel_scroll = self.panel_scroll.saturating_sub(10);
     }
 
     /// Moves cursor left in input (by one char boundary).
@@ -304,7 +319,23 @@ impl App {
             role: Role::System,
             text: format!("Switched to session: {branch}"),
         });
-        self.llm_history.clear();
+
+        let history = self.store.fetch_history(&self.branch, 10);
+        if !history.is_empty() {
+            self.messages.push(Message {
+                role: Role::System,
+                text: format!("── last {} exchanges ──", history.len()),
+            });
+            for (q, a) in &history {
+                self.messages.push(Message { role: Role::User, text: q.clone() });
+                self.messages.push(Message { role: Role::Agent, text: a.clone() });
+            }
+            self.messages.push(Message {
+                role: Role::System,
+                text: "── end of history ──".into(),
+            });
+        }
+
         self.scroll_offset = 0;
         if self.show_side_panel {
             self.refresh_side_panel();

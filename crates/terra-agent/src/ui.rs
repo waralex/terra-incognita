@@ -92,15 +92,92 @@ fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_side_panel(frame: &mut Frame, app: &App, area: Rect) {
-    let content = if app.side_panel_content.is_empty() {
-        "(empty)".to_string()
-    } else {
-        app.side_panel_content.clone()
-    };
-    let panel = Paragraph::new(content)
-        .block(Block::default().borders(Borders::ALL).title(" Branch State "))
-        .wrap(Wrap { trim: false });
+    if app.side_panel_content.is_empty() {
+        let panel = Paragraph::new("(empty)")
+            .block(Block::default().borders(Borders::ALL).title(" Branch State "))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(panel, area);
+        return;
+    }
+
+    let lines: Vec<Line> = app.side_panel_content.lines().map(highlight_yaml).collect();
+
+    let total_lines = lines.len() as u16;
+    let visible = area.height.saturating_sub(2);
+    let max_scroll = total_lines.saturating_sub(visible);
+    let scroll = max_scroll.saturating_sub(app.panel_scroll as u16);
+
+    let panel = Paragraph::new(Text::from(lines))
+        .block(Block::default().borders(Borders::ALL).title(" Branch State [C-u/C-d] "))
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
     frame.render_widget(panel, area);
+}
+
+/// Simple YAML syntax highlighting for a single line.
+fn highlight_yaml(line: &str) -> Line<'_> {
+    let trimmed = line.trim_start();
+
+    // Comment
+    if trimmed.starts_with('#') {
+        return Line::from(Span::styled(line, Style::default().fg(Color::DarkGray)));
+    }
+
+    // List item marker
+    if trimmed.starts_with("- ") {
+        let indent = line.len() - trimmed.len();
+        let rest = &trimmed[2..];
+        if let Some((key, val)) = rest.split_once(": ") {
+            return Line::from(vec![
+                Span::raw(&line[..indent]),
+                Span::styled("- ", Style::default().fg(Color::Yellow)),
+                Span::styled(key, Style::default().fg(Color::Cyan)),
+                Span::styled(": ", Style::default().fg(Color::White)),
+                highlight_value(val),
+            ]);
+        }
+        return Line::from(vec![
+            Span::raw(&line[..indent]),
+            Span::styled("- ", Style::default().fg(Color::Yellow)),
+            highlight_value(rest),
+        ]);
+    }
+
+    // Key: value
+    if let Some((key, val)) = trimmed.split_once(": ") {
+        let indent = line.len() - trimmed.len();
+        return Line::from(vec![
+            Span::raw(&line[..indent]),
+            Span::styled(key, Style::default().fg(Color::Cyan)),
+            Span::styled(": ", Style::default().fg(Color::White)),
+            highlight_value(val),
+        ]);
+    }
+
+    // Key with no value (section header like "entities:")
+    if trimmed.ends_with(':') {
+        let indent = line.len() - trimmed.len();
+        return Line::from(vec![
+            Span::raw(&line[..indent]),
+            Span::styled(trimmed, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        ]);
+    }
+
+    Line::from(line)
+}
+
+fn highlight_value(val: &str) -> Span<'_> {
+    if val == "true" || val == "false" {
+        Span::styled(val, Style::default().fg(Color::Yellow))
+    } else if val == "null" || val == "~" {
+        Span::styled(val, Style::default().fg(Color::DarkGray))
+    } else if val.starts_with('"') || val.starts_with('\'') {
+        Span::styled(val, Style::default().fg(Color::Green))
+    } else if val.parse::<f64>().is_ok() {
+        Span::styled(val, Style::default().fg(Color::Magenta))
+    } else {
+        Span::styled(val, Style::default().fg(Color::White))
+    }
 }
 
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {

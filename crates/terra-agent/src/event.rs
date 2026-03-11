@@ -26,6 +26,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Option<String> {
         (KeyCode::Tab, _) => app.toggle_panel(),
         (KeyCode::Up, _) => app.scroll_up(),
         (KeyCode::Down, _) => app.scroll_down(),
+        (KeyCode::Char('u'), KeyModifiers::CONTROL) => app.panel_up(),
+        (KeyCode::Char('d'), KeyModifiers::CONTROL) => app.panel_down(),
         (KeyCode::Left, _) => app.cursor_left(),
         (KeyCode::Right, _) => app.cursor_right(),
         (KeyCode::Home, _) => app.cursor_home(),

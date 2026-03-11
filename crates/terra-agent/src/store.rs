@@ -81,6 +81,31 @@ impl StoreHandle {
         Ok(())
     }
 
+    /// Returns last N (question, answer) pairs from the branch transaction history.
+    pub fn fetch_history(&self, branch: &str, limit: usize) -> Vec<(String, String)> {
+        let Ok((branch_id, _)) = self.resolve_branch(branch) else {
+            return Vec::new();
+        };
+        let Ok(txs) = self.store.transactions().list_by_branch(&branch_id) else {
+            return Vec::new();
+        };
+        txs.iter()
+            .rev()
+            .filter_map(|tx| {
+                let q = tx.question.as_ref()?;
+                let a = tx.answer.as_ref()?;
+                if q.is_empty() && a.is_empty() {
+                    return None;
+                }
+                Some((q.clone(), a.clone()))
+            })
+            .take(limit)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
+    }
+
     fn resolve_branch(&self, slug: &str) -> Result<(Uuid, Vec<(Uuid, Uuid)>), String> {
         if slug == "main" {
             return Ok((MAIN_BRANCH, vec![(MAIN_BRANCH, Uuid::max())]));

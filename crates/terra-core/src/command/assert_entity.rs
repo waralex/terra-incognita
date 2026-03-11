@@ -267,7 +267,7 @@ pub fn execute_transaction(
     // Phase 3: Build one WriteBatch for Transaction record + visibility + assertions
     let tx = Transaction {
         id: Uuid::now_v7(),
-        branch_id: crate::assertion::MAIN_BRANCH,
+        branch_id: registry.branch_id(),
         reasoning: input.reasoning,
         question: input.question,
         answer: input.answer,

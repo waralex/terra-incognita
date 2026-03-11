@@ -180,6 +180,8 @@ Investigations track multi-step exploration tasks. Use them when a question requ
 
 Open investigations appear in the branch state under `investigations`. **Close investigations when done** — don't leave them open indefinitely.
 
+**All findings must be stored as facts or hypotheses.** The `resolution` field is a summary, not a knowledge store — it gets archived with the closed investigation and disappears from branch state. Everything you discovered during the investigation must be captured via `introduce` / `asserts` before or in the same transaction as the close. If you close an investigation without storing its findings as structured knowledge, that knowledge is lost.
+
 Investigations can be combined with any other transaction fields (commands, entities, assertions) in the same transaction.
 
 ## Processing order inside a transaction

@@ -29,21 +29,20 @@ Facts and hypotheses are NOT mutually exclusive on a timeline. You can state a f
   "reasoning": "English. Why this transaction exists, what knowledge is being captured.",
   "question": "The user's original message (copied verbatim)",
   "entity_types": [
-    {"slug": "country", "description": "A sovereign nation or territory"}
-  ],
-  "properties": [
-    {"slug": "capital", "value_type": "set", "description": "Capital city of a country"},
-    {"slug": "population", "value_type": "range", "description": "Number of inhabitants"}
-  ],
-  "attach": [
-    {"entity_type": "country", "slug": "capital"},
-    {"entity_type": "country", "slug": "population"}
+    {
+      "slug": "country",
+      "description": "A sovereign nation or territory",
+      "properties": [
+        {"slug": "capital", "value_type": "set", "description": "Capital city of a country"},
+        {"slug": "population", "value_type": "range", "description": "Number of inhabitants"}
+      ]
+    }
   ],
   "introduce": [{
     "entity": "england",
+    "entity_type": "country",
     "description": "England, a country in the United Kingdom",
     "facts": [{
-      "entity_type": "country",
       "properties": {
         "capital": {"contains": ["London"]},
         "population": {"eq": 56000000}
@@ -54,7 +53,6 @@ Facts and hypotheses are NOT mutually exclusive on a timeline. You can state a f
   "asserts": [{
     "entity": "england",
     "hypotheses": [{
-      "entity_type": "country",
       "properties": {
         "population": {"from": 55000000, "to": 57000000}
       },
@@ -64,14 +62,25 @@ Facts and hypotheses are NOT mutually exclusive on a timeline. You can state a f
 }
 ```
 
+To add properties to an existing entity type later:
+```json
+{
+  "add_properties": [{
+    "entity_type": "country",
+    "properties": [
+      {"slug": "official_language", "value_type": "set", "description": "Official language(s)"}
+    ]
+  }]
+}
+```
+
 ## Processing order inside a transaction
 
-1. `properties` — create new properties first
-2. `entity_types` — create new entity types (can reference properties from step 1)
-3. `attach` — attach properties to entity types
-4. `hide` / `unhide` — visibility changes
-5. `introduce` — create new entities with assertions
-6. `asserts` — make assertions on existing or just-introduced entities
+1. `entity_types` — create new entity types with inline property definitions
+2. `add_properties` — add properties to existing entity types
+3. `hide` / `unhide` — visibility changes
+4. `introduce` — create new entities with assertions
+5. `asserts` — make assertions on existing or just-introduced entities
 
 You can reference entities created in `introduce` from `asserts` within the same transaction.
 
@@ -170,12 +179,11 @@ If a user statement may matter after the last ~10 turns, it is usually worth sto
 ## Using branch state
 
 The branch state provided to you contains the COMPLETE picture of what exists:
-- **`schema.entity_types`** — all entity types with their attached properties
-- **`schema.properties`** — all property definitions with value types
-- **`entities`** — all entities with their current facts and hypotheses
+- **`schema.entity_types`** — all entity types with their inline property definitions
+- **`entities`** — all entities with `entity_type`, flat `properties` with current facts and hypotheses
 - **`recent_transactions`** — recent activity with questions, answers, and reasoning
 
-**Before creating ANYTHING, scan the state carefully.** If an entity type, property, or entity already exists — reuse it. Use `asserts` to add data to existing entities, not `introduce`. Use existing property slugs in `attach`, do not recreate them.
+**Before creating ANYTHING, scan the state carefully.** If an entity type, property, or entity already exists — reuse it. Use `asserts` to add data to existing entities, not `introduce`. Use `add_properties` to extend existing types, do not recreate them.
 
 Prefer reusing existing general entity types instead of creating narrow ones.
 
@@ -198,71 +206,67 @@ schema:
     - id: 019571a3-c100-7000-8000-000000000010
       slug: country
       description: "A sovereign nation or territory"
-      properties:            # <-- properties attached to this type
-        - capital
-        - population
-        - official_language
+      properties:            # <-- inline property definitions for this type
+        - id: 019571a3-c200-7000-8000-000000000020
+          slug: capital
+          value_type: set
+          description: "Capital city of a country"
+        - id: 019571a3-c200-7000-8000-000000000021
+          slug: population
+          value_type: range
+          description: "Number of inhabitants"
+        - id: 019571a3-c200-7000-8000-000000000022
+          slug: official_language
+          value_type: set
+          description: "Official language(s)"
     - id: 019571a3-c100-7000-8000-000000000011
       slug: city
       description: "A populated urban area"
       properties:
-        - population
-        - country_ref
-
-  properties:                # <-- ALL property definitions (global registry)
-    - id: 019571a3-c200-7000-8000-000000000020
-      slug: capital
-      value_type: set
-      description: "Capital city of a country"
-    - id: 019571a3-c200-7000-8000-000000000021
-      slug: population
-      value_type: range
-      description: "Number of inhabitants"
-    - id: 019571a3-c200-7000-8000-000000000022
-      slug: official_language
-      value_type: set
-      description: "Official language(s)"
-    - id: 019571a3-c200-7000-8000-000000000023
-      slug: country_ref
-      value_type: set
-      description: "Reference to parent country"
+        - id: 019571a3-c200-7000-8000-000000000024
+          slug: population
+          value_type: range
+          description: "Number of inhabitants"
+        - id: 019571a3-c200-7000-8000-000000000023
+          slug: country_ref
+          value_type: set
+          description: "Reference to parent country"
 
 entities:
   - id: 019571a4-0000-7000-8000-000000000100
     slug: england
     description: "England, a country in the United Kingdom"
-    types:
-      - entity_type: country
-        properties:
-          - slug: capital
-            value_type: set
-            fact:                    # <-- latest decided value
-              value:
-                contains:
-                  - London
-              reasoning: "Well-known geographical fact"   # <-- WHY this value, WHY fact (not hypothesis)
-              tx_id: 019571a4-1000-7000-8000-000000000200
-          - slug: population
-            value_type: range
-            fact:
-              value:
-                eq: 56000000
-              reasoning: "Approximate population, reliable estimate from multiple sources"
-              tx_id: 019571a4-1000-7000-8000-000000000200
-            hypotheses:              # <-- open questions on top of the fact
-              - value:
-                  from: 55000000
-                  to: 57500000
-                reasoning: "Exact number varies by year and source, range covers recent estimates"  # <-- WHY uncertain, WHAT makes it a hypothesis
-                tx_id: 019571a4-1000-7000-8000-000000000200
-          - slug: official_language
-            value_type: set
-            fact:
-              value:
-                contains:
-                  - English
-              reasoning: "De facto official language, no legal statute but universally accepted"
-              tx_id: 019571a4-1000-7000-8000-000000000200
+    entity_type: country       # <-- each entity belongs to exactly one type
+    properties:                # <-- flat list of properties with data
+      - slug: capital
+        value_type: set
+        fact:                    # <-- latest decided value
+          value:
+            contains:
+              - London
+          reasoning: "Well-known geographical fact"   # <-- WHY this value, WHY fact (not hypothesis)
+          tx_id: 019571a4-1000-7000-8000-000000000200
+      - slug: population
+        value_type: range
+        fact:
+          value:
+            eq: 56000000
+          reasoning: "Approximate population, reliable estimate from multiple sources"
+          tx_id: 019571a4-1000-7000-8000-000000000200
+        hypotheses:              # <-- open questions on top of the fact
+          - value:
+              from: 55000000
+              to: 57500000
+            reasoning: "Exact number varies by year and source, range covers recent estimates"  # <-- WHY uncertain, WHAT makes it a hypothesis
+            tx_id: 019571a4-1000-7000-8000-000000000200
+      - slug: official_language
+        value_type: set
+        fact:
+          value:
+            contains:
+              - English
+          reasoning: "De facto official language, no legal statute but universally accepted"
+          tx_id: 019571a4-1000-7000-8000-000000000200
 
 recent_transactions:         # <-- conversation history (newest first)
   - id: 019571a4-1000-7000-8000-000000000200
@@ -273,9 +277,10 @@ recent_transactions:         # <-- conversation history (newest first)
 ```
 
 Key things to notice:
-- `schema.properties` is the global list — a property can be attached to multiple entity types
-- `entity_types[].properties` shows which properties are attached to each type (by slug)
-- `entities[].types[].properties` shows actual data — each property has an optional `fact` and zero or more `hypotheses`
+- `schema.entity_types[].properties` contains full property definitions inline
+- Same slug can exist on different types (e.g. `country.population` and `city.population` are separate properties)
+- `entities[].entity_type` — each entity belongs to exactly one type
+- `entities[].properties` — flat list of property data with optional `fact` and `hypotheses`
 - `recent_transactions` is your conversation memory — check it to avoid repeating yourself
 - **Reasoning exists at three levels** and each serves a different purpose:
   - `branch.reasoning` — purpose of this session/branch

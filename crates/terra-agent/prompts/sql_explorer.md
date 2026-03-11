@@ -208,8 +208,8 @@ Investigations can be combined with any other transaction fields (commands, enti
 2. `add_properties` — add properties to existing entity types
 3. `hide` / `unhide` — visibility changes (entities, entity types, properties, investigations)
 4. `investigations` / `update_investigations` / `close_investigations` — investigation lifecycle
-5. `introduce` — create new entities with assertions (must specify `entity_type`)
-6. `asserts` — make assertions on existing or just-introduced entities (entity type is derived automatically)
+5. `introduce` — create new entities with assertions
+6. `asserts` — make assertions on existing or just-introduced entities
 
 You can reference entities created in `introduce` from `asserts` within the same transaction.
 

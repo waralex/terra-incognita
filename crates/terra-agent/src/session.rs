@@ -70,13 +70,27 @@ impl SessionScreen {
 
     fn backspace(&mut self) {
         if self.cursor_pos > 0 {
-            self.cursor_pos -= 1;
+            let s = match &self.creating {
+                Some(CreateStep::Name) => &self.new_name,
+                Some(CreateStep::Goal) => &self.new_goal,
+                None => return,
+            };
+            let prev = s[..self.cursor_pos]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
             match &self.creating {
-                Some(CreateStep::Name) => { self.new_name.remove(self.cursor_pos); }
-                Some(CreateStep::Goal) => { self.new_goal.remove(self.cursor_pos); }
+                Some(CreateStep::Name) => { self.new_name.drain(prev..self.cursor_pos); }
+                Some(CreateStep::Goal) => { self.new_goal.drain(prev..self.cursor_pos); }
                 None => {}
             }
+            self.cursor_pos = prev;
         }
+    }
+
+    fn cursor_display_col(&self) -> usize {
+        self.active_input()[..self.cursor_pos].chars().count()
     }
 
     fn reset_create(&mut self) {
@@ -167,11 +181,22 @@ pub fn pick_session(
                 }
                 (KeyCode::Backspace, _, true) => screen.backspace(),
                 (KeyCode::Left, _, true) => {
-                    screen.cursor_pos = screen.cursor_pos.saturating_sub(1);
+                    if screen.cursor_pos > 0 {
+                        screen.cursor_pos = screen.active_input()[..screen.cursor_pos]
+                            .char_indices()
+                            .next_back()
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                    }
                 }
                 (KeyCode::Right, _, true) => {
-                    if screen.cursor_pos < screen.active_input().len() {
-                        screen.cursor_pos += 1;
+                    let input = screen.active_input();
+                    if screen.cursor_pos < input.len() {
+                        screen.cursor_pos = input[screen.cursor_pos..]
+                            .char_indices()
+                            .nth(1)
+                            .map(|(i, _)| screen.cursor_pos + i)
+                            .unwrap_or(input.len());
                     }
                 }
                 _ => {}
@@ -237,7 +262,7 @@ fn draw_session_screen(frame: &mut Frame, screen: &SessionScreen) {
                 .block(Block::default().borders(Borders::ALL).title(" Session name (slug) "));
             frame.render_widget(input, chunks[2]);
             frame.set_cursor_position((
-                chunks[2].x + screen.cursor_pos as u16 + 1,
+                chunks[2].x + screen.cursor_display_col() as u16 + 1,
                 chunks[2].y + 1,
             ));
         }
@@ -248,7 +273,7 @@ fn draw_session_screen(frame: &mut Frame, screen: &SessionScreen) {
                 ));
             frame.render_widget(input, chunks[2]);
             frame.set_cursor_position((
-                chunks[2].x + screen.cursor_pos as u16 + 1,
+                chunks[2].x + screen.cursor_display_col() as u16 + 1,
                 chunks[2].y + 1,
             ));
         }

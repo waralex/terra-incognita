@@ -104,9 +104,9 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title(" Input (YAML) "));
     frame.render_widget(input, area);
 
-    // Place cursor
+    // Place cursor (display columns, not byte offset)
     frame.set_cursor_position((
-        area.x + app.cursor_pos as u16 + 1,
+        area.x + app.cursor_display_col() as u16 + 1,
         area.y + 1,
     ));
 }

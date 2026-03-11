@@ -203,15 +203,25 @@ impl App {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
 
-    /// Moves cursor left in input.
+    /// Moves cursor left in input (by one char boundary).
     pub fn cursor_left(&mut self) {
-        self.cursor_pos = self.cursor_pos.saturating_sub(1);
+        if self.cursor_pos > 0 {
+            self.cursor_pos = self.input[..self.cursor_pos]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
     }
 
-    /// Moves cursor right in input.
+    /// Moves cursor right in input (by one char boundary).
     pub fn cursor_right(&mut self) {
         if self.cursor_pos < self.input.len() {
-            self.cursor_pos += 1;
+            self.cursor_pos = self.input[self.cursor_pos..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.cursor_pos + i)
+                .unwrap_or(self.input.len());
         }
     }
 
@@ -234,16 +244,31 @@ impl App {
     /// Deletes the character before cursor.
     pub fn backspace(&mut self) {
         if self.cursor_pos > 0 {
-            self.cursor_pos -= 1;
-            self.input.remove(self.cursor_pos);
+            let prev = self.input[..self.cursor_pos]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.input.drain(prev..self.cursor_pos);
+            self.cursor_pos = prev;
         }
     }
 
     /// Deletes the character at cursor.
     pub fn delete(&mut self) {
         if self.cursor_pos < self.input.len() {
-            self.input.remove(self.cursor_pos);
+            let next = self.input[self.cursor_pos..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.cursor_pos + i)
+                .unwrap_or(self.input.len());
+            self.input.drain(self.cursor_pos..next);
         }
+    }
+
+    /// Returns the display width (in columns) of text before cursor.
+    pub fn cursor_display_col(&self) -> usize {
+        self.input[..self.cursor_pos].chars().count()
     }
 
     /// Switches to a different branch (session).

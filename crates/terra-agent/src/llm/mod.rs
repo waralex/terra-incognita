@@ -159,11 +159,13 @@ pub fn call_llm(
             "reasoning", "question", "answer", "timestamp",
             "entity_types", "properties", "attach",
             "hide", "unhide", "introduce", "asserts",
+            "investigations", "update_investigations", "close_investigations",
         ];
         let has_mutations = obj.keys().any(|k| {
             matches!(k.as_str(),
                 "entity_types" | "properties" | "attach" |
-                "hide" | "unhide" | "introduce" | "asserts"
+                "hide" | "unhide" | "introduce" | "asserts" |
+                "investigations" | "update_investigations" | "close_investigations"
             )
         });
 

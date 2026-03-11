@@ -1,4 +1,4 @@
-use terra_core::assertion::EntityError;
+use terra_core::assertion::{EntityError, InvestigationError};
 use terra_core::command::{AssertEntityError, BranchCommandError, CommandError};
 use terra_core::schema::SchemaError;
 
@@ -116,6 +116,7 @@ CommandError::Branch(e) => {
                     BranchStateError::Storage(_) => "storage_error",
                     BranchStateError::Entity(_) => "entity_error",
                     BranchStateError::Branch(_) => "branch_error",
+                    BranchStateError::Investigation(_) => "investigation_error",
                 };
                 Self {
                     kind: kind.to_string(),
@@ -133,9 +134,26 @@ CommandError::Branch(e) => {
                     AssertEntityError::PropertyNotFound { .. } => "property_not_found",
                     AssertEntityError::PropertyHidden { .. } => "property_hidden",
                     AssertEntityError::EmptyTransaction => "empty_transaction",
+                    AssertEntityError::InvestigationNotFound(_) => "investigation_not_found",
+                    AssertEntityError::InvestigationAlreadyExists(_) => "investigation_already_exists",
+                    AssertEntityError::InvestigationHidden(_) => "investigation_hidden",
+                    AssertEntityError::InvestigationAlreadyClosed(_) => "investigation_already_closed",
                     AssertEntityError::Entity(_)
+                    | AssertEntityError::Investigation(_)
                     | AssertEntityError::Writer(_)
                     | AssertEntityError::Schema(_) => "internal_error",
+                };
+                Self {
+                    kind: kind.to_string(),
+                    message: e.to_string(),
+                }
+            }
+            CommandError::Investigation(e) => {
+                let kind = match &e {
+                    InvestigationError::SlugExists(_) => "investigation_already_exists",
+                    InvestigationError::NotFound(_) | InvestigationError::SlugNotFound(_) => "investigation_not_found",
+                    InvestigationError::AlreadyInStatus(_, _) => "investigation_status_conflict",
+                    InvestigationError::Storage(_) => "storage_error",
                 };
                 Self {
                     kind: kind.to_string(),

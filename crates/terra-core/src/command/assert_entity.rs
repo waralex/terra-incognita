@@ -62,9 +62,29 @@ pub enum AssertEntityError {
         property: String,
     },
 
+    /// Investigation not found by slug.
+    #[error("investigation not found: {0}")]
+    InvestigationNotFound(String),
+
+    /// Investigation already exists (slug taken).
+    #[error("investigation already exists: {0}")]
+    InvestigationAlreadyExists(String),
+
+    /// Investigation exists but is hidden on this branch.
+    #[error("investigation \"{0}\" exists but is hidden on this branch — use unhide to bring it into scope")]
+    InvestigationHidden(String),
+
+    /// Investigation is already closed.
+    #[error("investigation \"{0}\" is already closed")]
+    InvestigationAlreadyClosed(String),
+
     /// Entity storage error.
     #[error(transparent)]
     Entity(#[from] EntityError),
+
+    /// Investigation storage error.
+    #[error(transparent)]
+    Investigation(#[from] crate::assertion::InvestigationError),
 
     /// Assertion writer error.
     #[error(transparent)]
@@ -112,7 +132,10 @@ pub fn execute_transaction(
         && input.unhide.entity_types.is_empty()
         && input.unhide.properties.is_empty()
         && input.introduce.is_empty()
-        && input.asserts.is_empty();
+        && input.asserts.is_empty()
+        && input.investigations.is_empty()
+        && input.update_investigations.is_empty()
+        && input.close_investigations.is_empty();
     if is_empty && (input.reasoning.is_null() || input.reasoning == serde_json::Value::String(String::new())) {
         return Err(AssertEntityError::EmptyTransaction);
     }
@@ -303,6 +326,78 @@ pub fn execute_transaction(
         registry,
         &entities,
     )?;
+
+    // Investigation visibility: hide
+    {
+        let inv_store = store.investigations(registry.branch_id(), registry.ancestry().to_vec());
+        if !input.hide.investigations.is_empty() {
+            let mut ids = Vec::with_capacity(input.hide.investigations.len());
+            for slug in &input.hide.investigations {
+                let record = inv_store
+                    .get_by_slug(slug)
+                    .map_err(|e| AssertEntityError::Investigation(e))?
+                    .ok_or_else(|| AssertEntityError::InvestigationNotFound(slug.clone()))?;
+                ids.push(record.id);
+            }
+            vis.hide_to_batch(&mut batch, tx.branch_id, tx.id, ItemKind::Investigation, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        }
+        if !input.unhide.investigations.is_empty() {
+            let mut ids = Vec::with_capacity(input.unhide.investigations.len());
+            for slug in &input.unhide.investigations {
+                let record = inv_store
+                    .get_by_slug(slug)
+                    .map_err(|e| AssertEntityError::Investigation(e))?
+                    .ok_or_else(|| AssertEntityError::InvestigationNotFound(slug.clone()))?;
+                ids.push(record.id);
+            }
+            vis.unhide_to_batch(&mut batch, tx.branch_id, tx.id, ItemKind::Investigation, &ids)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))?;
+        }
+
+        // Create new investigations
+        for item in &input.investigations {
+            if inv_store.get_by_slug(&item.slug).map_err(|e| AssertEntityError::Investigation(e))?.is_some() {
+                return Err(AssertEntityError::InvestigationAlreadyExists(item.slug.clone()));
+            }
+            inv_store.create(&item.slug, item.goal.clone(), &item.reasoning, item.context.clone(), tx.id)
+                .map_err(|e| AssertEntityError::Investigation(e))?;
+        }
+
+        // Update investigation notes
+        for item in &input.update_investigations {
+            let record = inv_store
+                .get_by_slug(&item.slug)
+                .map_err(|e| AssertEntityError::Investigation(e))?
+                .ok_or_else(|| AssertEntityError::InvestigationNotFound(item.slug.clone()))?;
+            if !vis.is_visible(ancestry, ItemKind::Investigation, record.id)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))? {
+                return Err(AssertEntityError::InvestigationHidden(item.slug.clone()));
+            }
+            if record.status == crate::assertion::InvestigationStatus::Closed {
+                return Err(AssertEntityError::InvestigationAlreadyClosed(item.slug.clone()));
+            }
+            inv_store.update_notes(&record.id, item.notes.clone(), tx.id)
+                .map_err(|e| AssertEntityError::Investigation(e))?;
+        }
+
+        // Close investigations
+        for item in &input.close_investigations {
+            let record = inv_store
+                .get_by_slug(&item.slug)
+                .map_err(|e| AssertEntityError::Investigation(e))?
+                .ok_or_else(|| AssertEntityError::InvestigationNotFound(item.slug.clone()))?;
+            if !vis.is_visible(ancestry, ItemKind::Investigation, record.id)
+                .map_err(|e| AssertEntityError::Writer(WriterError::Storage(e)))? {
+                return Err(AssertEntityError::InvestigationHidden(item.slug.clone()));
+            }
+            if record.status == crate::assertion::InvestigationStatus::Closed {
+                return Err(AssertEntityError::InvestigationAlreadyClosed(item.slug.clone()));
+            }
+            inv_store.close(&record.id, item.resolution.clone(), tx.id)
+                .map_err(|e| AssertEntityError::Investigation(e))?;
+        }
+    }
 
     let fact_writer = store.fact_writer();
     let hyp_writer = store.hypothesis_writer();
@@ -563,6 +658,9 @@ mod tests {
             unhide: super::super::HideUnhideInput::default(),
             introduce,
             asserts,
+            investigations: vec![],
+            update_investigations: vec![],
+            close_investigations: vec![],
         }
     }
 
@@ -1230,6 +1328,9 @@ mod tests {
                     hypotheses: vec![],
                 }],
                 asserts: vec![],
+                investigations: vec![],
+                update_investigations: vec![],
+                close_investigations: vec![],
             },
             &reg,
             &store,

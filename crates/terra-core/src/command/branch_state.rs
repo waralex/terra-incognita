@@ -11,6 +11,8 @@ pub struct BranchState {
     pub branch: BranchInfo,
     pub schema: SchemaSnapshot,
     pub entities: Vec<EntityState>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub investigations: Vec<InvestigationSnapshot>,
     pub recent_transactions: Vec<TransactionSnapshot>,
 }
 
@@ -107,6 +109,19 @@ pub struct TransactionSnapshot {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Open investigation in the branch state.
+#[derive(Debug, Serialize)]
+pub struct InvestigationSnapshot {
+    pub id: Uuid,
+    pub slug: String,
+    pub goal: serde_json::Value,
+    pub reasoning: String,
+    pub context: serde_json::Value,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub notes: serde_json::Value,
+    pub tx_id: Uuid,
+}
+
 /// Errors from building branch state.
 #[derive(Debug, thiserror::Error)]
 pub enum BranchStateError {
@@ -124,6 +139,9 @@ pub enum BranchStateError {
 
     #[error(transparent)]
     Branch(#[from] crate::assertion::BranchError),
+
+    #[error(transparent)]
+    Investigation(#[from] crate::assertion::InvestigationError),
 }
 
 /// Builds a complete branch state snapshot.
@@ -238,7 +256,24 @@ pub fn build_state(
         }
     }
 
-    // 4. Recent transactions
+    // 4. Open investigations
+    let inv_store = store.investigations(registry.branch_id(), capped.clone());
+    let all_investigations = inv_store.list_open_at(bound)?;
+    let investigations: Vec<InvestigationSnapshot> = all_investigations
+        .into_iter()
+        .filter(|inv| vis.is_visible(&capped, ItemKind::Investigation, inv.id).unwrap_or(true))
+        .map(|inv| InvestigationSnapshot {
+            id: inv.id,
+            slug: inv.slug,
+            goal: inv.goal,
+            reasoning: inv.reasoning,
+            context: inv.context,
+            notes: inv.notes,
+            tx_id: inv.tx_id,
+        })
+        .collect();
+
+    // 5. Recent transactions
     let mut txns = store.transactions().list_by_branch_at(&branch_id, &bound)?;
     txns.reverse(); // newest first
     txns.truncate(last_transactions);
@@ -259,6 +294,7 @@ pub fn build_state(
         branch: branch_info,
         schema,
         entities: entity_states,
+        investigations,
         recent_transactions,
     })
 }

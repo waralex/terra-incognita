@@ -5,7 +5,9 @@ use serde::Deserialize;
 use terra_core::assertion::{PropertyValue, RangeValue, SetValue, StructValue};
 use terra_core::command::{
     AssertItem, AssertionItem, AttachProperty, Command, CreateBranchInput,
-    CreateEntityType, CreateProperty, HideUnhideInput, IntroduceItem, TransactionInput,
+    CreateEntityType, CreateProperty, HideUnhideInput, IntroduceItem,
+    InvestigationCloseItem, InvestigationCreateItem, InvestigationUpdateItem,
+    TransactionInput,
 };
 
 /// DTO for batch entity type creation items.
@@ -74,6 +76,36 @@ pub struct HideUnhideDto {
     pub entity_types: Vec<String>,
     #[serde(default)]
     pub properties: Vec<String>,
+    #[serde(default)]
+    pub investigations: Vec<String>,
+}
+
+/// DTO for creating an investigation.
+#[derive(Deserialize)]
+pub struct InvestigationCreateDto {
+    pub slug: String,
+    #[serde(default)]
+    pub goal: serde_json::Value,
+    #[serde(default)]
+    pub reasoning: String,
+    #[serde(default)]
+    pub context: serde_json::Value,
+}
+
+/// DTO for updating an investigation's notes.
+#[derive(Deserialize)]
+pub struct InvestigationUpdateDto {
+    pub slug: String,
+    #[serde(default)]
+    pub notes: serde_json::Value,
+}
+
+/// DTO for closing an investigation.
+#[derive(Deserialize)]
+pub struct InvestigationCloseDto {
+    pub slug: String,
+    #[serde(default)]
+    pub resolution: serde_json::Value,
 }
 
 /// Serde-tagged query DTO. Normalized into a domain [`Command`] via [`into_command`](QueryDto::into_command).
@@ -110,6 +142,12 @@ pub enum QueryDto {
         asserts: Vec<AssertItemDto>,
         #[serde(default)]
         commands: Vec<serde_json::Value>,
+        #[serde(default)]
+        investigations: Vec<InvestigationCreateDto>,
+        #[serde(default)]
+        update_investigations: Vec<InvestigationUpdateDto>,
+        #[serde(default)]
+        close_investigations: Vec<InvestigationCloseDto>,
     },
     #[serde(rename = "branch.create")]
     CreateBranch {
@@ -173,6 +211,9 @@ QueryDto::Transaction {
                 introduce,
                 asserts,
                 commands,
+                investigations,
+                update_investigations,
+                close_investigations,
             } => {
                 let entity_type_items = entity_types
                     .into_iter()
@@ -231,15 +272,40 @@ QueryDto::Transaction {
                             entities: hide.entities,
                             entity_types: hide.entity_types,
                             properties: hide.properties,
+                            investigations: hide.investigations,
                         },
                         unhide: HideUnhideInput {
                             entities: unhide.entities,
                             entity_types: unhide.entity_types,
                             properties: unhide.properties,
+                            investigations: unhide.investigations,
                         },
                         introduce: introduce_items,
                         asserts: assert_items,
                         commands,
+                        investigations: investigations
+                            .into_iter()
+                            .map(|item| InvestigationCreateItem {
+                                slug: item.slug,
+                                goal: item.goal,
+                                reasoning: item.reasoning,
+                                context: item.context,
+                            })
+                            .collect(),
+                        update_investigations: update_investigations
+                            .into_iter()
+                            .map(|item| InvestigationUpdateItem {
+                                slug: item.slug,
+                                notes: item.notes,
+                            })
+                            .collect(),
+                        close_investigations: close_investigations
+                            .into_iter()
+                            .map(|item| InvestigationCloseItem {
+                                slug: item.slug,
+                                resolution: item.resolution,
+                            })
+                            .collect(),
                     }),
                     ResponseShape::Single,
                 ))

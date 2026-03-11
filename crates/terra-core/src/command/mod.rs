@@ -10,7 +10,7 @@ pub use branch::{BranchCommandError, BranchDetail, BranchSummary};
 
 use serde::Serialize;
 
-use crate::assertion::{EntityError, EntityRecord, LogEntry, LogError, PropertyValue, Transaction, WriterError};
+use crate::assertion::{EntityError, EntityRecord, InvestigationError, LogEntry, LogError, PropertyValue, Transaction, WriterError};
 use crate::schema::{EntityProperty, EntityType, ValueType};
 use crate::schema::SchemaError;
 
@@ -107,23 +107,21 @@ pub struct TransactionInput {
     pub introduce: Vec<IntroduceItem>,
     /// Assertions on existing entities (processed after introduces).
     pub asserts: Vec<AssertItem>,
+    /// New investigations to create.
+    pub investigations: Vec<InvestigationCreateItem>,
+    /// Existing investigations to update (notes).
+    pub update_investigations: Vec<InvestigationUpdateItem>,
+    /// Investigations to close with a resolution.
+    pub close_investigations: Vec<InvestigationCloseItem>,
 }
 
 /// Items to hide or unhide on a branch, referenced by slug.
+#[derive(Default)]
 pub struct HideUnhideInput {
     pub entities: Vec<String>,
     pub entity_types: Vec<String>,
     pub properties: Vec<String>,
-}
-
-impl Default for HideUnhideInput {
-    fn default() -> Self {
-        Self {
-            entities: vec![],
-            entity_types: vec![],
-            properties: vec![],
-        }
-    }
+    pub investigations: Vec<String>,
 }
 
 /// A new entity to introduce in a transaction.
@@ -158,6 +156,26 @@ pub struct TransactionEntityResult {
     pub facts: Vec<LogEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hypotheses: Vec<LogEntry>,
+}
+
+/// A new investigation to create in a transaction.
+pub struct InvestigationCreateItem {
+    pub slug: String,
+    pub goal: serde_json::Value,
+    pub reasoning: String,
+    pub context: serde_json::Value,
+}
+
+/// An update to an existing investigation's notes.
+pub struct InvestigationUpdateItem {
+    pub slug: String,
+    pub notes: serde_json::Value,
+}
+
+/// Close an investigation with a resolution.
+pub struct InvestigationCloseItem {
+    pub slug: String,
+    pub resolution: serde_json::Value,
 }
 
 /// Input for creating a branch.
@@ -228,4 +246,8 @@ pub enum CommandError {
     /// Branch state error.
     #[error(transparent)]
     BranchState(#[from] BranchStateError),
+
+    /// Investigation operation error.
+    #[error(transparent)]
+    Investigation(#[from] InvestigationError),
 }

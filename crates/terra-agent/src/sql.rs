@@ -30,6 +30,8 @@ pub struct SqlResult {
 pub struct SqlTool {
     connection_string: String,
     rt: Runtime,
+    /// Database name for display/context purposes.
+    pub database: String,
 }
 
 impl SqlTool {
@@ -54,8 +56,15 @@ impl SqlTool {
             s
         };
 
+        let database = std::env::var("TERRA_SQL_DATABASE")
+            .or_else(|_| std::env::var("TERRA_SQL_URL").map(|u| {
+                // Try to extract dbname from URL
+                u.rsplit('/').next().unwrap_or("unknown").to_string()
+            }))
+            .unwrap_or_else(|_| "unknown".into());
+
         let rt = Runtime::new().map_err(|e| format!("failed to create tokio runtime: {e}"))?;
-        Ok(Self { connection_string, rt })
+        Ok(Self { connection_string, rt, database })
     }
 
     /// Executes a SQL query and returns JSON results.

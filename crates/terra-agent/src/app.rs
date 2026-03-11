@@ -167,12 +167,19 @@ impl App {
         for round in 0..=MAX_COMMAND_ROUNDS {
             let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
 
-            let state_with_commands = if compiled_commands.is_empty() {
-                branch_state
-            } else {
+            let mut extended_state = branch_state;
+
+            if let Some(ref tool) = self.sql_tool {
+                extended_state.push_str(&format!(
+                    "\navailable_tools:\n  - type: sql\n    engine: postgresql\n    database: {}\n",
+                    tool.database
+                ));
+            }
+
+            if !compiled_commands.is_empty() {
                 let cc_yaml = serde_yaml::to_string(&compiled_commands).unwrap_or_default();
-                format!("{branch_state}\ncompiled_commands:\n{cc_yaml}")
-            };
+                extended_state.push_str(&format!("\ncompiled_commands:\n{cc_yaml}"));
+            }
 
             let result = {
                 let provider: &dyn LlmProvider = match &self.mode {
@@ -182,7 +189,7 @@ impl App {
                 llm::call_llm_with_retry(
                     provider,
                     system_prompt(),
-                    &state_with_commands,
+                    &extended_state,
                     input,
                     MAX_RETRIES,
                 )

@@ -81,15 +81,22 @@ fn draw_chat(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
     }
 
-    let total_lines = lines.len() as u16;
-    let visible = area.height.saturating_sub(2); // borders
+    let content_width = area.width.saturating_sub(2) as usize; // borders
+    let visible = area.height.saturating_sub(2) as usize;
+
+    // Estimate total wrapped lines (each line may wrap to multiple rows)
+    let total_lines: usize = lines.iter().map(|line| {
+        let width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+        if content_width == 0 { 1 } else { (width / content_width) + 1 }
+    }).sum();
+
     let max_scroll = total_lines.saturating_sub(visible);
-    let scroll = (max_scroll as usize).saturating_sub(app.scroll_offset) as u16;
+    let scroll = max_scroll.saturating_sub(app.scroll_offset);
 
     let chat = Paragraph::new(Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title(" Chat "))
         .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+        .scroll((scroll as u16, 0));
     frame.render_widget(chat, area);
 }
 
@@ -104,15 +111,21 @@ fn draw_side_panel(frame: &mut Frame, app: &App, area: Rect) {
 
     let lines: Vec<Line> = app.side_panel_content.lines().map(highlight_yaml).collect();
 
-    let total_lines = lines.len() as u16;
-    let visible = area.height.saturating_sub(2);
+    let content_width = area.width.saturating_sub(2) as usize;
+    let visible = area.height.saturating_sub(2) as usize;
+
+    let total_lines: usize = lines.iter().map(|line| {
+        let width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+        if content_width == 0 { 1 } else { (width / content_width) + 1 }
+    }).sum();
+
     let max_scroll = total_lines.saturating_sub(visible);
-    let scroll = max_scroll.saturating_sub(app.panel_scroll as u16);
+    let scroll = max_scroll.saturating_sub(app.panel_scroll);
 
     let panel = Paragraph::new(Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title(" Branch State [C-u/C-d] "))
         .wrap(Wrap { trim: false })
-        .scroll((scroll, 0));
+        .scroll((scroll as u16, 0));
     frame.render_widget(panel, area);
 }
 

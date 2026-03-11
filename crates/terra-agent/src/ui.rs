@@ -43,7 +43,7 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw("  "),
         Span::styled("[Ctrl+B: switch session]", Style::default().fg(Color::DarkGray)),
         Span::raw("  "),
-        Span::styled("[Esc: quit]", Style::default().fg(Color::DarkGray)),
+        Span::styled("[Ctrl+C: quit]", Style::default().fg(Color::DarkGray)),
     ]);
     let bar = Paragraph::new(text).style(Style::default().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(bar, area);

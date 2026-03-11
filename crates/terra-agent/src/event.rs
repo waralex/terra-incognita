@@ -15,7 +15,7 @@ pub fn handle_events(app: &mut App) -> std::io::Result<()> {
 
 fn handle_key(app: &mut App, key: KeyEvent) {
     match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
             app.should_quit = true;
         }
         (KeyCode::Char('b'), KeyModifiers::CONTROL) => {

@@ -10,6 +10,7 @@ terra-query = { path = "../terra-query" }
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 serde_yaml = "0.9"
 tracing = "0.1"
 tracing-subscriber = "0.3"

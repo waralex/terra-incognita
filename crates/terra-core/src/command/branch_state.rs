@@ -102,6 +102,8 @@ pub struct TransactionSnapshot {
     pub question: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<serde_json::Value>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -246,6 +248,7 @@ pub fn build_state(
             reasoning: tx.reasoning,
             question: tx.question,
             answer: tx.answer,
+            commands: tx.commands,
             timestamp: tx.timestamp,
         })
         .collect();

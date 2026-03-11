@@ -46,7 +46,22 @@ impl AssertionStore {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
+        let cfs = Self::column_families();
+        let db = DB::open_cf_descriptors(&opts, path, cfs)
+            .map_err(|e| LogError::Storage(e.to_string()))?;
+        Ok(Self { db: Arc::new(db) })
+    }
 
+    /// Opens the store in read-only mode (allows concurrent access with a writer).
+    pub fn open_read_only(path: &Path) -> Result<Self, LogError> {
+        let opts = Options::default();
+        let cfs = Self::column_families();
+        let db = DB::open_cf_descriptors_read_only(&opts, path, cfs, false)
+            .map_err(|e| LogError::Storage(e.to_string()))?;
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    fn column_families() -> Vec<ColumnFamilyDescriptor> {
         let mut col_opts = Options::default();
         col_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(32));
 
@@ -59,7 +74,7 @@ impl AssertionStore {
         let mut schema_attach_opts = Options::default();
         schema_attach_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(32));
 
-        let cfs = vec![
+        vec![
             ColumnFamilyDescriptor::new(CF_FACTS, Options::default()),
             ColumnFamilyDescriptor::new(CF_HYPOTHESES, Options::default()),
             ColumnFamilyDescriptor::new(CF_FACT_SET, col_opts.clone()),
@@ -79,11 +94,7 @@ impl AssertionStore {
             ColumnFamilyDescriptor::new(CF_SCHEMA_PROP_SLUG, entity_opts.clone()),
             ColumnFamilyDescriptor::new(CF_SCHEMA_ATTACHMENTS, schema_attach_opts),
             ColumnFamilyDescriptor::new(CF_VISIBILITY, entity_opts),
-        ];
-        let db = DB::open_cf_descriptors(&opts, path, cfs)
-            .map_err(|e| LogError::Storage(e.to_string()))?;
-
-        Ok(Self { db: Arc::new(db) })
+        ]
     }
 
     // -- Logs --

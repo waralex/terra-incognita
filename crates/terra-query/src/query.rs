@@ -108,6 +108,8 @@ pub enum QueryDto {
         introduce: Vec<IntroduceItemDto>,
         #[serde(default)]
         asserts: Vec<AssertItemDto>,
+        #[serde(default)]
+        commands: Vec<serde_json::Value>,
     },
     #[serde(rename = "branch.create")]
     CreateBranch {
@@ -170,6 +172,7 @@ QueryDto::Transaction {
                 unhide,
                 introduce,
                 asserts,
+                commands,
             } => {
                 let entity_type_items = entity_types
                     .into_iter()
@@ -236,6 +239,7 @@ QueryDto::Transaction {
                         },
                         introduce: introduce_items,
                         asserts: assert_items,
+                        commands,
                     }),
                     ResponseShape::Single,
                 ))

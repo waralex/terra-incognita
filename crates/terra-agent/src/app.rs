@@ -214,7 +214,8 @@ impl App {
 
                     // Dispatch transaction if it has content
                     if !transaction_yaml.is_empty() {
-                        match self.store.dispatch(&transaction_yaml, &self.branch) {
+                        let dispatch_yaml = inject_commands(&transaction_yaml, &compiled_commands);
+                        match self.store.dispatch(&dispatch_yaml, &self.branch) {
                             Ok(yaml) => {
                                 self.messages.push(Message {
                                     role: Role::System,
@@ -479,6 +480,52 @@ impl App {
         };
         self.state_tokens = llm::estimate_tokens(&self.side_panel_content);
     }
+}
+
+/// Strips result data from compiled commands, keeping only metadata for audit trail.
+fn strip_command_results(commands: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    commands
+        .iter()
+        .map(|cmd| {
+            let mut stripped = serde_json::Map::new();
+            for key in ["reasoning", "type", "query", "command_type"] {
+                if let Some(v) = cmd.get(key) {
+                    stripped.insert(key.into(), v.clone());
+                }
+            }
+            // Keep stats but not full result data
+            if let Some(result) = cmd.get("result") {
+                let mut stats = serde_json::Map::new();
+                for key in ["row_count", "elapsed_ms", "truncated"] {
+                    if let Some(v) = result.get(key) {
+                        stats.insert(key.into(), v.clone());
+                    }
+                }
+                if !stats.is_empty() {
+                    stripped.insert("stats".into(), serde_json::Value::Object(stats));
+                }
+            }
+            if let Some(err) = cmd.get("error") {
+                stripped.insert("error".into(), err.clone());
+            }
+            serde_json::Value::Object(stripped)
+        })
+        .collect()
+}
+
+/// Injects compiled commands metadata into transaction YAML before dispatch.
+fn inject_commands(transaction_yaml: &str, commands: &[serde_json::Value]) -> String {
+    if commands.is_empty() {
+        return transaction_yaml.to_string();
+    }
+    let stripped = strip_command_results(commands);
+    let Ok(mut val) = serde_yaml::from_str::<serde_json::Value>(transaction_yaml) else {
+        return transaction_yaml.to_string();
+    };
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert("commands".into(), serde_json::Value::Array(stripped));
+    }
+    serde_yaml::to_string(&val).unwrap_or_else(|_| transaction_yaml.to_string())
 }
 
 /// Loads system prompt from `prompts/system.md` relative to the executable,

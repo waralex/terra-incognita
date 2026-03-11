@@ -191,6 +191,7 @@ impl AssertionWriter {
             reasoning: tx_reasoning,
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: chrono::Utc::now(),
         };
         self.tx_store.put_to_batch(&mut batch, &tx)?;

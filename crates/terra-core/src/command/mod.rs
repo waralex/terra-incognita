@@ -91,6 +91,8 @@ pub struct TransactionInput {
     pub question: Option<String>,
     /// The agent's answer or explanation for this transaction.
     pub answer: Option<String>,
+    /// Tool invocations recorded in this transaction (query, reasoning, stats — no result data).
+    pub commands: Vec<serde_json::Value>,
     /// Entity types to create (processed first).
     pub entity_types: Vec<CreateEntityType>,
     /// Properties to create (processed second).

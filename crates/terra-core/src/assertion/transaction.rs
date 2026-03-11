@@ -34,6 +34,9 @@ pub struct Transaction {
     /// The agent's answer or explanation for this transaction.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answer: Option<String>,
+    /// Tool invocations recorded in this transaction (query, reasoning, stats — no result data).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<serde_json::Value>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -61,6 +64,9 @@ impl TransactionStore {
         }
         if let Some(ref a) = tx.answer {
             val["answer"] = serde_json::Value::String(a.clone());
+        }
+        if !tx.commands.is_empty() {
+            val["commands"] = serde_json::Value::Array(tx.commands.clone());
         }
         val
     }
@@ -108,7 +114,11 @@ impl TransactionStore {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|dt| dt.with_timezone(&Utc))
             .ok_or_else(|| LogError::Storage("missing timestamp in transaction".into()))?;
-        Ok(Transaction { id: tx_id, branch_id, reasoning, question, answer, timestamp })
+        let commands = val.get("commands")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(Transaction { id: tx_id, branch_id, reasoning, question, answer, commands, timestamp })
     }
 
     /// Reads a transaction by branch and ID.
@@ -223,6 +233,7 @@ mod tests {
             reasoning: serde_json::json!("narrowed hypothesis space based on spectral analysis"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: Utc::now(),
         };
 
@@ -256,6 +267,7 @@ mod tests {
             reasoning: serde_json::Value::Null,
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: Utc::now(),
         };
 
@@ -279,6 +291,7 @@ mod tests {
             reasoning: serde_json::json!("first"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: Utc::now(),
         };
         let tx2 = Transaction {
@@ -287,6 +300,7 @@ mod tests {
             reasoning: serde_json::json!("second"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: Utc::now(),
         };
         let tx3 = Transaction {
@@ -295,6 +309,7 @@ mod tests {
             reasoning: serde_json::json!("other branch"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: Utc::now(),
         };
 

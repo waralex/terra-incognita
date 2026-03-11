@@ -271,6 +271,7 @@ pub fn execute_transaction(
         reasoning: input.reasoning,
         question: input.question,
         answer: input.answer,
+        commands: input.commands,
         timestamp: chrono::Utc::now(),
     };
 
@@ -554,6 +555,7 @@ mod tests {
             reasoning,
             question: None,
             answer: None,
+            commands: vec![],
             entity_types: vec![],
             properties: vec![],
             attach: vec![],
@@ -1203,6 +1205,7 @@ mod tests {
                 reasoning: json!("bootstrap schema and data"),
                 question: None,
                 answer: None,
+                commands: vec![],
                 entity_types: vec![super::super::CreateEntityType {
                     slug: "track".into(),
                     description: None,
@@ -1254,6 +1257,7 @@ mod tests {
             reasoning: json!("hide track"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();
@@ -1296,6 +1300,7 @@ mod tests {
             reasoning: json!("hide bpm"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();
@@ -1341,6 +1346,7 @@ mod tests {
             reasoning: json!("hide entity"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();
@@ -1383,6 +1389,7 @@ mod tests {
             reasoning: json!("hide entity"),
             question: None,
             answer: None,
+            commands: vec![],
             timestamp: chrono::Utc::now(),
         };
         let mut batch = rocksdb::WriteBatch::default();

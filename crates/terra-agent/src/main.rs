@@ -2,6 +2,7 @@ mod app;
 mod event;
 mod llm;
 mod session;
+pub mod sql;
 mod store;
 mod ui;
 

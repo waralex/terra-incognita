@@ -227,7 +227,7 @@ impl App {
             if !transaction_yaml.is_empty() {
                 let dispatch_yaml = inject_commands(&transaction_yaml, &compiled_commands);
                 if let Err(e) = self.store.dispatch(&dispatch_yaml, &self.branch) {
-                    self.retry_failed_tx(input, &compiled_commands, &e);
+                    self.retry_failed_tx(input, &dispatch_yaml, &compiled_commands, &e);
                 }
             }
 
@@ -245,14 +245,16 @@ impl App {
         }
     }
 
-    /// Retries a failed transaction by sending the error + fresh state back to LLM.
+    /// Retries a failed transaction by sending the error + failed YAML + fresh state back to LLM.
     fn retry_failed_tx(
         &mut self,
         original_input: &str,
+        failed_yaml: &str,
         compiled_commands: &[serde_json::Value],
         first_error: &str,
     ) {
         let mut last_error = first_error.to_string();
+        let mut last_failed_yaml = failed_yaml.to_string();
 
         for attempt in 1..=MAX_TX_RETRIES {
             self.messages.push(Message {
@@ -262,7 +264,7 @@ impl App {
 
             let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
             let error_msg = format!(
-                "{original_input}\n\n[Transaction error: {last_error}\nFix the transaction and try again. Branch state is up to date above.]"
+                "{original_input}\n\n[Transaction error: {last_error}\n\nFailed transaction:\n```yaml\n{last_failed_yaml}```\n\nFix the transaction and try again. Branch state is up to date above.]"
             );
 
             let result = {
@@ -290,7 +292,10 @@ impl App {
                     let dispatch_yaml = inject_commands(&transaction_yaml, compiled_commands);
                     match self.store.dispatch(&dispatch_yaml, &self.branch) {
                         Ok(_) => break,
-                        Err(e) => last_error = e,
+                        Err(e) => {
+                            last_error = e;
+                            last_failed_yaml = dispatch_yaml;
+                        }
                     }
                 }
                 Err(e) => {

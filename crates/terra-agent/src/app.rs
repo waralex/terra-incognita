@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::llm::{self, LlmProvider, LlmResult};
+use crate::llm::{self, LlmCommand, LlmProvider, LlmResult};
+use crate::sql::SqlTool;
 use crate::store::StoreHandle;
 
 const MAX_RETRIES: usize = 2;
+const MAX_COMMAND_ROUNDS: usize = 3;
 
 /// Message role in the chat log.
 #[derive(Clone)]
@@ -45,11 +47,12 @@ pub struct App {
     pub panel_scroll: usize,
     store: StoreHandle,
     mode: Mode,
+    sql_tool: Option<SqlTool>,
 }
 
 impl App {
-    /// Creates a new App with the given store handle, mode, and branch.
-    pub fn new(store: StoreHandle, mode: Mode, branch: String) -> Self {
+    /// Creates a new App with the given store handle, mode, branch, and optional SQL tool.
+    pub fn new(store: StoreHandle, mode: Mode, branch: String, sql_tool: Option<SqlTool>) -> Self {
         let welcome = match &mode {
             Mode::Direct => format!("Direct mode · branch: {branch}. Type YAML commands and press Enter."),
             Mode::Llm(_) => format!("LLM mode · branch: {branch}. Type natural language, agent will create transactions."),
@@ -91,6 +94,7 @@ impl App {
             panel_scroll: 0,
             store,
             mode,
+            sql_tool,
         }
     }
 
@@ -156,64 +160,157 @@ impl App {
     }
 
     /// LLM mode: send to LLM, extract answer, dispatch transaction.
+    /// Supports a command loop: if LLM returns commands, execute them and call LLM again.
     fn dispatch_llm(&mut self, input: &str) {
-        let provider: &dyn LlmProvider = match &self.mode {
-            Mode::Llm(p) => p.as_ref(),
-            _ => unreachable!(),
-        };
+        let mut compiled_commands: Vec<serde_json::Value> = Vec::new();
 
-        let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
+        for round in 0..=MAX_COMMAND_ROUNDS {
+            let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
 
-        let result = llm::call_llm_with_retry(
-            provider,
-            system_prompt(),
-            &branch_state,
-            input,
-            MAX_RETRIES,
-        );
+            let state_with_commands = if compiled_commands.is_empty() {
+                branch_state
+            } else {
+                let cc_yaml = serde_yaml::to_string(&compiled_commands).unwrap_or_default();
+                format!("{branch_state}\ncompiled_commands:\n{cc_yaml}")
+            };
 
-        match result {
-            Ok(LlmResult { answer, transaction_json, usage }) => {
-                let token_info = match &usage {
-                    Some(u) => {
-                        self.total_tokens += u.total_tokens;
-                        format!(" [{}+{}={}tok]", u.prompt_tokens, u.completion_tokens, u.total_tokens)
-                    }
-                    None => String::new(),
+            let result = {
+                let provider: &dyn LlmProvider = match &self.mode {
+                    Mode::Llm(p) => p.as_ref(),
+                    _ => unreachable!(),
                 };
+                llm::call_llm_with_retry(
+                    provider,
+                    system_prompt(),
+                    &state_with_commands,
+                    input,
+                    MAX_RETRIES,
+                )
+            };
 
-                // Show answer immediately
-                if !answer.is_empty() {
+            match result {
+                Ok(LlmResult { answer, transaction_yaml, usage, commands }) => {
+                    let token_info = match &usage {
+                        Some(u) => {
+                            self.total_tokens += u.total_tokens;
+                            format!(" [{}+{}={}tok]", u.prompt_tokens, u.completion_tokens, u.total_tokens)
+                        }
+                        None => String::new(),
+                    };
+
+                    if !answer.is_empty() {
+                        self.messages.push(Message {
+                            role: Role::Agent,
+                            text: answer,
+                        });
+                    }
+
+                    // Dispatch transaction if it has content
+                    if !transaction_yaml.is_empty() {
+                        match self.store.dispatch(&transaction_yaml, &self.branch) {
+                            Ok(yaml) => {
+                                self.messages.push(Message {
+                                    role: Role::System,
+                                    text: format!("tx committed{token_info}\n{}", yaml.trim()),
+                                });
+                            }
+                            Err(e) => {
+                                self.messages.push(Message {
+                                    role: Role::System,
+                                    text: format!("tx failed{token_info}: {e}"),
+                                });
+                            }
+                        }
+                    } else if !token_info.is_empty() {
+                        self.messages.push(Message {
+                            role: Role::System,
+                            text: format!("no transaction{token_info}"),
+                        });
+                    }
+
+                    // Execute commands if any
+                    if commands.is_empty() || round == MAX_COMMAND_ROUNDS {
+                        break;
+                    }
+
+                    compiled_commands = self.execute_commands(&commands);
+
                     self.messages.push(Message {
-                        role: Role::Agent,
-                        text: answer.clone(),
+                        role: Role::System,
+                        text: format!("executed {} command(s), calling LLM again...", compiled_commands.len()),
                     });
                 }
+                Err(e) => {
+                    self.messages.push(Message {
+                        role: Role::System,
+                        text: format!("LLM error: {e}"),
+                    });
+                    break;
+                }
+            }
+        }
+    }
 
-                // Dispatch transaction
-                match self.store.dispatch(&transaction_json, &self.branch) {
-                    Ok(yaml) => {
+    /// Executes LLM commands and returns compiled results.
+    fn execute_commands(&mut self, commands: &[LlmCommand]) -> Vec<serde_json::Value> {
+        commands
+            .iter()
+            .map(|cmd| {
+                let mut compiled = serde_json::to_value(cmd).unwrap_or_default();
+
+                match cmd.command_type.as_str() {
+                    "sql" => {
+                        let query = cmd.query.as_deref().unwrap_or("");
                         self.messages.push(Message {
                             role: Role::System,
-                            text: format!("tx committed{token_info}\n{}", yaml.trim()),
+                            text: format!("sql> {query}"),
                         });
+
+                        match &self.sql_tool {
+                            Some(tool) => match tool.execute(query) {
+                                Ok(result) => {
+                                    self.messages.push(Message {
+                                        role: Role::System,
+                                        text: format!(
+                                            "  {} rows, {}ms{}",
+                                            result.row_count,
+                                            result.elapsed_ms,
+                                            if result.truncated { " (truncated)" } else { "" }
+                                        ),
+                                    });
+                                    compiled["result"] = serde_json::to_value(&result).unwrap_or_default();
+                                }
+                                Err(e) => {
+                                    self.messages.push(Message {
+                                        role: Role::System,
+                                        text: format!("  error: {e}"),
+                                    });
+                                    compiled["error"] = serde_json::Value::String(e);
+                                }
+                            },
+                            None => {
+                                let err = "SQL tool not available (no database configured)";
+                                self.messages.push(Message {
+                                    role: Role::System,
+                                    text: format!("  error: {err}"),
+                                });
+                                compiled["error"] = serde_json::Value::String(err.into());
+                            }
+                        }
                     }
-                    Err(e) => {
+                    other => {
+                        let err = format!("unknown command type: {other}");
                         self.messages.push(Message {
                             role: Role::System,
-                            text: format!("tx failed{token_info}: {e}"),
+                            text: format!("  error: {err}"),
                         });
+                        compiled["error"] = serde_json::Value::String(err);
                     }
                 }
 
-            }
-            Err(e) => {
-                self.messages.push(Message {
-                    role: Role::System,
-                    text: format!("LLM error: {e}"),
-                });
-            }
-        }
+                compiled
+            })
+            .collect()
     }
 
     /// Toggles the side panel and refreshes its content.

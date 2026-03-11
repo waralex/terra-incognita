@@ -54,11 +54,23 @@ pub struct TokenUsage {
     pub total_tokens: usize,
 }
 
-/// Result from an LLM call: the answer text and the raw transaction YAML.
+/// A command requested by the LLM (e.g. SQL query).
+#[derive(Clone, Serialize)]
+pub struct LlmCommand {
+    pub reasoning: serde_json::Value,
+    #[serde(rename = "type")]
+    pub command_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+}
+
+/// Result from an LLM call.
 pub struct LlmResult {
     pub answer: String,
-    pub transaction_json: String,
+    /// YAML transaction to dispatch (empty string if no transaction fields).
+    pub transaction_yaml: String,
     pub usage: Option<TokenUsage>,
+    pub commands: Vec<LlmCommand>,
 }
 
 /// Max output tokens for LLM response.
@@ -109,7 +121,7 @@ pub fn call_llm(
 
     let (content, usage) = provider.parse_response(&response_body)?;
 
-    // Parse JSON to extract answer, then convert to YAML transaction
+    // Parse JSON to extract answer, commands, and transaction fields
     let val: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("LLM returned invalid JSON: {e}\ncontent: {content}"))?;
 
@@ -119,20 +131,59 @@ pub fn call_llm(
         .unwrap_or("")
         .to_string();
 
-    let mut tx = val.clone();
-    if let Some(obj) = tx.as_object_mut() {
-        obj.insert(
-            "command".into(),
-            serde_json::Value::String("transaction".into()),
-        );
-    }
-    let transaction_yaml =
-        serde_yaml::to_string(&tx).map_err(|e| format!("failed to serialize to YAML: {e}"))?;
+    // Extract commands
+    let commands: Vec<LlmCommand> = val
+        .get("commands")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let command_type = c.get("type")?.as_str()?.to_string();
+                    Some(LlmCommand {
+                        reasoning: c.get("reasoning").cloned().unwrap_or(serde_json::Value::Null),
+                        command_type,
+                        query: c.get("query").and_then(|v| v.as_str()).map(String::from),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Build transaction YAML, stripping non-transaction fields
+    let transaction_yaml = if let Some(obj) = val.as_object() {
+        let tx_keys = [
+            "reasoning", "question", "answer", "timestamp",
+            "entity_types", "properties", "attach",
+            "hide", "unhide", "introduce", "asserts",
+        ];
+        let has_mutations = obj.keys().any(|k| {
+            matches!(k.as_str(),
+                "entity_types" | "properties" | "attach" |
+                "hide" | "unhide" | "introduce" | "asserts"
+            )
+        });
+
+        if has_mutations || obj.contains_key("reasoning") {
+            let mut tx: serde_json::Map<String, serde_json::Value> = obj
+                .iter()
+                .filter(|(k, _)| tx_keys.contains(&k.as_str()))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            tx.insert("command".into(), serde_json::Value::String("transaction".into()));
+            serde_yaml::to_string(&tx)
+                .map_err(|e| format!("failed to serialize to YAML: {e}"))?
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
 
     Ok(LlmResult {
         answer,
-        transaction_json: transaction_yaml,
+        transaction_yaml,
         usage,
+        commands,
     })
 }
 

@@ -110,7 +110,8 @@ fn main() -> io::Result<()> {
         Mode::Direct
     };
 
-    let mut app = App::new(store.clone(), mode, branch);
+    let sql_tool = crate::sql::SqlTool::from_env().ok();
+    let mut app = App::new(store.clone(), mode, branch, sql_tool);
 
     // Main loop
     let result = run_loop(&mut terminal, &mut app, &store);

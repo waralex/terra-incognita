@@ -8,6 +8,7 @@ use crate::store::StoreHandle;
 const MAX_RETRIES: usize = 2;
 const MAX_COMMAND_ROUNDS: usize = 3;
 const MAX_COMMANDS_PER_ROUND: usize = 3;
+const MAX_TX_RETRIES: usize = 3;
 
 /// Message role in the chat log.
 #[derive(Clone)]
@@ -198,42 +199,8 @@ impl App {
                 )
             };
 
-            match result {
-                Ok(LlmResult { answer, transaction_yaml, usage, commands }) => {
-                    if let Some(u) = &usage {
-                        self.total_tokens += u.total_tokens;
-                    }
-
-                    if !answer.is_empty() {
-                        self.messages.push(Message {
-                            role: Role::Agent,
-                            text: answer,
-                        });
-                    }
-
-                    // Dispatch transaction if it has content
-                    if !transaction_yaml.is_empty() {
-                        let dispatch_yaml = inject_commands(&transaction_yaml, &compiled_commands);
-                        if let Err(e) = self.store.dispatch(&dispatch_yaml, &self.branch) {
-                            self.messages.push(Message {
-                                role: Role::System,
-                                text: format!("tx failed: {e}"),
-                            });
-                        }
-                    }
-
-                    // Execute commands if any
-                    if commands.is_empty() || round == MAX_COMMAND_ROUNDS {
-                        break;
-                    }
-
-                    compiled_commands = self.execute_commands(&commands);
-
-                    self.messages.push(Message {
-                        role: Role::System,
-                        text: "thinking...".into(),
-                    });
-                }
+            let llm_result = match result {
+                Ok(r) => r,
                 Err(e) => {
                     self.messages.push(Message {
                         role: Role::System,
@@ -241,7 +208,106 @@ impl App {
                     });
                     break;
                 }
+            };
+
+            let LlmResult { answer, transaction_yaml, usage, commands } = llm_result;
+
+            if let Some(u) = &usage {
+                self.total_tokens += u.total_tokens;
             }
+
+            if !answer.is_empty() {
+                self.messages.push(Message {
+                    role: Role::Agent,
+                    text: answer,
+                });
+            }
+
+            // Dispatch transaction with retry on failure
+            if !transaction_yaml.is_empty() {
+                let dispatch_yaml = inject_commands(&transaction_yaml, &compiled_commands);
+                if let Err(e) = self.store.dispatch(&dispatch_yaml, &self.branch) {
+                    self.retry_failed_tx(input, &compiled_commands, &e);
+                }
+            }
+
+            // Execute commands if any
+            if commands.is_empty() || round == MAX_COMMAND_ROUNDS {
+                break;
+            }
+
+            compiled_commands = self.execute_commands(&commands);
+
+            self.messages.push(Message {
+                role: Role::System,
+                text: "thinking...".into(),
+            });
+        }
+    }
+
+    /// Retries a failed transaction by sending the error + fresh state back to LLM.
+    fn retry_failed_tx(
+        &mut self,
+        original_input: &str,
+        compiled_commands: &[serde_json::Value],
+        first_error: &str,
+    ) {
+        let mut last_error = first_error.to_string();
+
+        for attempt in 1..=MAX_TX_RETRIES {
+            self.messages.push(Message {
+                role: Role::System,
+                text: format!("tx failed (attempt {attempt}/{MAX_TX_RETRIES}): {last_error}"),
+            });
+
+            let branch_state = self.store.fetch_state(&self.branch).unwrap_or_default();
+            let error_msg = format!(
+                "{original_input}\n\n[Transaction error: {last_error}\nFix the transaction and try again. Branch state is up to date above.]"
+            );
+
+            let result = {
+                let provider: &dyn LlmProvider = match &self.mode {
+                    Mode::Llm(p) => p.as_ref(),
+                    _ => unreachable!(),
+                };
+                llm::call_llm(provider, system_prompt(), &branch_state, &error_msg)
+            };
+
+            match result {
+                Ok(LlmResult { answer, transaction_yaml, usage, .. }) => {
+                    if let Some(u) = &usage {
+                        self.total_tokens += u.total_tokens;
+                    }
+                    if !answer.is_empty() {
+                        self.messages.push(Message {
+                            role: Role::Agent,
+                            text: answer,
+                        });
+                    }
+                    if transaction_yaml.is_empty() {
+                        break;
+                    }
+                    let dispatch_yaml = inject_commands(&transaction_yaml, compiled_commands);
+                    match self.store.dispatch(&dispatch_yaml, &self.branch) {
+                        Ok(_) => break,
+                        Err(e) => last_error = e,
+                    }
+                }
+                Err(e) => {
+                    self.messages.push(Message {
+                        role: Role::System,
+                        text: format!("LLM error on retry: {e}"),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if !last_error.is_empty() && last_error != first_error {
+            self.messages.push(Message {
+                role: Role::System,
+                text: format!("tx failed after {MAX_TX_RETRIES} retries: {last_error}"),
+            });
         }
     }
 

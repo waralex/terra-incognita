@@ -25,14 +25,9 @@
 //!       notes: { type: json }
 //!       resolution: { type: json }
 //!     lifecycle:
-//!       states: [open, closed]
 //!       initial: open
-//!       terminal: [closed]
-//!       transitions:
-//!         open: [closed]
+//!       visible: [open]
 //! ```
-
-use std::collections::BTreeSet;
 
 use indexmap::IndexMap;
 use std::path::Path;
@@ -88,23 +83,20 @@ pub struct ManagedTypeDef {
     pub lifecycle: Option<LifecycleDef>,
 }
 
-/// State machine definition for a managed type.
+/// Lifecycle definition for a managed type.
+///
+/// States are free-form strings — any value is valid.
+/// The lifecycle defines which state is assigned on creation
+/// and which states are included in default listings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LifecycleDef {
-    /// All possible states.
-    pub states: Vec<String>,
-
-    /// Initial state assigned on creation.
+    /// State assigned on creation.
     pub initial: String,
 
-    /// Terminal states — excluded from default listings (not loaded into agent context).
+    /// States included in default listings (loaded into agent context).
+    /// If empty, all states are visible by default.
     #[serde(default)]
-    pub terminal: Vec<String>,
-
-    /// Allowed transitions: state → [reachable states].
-    /// A state not present as a key has no outgoing transitions (sink).
-    #[serde(default)]
-    pub transitions: IndexMap<String, Vec<String>>,
+    pub visible: Vec<String>,
 }
 
 /// Errors from config parsing and validation.
@@ -146,7 +138,6 @@ impl DataSchema {
     /// Validate internal consistency after deserialization.
     fn validate(&self) -> Result<(), ConfigError> {
         for (name, def) in &self.managed_types {
-            // "state" is reserved when lifecycle is present.
             if def.lifecycle.is_some() && def.fields.contains_key("state") {
                 return Err(ConfigError::ReservedField {
                     type_name: name.clone(),
@@ -155,57 +146,19 @@ impl DataSchema {
             }
 
             if let Some(lc) = &def.lifecycle {
-                let known: BTreeSet<&str> = lc.states.iter().map(|s| s.as_str()).collect();
-
-                if known.is_empty() {
+                if lc.initial.is_empty() {
                     return Err(ConfigError::Lifecycle {
                         type_name: name.clone(),
-                        message: "states list is empty".into(),
+                        message: "initial state is empty".into(),
                     });
                 }
 
-                if !known.contains(lc.initial.as_str()) {
-                    return Err(ConfigError::Lifecycle {
-                        type_name: name.clone(),
-                        message: format!(
-                            "initial state \"{}\" is not in states list",
-                            lc.initial
-                        ),
-                    });
-                }
-
-                for t in &lc.terminal {
-                    if !known.contains(t.as_str()) {
+                for t in &lc.visible {
+                    if t.is_empty() {
                         return Err(ConfigError::Lifecycle {
                             type_name: name.clone(),
-                            message: format!(
-                                "terminal state \"{}\" is not in states list",
-                                t
-                            ),
+                            message: "visible state is empty".into(),
                         });
-                    }
-                }
-
-                for (from, targets) in &lc.transitions {
-                    if !known.contains(from.as_str()) {
-                        return Err(ConfigError::Lifecycle {
-                            type_name: name.clone(),
-                            message: format!(
-                                "transition source \"{}\" is not in states list",
-                                from
-                            ),
-                        });
-                    }
-                    for to in targets {
-                        if !known.contains(to.as_str()) {
-                            return Err(ConfigError::Lifecycle {
-                                type_name: name.clone(),
-                                message: format!(
-                                    "transition target \"{}\" (from \"{}\") is not in states list",
-                                    to, from
-                                ),
-                            });
-                        }
                     }
                 }
             }
@@ -239,11 +192,8 @@ managed_types:
       notes: { type: json }
       resolution: { type: json }
     lifecycle:
-      states: [open, closed]
       initial: open
-      terminal: [closed]
-      transitions:
-        open: [closed]
+      visible: [open]
 "#;
         let config = DataSchema::from_yaml(yaml).unwrap();
 
@@ -258,11 +208,8 @@ managed_types:
         assert!(!task.fields["notes"].required);
 
         let lc = task.lifecycle.as_ref().unwrap();
-        assert_eq!(lc.states, vec!["open", "closed"]);
         assert_eq!(lc.initial, "open");
-        assert_eq!(lc.terminal, vec!["closed"]);
-        assert_eq!(lc.transitions["open"], vec!["closed"]);
-        assert!(!lc.transitions.contains_key("closed"));
+        assert_eq!(lc.visible, vec!["open"]);
     }
 
     #[test]
@@ -289,108 +236,50 @@ managed_types:
     }
 
     #[test]
-    fn multi_state_lifecycle() {
+    fn multi_visible_lifecycle() {
         let yaml = r#"
 managed_types:
   review:
     fields:
       summary: { type: text, required: true }
     lifecycle:
-      states: [draft, in_review, approved, rejected]
       initial: draft
-      terminal: [approved, rejected]
-      transitions:
-        draft: [in_review]
-        in_review: [approved, rejected, draft]
+      visible: [draft, in_review]
 "#;
         let config = DataSchema::from_yaml(yaml).unwrap();
         let lc = config.managed_types["review"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.initial, "draft");
-        assert_eq!(lc.terminal, vec!["approved", "rejected"]);
-        assert_eq!(lc.transitions["in_review"], vec!["approved", "rejected", "draft"]);
+        assert_eq!(lc.visible, vec!["draft", "in_review"]);
     }
 
     #[test]
-    fn initial_state_not_in_states() {
+    fn lifecycle_no_visible_filter() {
+        let yaml = r#"
+managed_types:
+  process:
+    fields:
+      data: { type: json }
+    lifecycle:
+      initial: new
+"#;
+        let config = DataSchema::from_yaml(yaml).unwrap();
+        let lc = config.managed_types["process"].lifecycle.as_ref().unwrap();
+        assert_eq!(lc.initial, "new");
+        assert!(lc.visible.is_empty());
+    }
+
+    #[test]
+    fn empty_initial_state() {
         let yaml = r#"
 managed_types:
   bad:
     fields:
       x: { type: text }
     lifecycle:
-      states: [a, b]
-      initial: c
-      transitions: {}
+      initial: ""
 "#;
         let err = DataSchema::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("initial state \"c\" is not in states list"));
-    }
-
-    #[test]
-    fn terminal_state_not_in_states() {
-        let yaml = r#"
-managed_types:
-  bad:
-    fields:
-      x: { type: text }
-    lifecycle:
-      states: [a, b]
-      initial: a
-      terminal: [z]
-      transitions: {}
-"#;
-        let err = DataSchema::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("terminal state \"z\" is not in states list"));
-    }
-
-    #[test]
-    fn transition_source_not_in_states() {
-        let yaml = r#"
-managed_types:
-  bad:
-    fields:
-      x: { type: text }
-    lifecycle:
-      states: [a, b]
-      initial: a
-      transitions:
-        ghost: [b]
-"#;
-        let err = DataSchema::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("transition source \"ghost\" is not in states list"));
-    }
-
-    #[test]
-    fn transition_target_not_in_states() {
-        let yaml = r#"
-managed_types:
-  bad:
-    fields:
-      x: { type: text }
-    lifecycle:
-      states: [a, b]
-      initial: a
-      transitions:
-        a: [nowhere]
-"#;
-        let err = DataSchema::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("transition target \"nowhere\""));
-    }
-
-    #[test]
-    fn empty_states_list() {
-        let yaml = r#"
-managed_types:
-  bad:
-    fields:
-      x: { type: text }
-    lifecycle:
-      states: []
-      initial: a
-      transitions: {}
-"#;
-        let err = DataSchema::from_yaml(yaml).unwrap_err();
-        assert!(err.to_string().contains("states list is empty"));
+        assert!(err.to_string().contains("initial state is empty"));
     }
 
     #[test]
@@ -401,7 +290,6 @@ managed_types:
     fields:
       state: { type: text }
     lifecycle:
-      states: [open]
       initial: open
 "#;
         let err = DataSchema::from_yaml(yaml).unwrap_err();

@@ -39,10 +39,10 @@ Automatic schema creation on insert is forbidden. It leads to chaos.
 
 Three concerns, kept separate:
 
-**Schema registry** — what entity types exist, what properties are allowed for each type,
-what value types those properties carry (Set, Range, Struct). This is the contract.
-Strict. Explicit. Branch-local — each branch can extend the schema independently,
-inheriting from its parent at the time of branching.
+**Schema registry** — what entity types exist, what properties are allowed for each type.
+This is the contract. Strict. Explicit. Branch-local — each branch can extend the schema
+independently, inheriting from its parent at the time of branching. (v0.1 had value types
+Set/Range/Struct per property — removed in v0.2, all values are JSON.)
 
 **Sources** — the raw origin of knowledge. Immutable after insert. A source said what it
 said. If extraction was wrong, re-extract from the same source and replace the assertions.
@@ -55,25 +55,12 @@ reasoning and a timestamp. The working layer. Queries go here.
 and emerge from relations — there is no separate hierarchy structure. An entity can belong
 to multiple hierarchies simultaneously.
 
-## Assertion Kinds
+## Assertion Kinds (v0.1 — removed in v0.2)
 
-Every assertion has a kind: **hypothesis** or **fact**.
+v0.1 had fact/hypothesis distinction. Removed in v0.2 — see "v0.2 Rewrite" section.
 
-**Hypothesis** — a tentative claim. Multiple hypotheses can coexist for the same
-property. They represent the space of possibilities under consideration.
-
-**Fact** — a convergence point. "Based on available evidence, the position was X."
-A fact does not delete hypotheses — it marks a decision amid uncertainty.
-The hypotheses remain as the reasoning trail.
-
-**Deliberation cycle.** The workflow is: hypotheses → fact → new hypotheses →
-new fact. Each cycle narrows understanding while preserving the full history
-of reasoning.
-
-**Default query behavior.** A query for a property returns the latest fact in
-the requested time interval, plus all hypotheses that follow it. This gives the caller
-the current best understanding together with open questions. If no fact exists,
-all hypotheses are returned.
+v0.2 has only assertions. Uncertainty is expressed in assertion values and reasoning,
+not in storage-level classification. One assertion per property per entity per transaction.
 
 ## Transactions
 
@@ -199,7 +186,8 @@ This overrides any global instruction to skip docstrings.
 ## Code Organization
 
 One entity — one file. Deep directory structure when needed. No god-files,
-no "utils.rs", no bags of loosely related things.
+no "utils.rs", no bags of loosely related things. `mod.rs` files contain only
+`mod` declarations and re-exports — no logic, no types, no functions.
 
 ## Stack
 
@@ -210,7 +198,8 @@ no "utils.rs", no bags of loosely related things.
 
 ## Crate Structure
 
-- **terra-core** — domain logic: schema registry, assertion store, command execution
+- **terra-core** — domain logic v0.1 (legacy, being replaced by terra-core-v0_2)
+- **terra-core-v0_2** — domain logic v0.2 (active development, see "v0.2 Rewrite" below)
 - **terra-query** — transport-agnostic query dispatcher (bytes in → bytes out)
 - **terra-server** — HTTP wrapper around terra-query (`POST /query`, YAML/JSON)
 - **terra-cli** — minimal stdin-to-HTTP client
@@ -249,3 +238,176 @@ Commands are sent as YAML or JSON with a `command` field:
 **terra_incognita** — named for what it stores: the unknown, the uncertain, the
 unresolved. On old maps, terra incognita marked places where knowledge ran out.
 This database makes that uncertainty first-class.
+
+## v0.2 Rewrite (terra-core-v0_2)
+
+### Why
+
+v0.1 (terra-core) works but has hardcoded structures that prevent terra from being
+a general-purpose epistemic store. Anyone building an agent on top of terra must either
+accept our naming (reasoning, question, answer, tasks) or fork the codebase. The goal
+of v0.2 is to make terra configurable for different agent developers without forking.
+
+### What changes from v0.1
+
+**1. No more value types (Set, Range, Struct) — only JSON.**
+
+v0.1 has `ValueType` enum with Set, Range, Struct. Each gets separate column families
+(6 total: fact_set, fact_range, fact_struct, hyp_set, hyp_range, hyp_struct). In practice
+all three store JSON bytes with identical key formats. No type-specific queries, no
+indexing, no algebra. The only effect is complexity: PropertyValue enum, type matching
+in writer/reader, parse_property_value guessing type from JSON shape.
+
+v0.2: property values are `serde_json::Value`. One column family for assertions.
+Schema properties have a slug and a description, no value type. Validation of value
+shape is the caller's responsibility (or described in agent config, not in storage).
+
+**2. No more fact/hypothesis distinction — only assertions.**
+
+v0.1 separates facts and hypotheses into different column families with a special query
+model: "latest fact + all hypotheses after it". The deliberation cycle
+(hypotheses → fact → new hypotheses) is a complex concept that the LLM agent must
+understand and apply correctly. In practice, deciding "is this a fact or a hypothesis?"
+is itself an uncertain judgment — ironic for a system designed to model uncertainty.
+
+v0.2: only assertions. Each assertion is a claim with a value and reasoning. Uncertainty
+is expressed in the data itself (confidence fields, alternative values, hedging language
+in reasoning). The agent writes what it knows and explains its confidence in reasoning.
+One assertion per property per transaction (same constraint as v0.1 facts).
+
+This eliminates: 2 separate writers, fact/hypothesis CF split, AssertionKind enum,
+validate_no_conflicting_facts (becomes validate_no_conflicting_assertions),
+the "latest fact + hypotheses after it" query model, and a significant chunk of the
+system prompt explaining when to use facts vs hypotheses.
+
+**3. Transaction metadata is dynamic, not hardcoded.**
+
+v0.1 TransactionInput has fixed fields: reasoning (Value), question (Option<String>),
+answer (Option<String>), commands (Vec<Value>). These are serialized into the transaction
+record in RocksDB. An agent developer who wants "notes" instead of "reasoning" or
+wants to add "confidence" must change Rust code.
+
+v0.2: transaction metadata is `Map<String, Value>`. What fields exist, which are required,
+and their types — defined in a project config file (YAML). The core validates metadata
+against the config at write time. Default config ships with reasoning/question/answer
+for backward compatibility, but the agent developer can replace it entirely.
+
+**4. Tasks removed from core — replaced by managed types.**
+
+v0.1 has a dedicated task subsystem: TaskStore, TaskIo, TaskRecord, TaskStatus enum,
+2 column families (task_main, task_slug), visibility integration with ItemKind::Task,
+and 3 transaction operations (tasks, update_tasks, close_tasks). This is ~500 lines
+of code that duplicates entity storage patterns (versioned records, slug index,
+branch-aware ancestry walk) with a hardcoded schema (goal, reasoning, context, kind,
+notes, resolution, status: open/closed).
+
+v0.2: managed types defined in project config. A managed type has a name, fields
+(required/optional with types), and an optional lifecycle (states + transitions).
+Tasks become one possible managed type in a default config:
+
+```yaml
+managed_types:
+  task:
+    fields:
+      goal: { type: json, required: true }
+      notes: { type: json }
+      resolution: { type: json }
+    lifecycle:
+      states: [open, closed]
+      initial: open
+      transitions:
+        open: [closed]
+```
+
+Storage: single pair of column families (managed_main, managed_slug) shared by all
+managed types, with a type name hash prefix in the key:
+
+```
+managed_main: type_hash(16) | branch_id(16) | item_id(16) | tx_id(16) = 64 bytes
+managed_slug: type_hash(16) | branch_id(16) | slug_bytes
+```
+
+No dynamic CF creation. New managed type in config = immediately writable.
+
+**5. Simplified TransactionInput.**
+
+v0.1:
+```rust
+pub struct TransactionInput {
+    pub reasoning: serde_json::Value,
+    pub question: Option<String>,
+    pub answer: Option<String>,
+    pub commands: Vec<serde_json::Value>,
+    pub entity_types: Vec<CreateEntityType>,
+    pub add_properties: Vec<AddProperties>,
+    pub hide: HideUnhideInput,
+    pub unhide: HideUnhideInput,
+    pub introduce: Vec<IntroduceItem>,
+    pub asserts: Vec<AssertItem>,
+    pub tasks: Vec<TaskCreateItem>,
+    pub update_tasks: Vec<TaskUpdateItem>,
+    pub close_tasks: Vec<TaskCloseItem>,
+}
+```
+
+v0.2:
+```rust
+pub struct TransactionInput {
+    /// Dynamic metadata validated against project config.
+    pub meta: Map<String, Value>,
+    /// Schema operations.
+    pub entity_types: Vec<CreateEntityType>,
+    pub add_properties: Vec<AddProperties>,
+    /// Visibility.
+    pub hide: HideUnhideInput,
+    pub unhide: HideUnhideInput,
+    /// Data operations.
+    pub introduce: Vec<IntroduceItem>,
+    pub asserts: Vec<AssertItem>,
+    /// Managed type operations (tasks, etc. — defined in config).
+    pub managed: Map<String, Vec<ManagedOperation>>,
+}
+```
+
+### What stays the same from v0.1
+
+- RocksDB as storage engine
+- `storage_key!` macro for fixed-size binary keys
+- Branch system: ancestry chain, branch_point_tx, max depth 8, slug uniqueness
+- Entity storage: entity_main, entity_slug CFs, versioned records
+- Schema registry: entity types, properties, branch-aware with inheritance
+- Visibility: hide/unhide per branch, ItemKind (but without Task variant)
+- Transactions: atomic writes via WriteBatch, UUID v7 tx_id
+- Append-only invariant, open-world semantics
+- Processing order: schema ops → visibility → introduce → asserts
+
+### How to work on v0.2
+
+- **Reference**: terra-core (v0.1) is the reference implementation. Read it, port what fits.
+- **Do not modify terra-core.** It stays as-is until v0.2 is ready to replace it.
+- **Port order**: storage_key macro → store (open RocksDB) → schema registry →
+  entities → visibility → assertions → managed types → transaction execution.
+- **Tests**: port and adapt tests from terra-core. Each module should have tests before
+  moving to the next.
+
+### Column families in v0.2
+
+| CF | Purpose | Key format |
+|----|---------|------------|
+| transactions | Transaction metadata | branch(16) \| tx(16) |
+| entity_main | Entity records | branch(16) \| entity(16) \| tx(16) |
+| entity_slug | Entity slug → UUID | branch(16) \| slug |
+| branch_main | Branch records | branch(16) \| tx(16) |
+| branch_slug | Branch slug → UUID | slug |
+| schema_types | Entity types | branch(16) \| type(16) |
+| schema_type_slug | Type slug → UUID | branch(16) \| slug |
+| schema_props | Properties | branch(16) \| prop(16) |
+| schema_prop_slug | Property slug → UUID | branch(16) \| slug |
+| schema_attachments | Type-property links | branch(16) \| type(16) \| prop(16) |
+| visibility | Hide/unhide state | branch(16) \| tx(16) \| kind(1) \| id(16) |
+| assertions | All assertions (was 6 CFs) | branch(16) \| prop(16) \| tx(16) \| entry(16) \| entity(16) |
+| assertion_log | Assertion log entries | entry(16) |
+| managed_main | Managed type records | type_hash(16) \| branch(16) \| item(16) \| tx(16) |
+| managed_slug | Managed type slugs | type_hash(16) \| branch(16) \| slug |
+
+15 CFs (was 21 in v0.1: 19 original + 2 task CFs).

@@ -4,3 +4,4 @@
 //! See CLAUDE.md section "v0.2 Rewrite" for design rationale.
 
 pub mod config;
+pub mod io;

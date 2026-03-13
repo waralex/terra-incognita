@@ -188,6 +188,8 @@ This overrides any global instruction to skip docstrings.
 One entity — one file. Deep directory structure when needed. No god-files,
 no "utils.rs", no bags of loosely related things. `mod.rs` files contain only
 `mod` declarations and re-exports — no logic, no types, no functions.
+All `impl` blocks for a type live in the file where the type is defined.
+Do not spread `impl` across multiple files unless implementing a foreign trait.
 
 ## Stack
 

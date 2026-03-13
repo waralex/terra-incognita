@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use rocksdb::DB;
 
-use super::terra_db::DbError;
+use crate::io::db_item::DbItem;
+use crate::io::terra_db::DbError;
 
 /// Atomic batch of writes bound to a specific database.
 /// Accumulates operations and commits them all-or-nothing.
 ///
-/// Created via [`super::TerraDb::batch`]. Consumes itself on commit
+/// Created via [`TerraDb::batch`]. Consumes itself on commit
 /// to prevent reuse after writing.
 pub struct WriteBatch {
     db: Arc<DB>,
@@ -24,6 +25,16 @@ impl WriteBatch {
         }
     }
 
+    /// Add an item to the batch.
+    pub fn put<T: DbItem>(&mut self, item: &T) -> Result<(), DbError> {
+        let cf = self.db.cf_handle(T::cf())
+            .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
+        let key = item.encode_key();
+        let value = item.encode_value()?;
+        self.inner.put_cf(cf, &key, &value);
+        Ok(())
+    }
+
     /// Commit all accumulated operations atomically. Consumes the batch.
     pub fn commit(self) -> Result<(), DbError> {
         self.db
@@ -34,12 +45,12 @@ impl WriteBatch {
 
 #[cfg(test)]
 mod tests {
-    use crate::io::{AccessMode, TerraDb};
+    use crate::io::TerraDb;
 
     #[test]
     fn commit_empty_batch() {
         let dir = tempfile::tempdir().unwrap();
-        let db = TerraDb::open(dir.path(), AccessMode::ReadWrite).unwrap();
+        let db = TerraDb::builder(dir.path()).open().unwrap();
         db.batch().commit().unwrap();
     }
 }

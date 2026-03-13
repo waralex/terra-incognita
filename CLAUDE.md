@@ -183,6 +183,11 @@ Use `Arc<T>` (or `Arc<Mutex<T>>` / `Arc<RwLock<T>>` when interior mutability is 
 Docstrings (`///`) on all public items (structs, enums, functions, methods, traits).
 This overrides any global instruction to skip docstrings.
 
+## Commit Messages
+
+Short and informative — describe the intent, not the diff. Do not mention changes
+to CLAUDE.md, README, or other meta-files in commit messages.
+
 ## Code Organization
 
 One entity — one file. Deep directory structure when needed. No god-files,
@@ -190,6 +195,7 @@ no "utils.rs", no bags of loosely related things. `mod.rs` files contain only
 `mod` declarations and re-exports — no logic, no types, no functions.
 All `impl` blocks for a type live in the file where the type is defined.
 Do not spread `impl` across multiple files unless implementing a foreign trait.
+Use explicit `use` imports, not `super::` paths.
 
 ## Stack
 

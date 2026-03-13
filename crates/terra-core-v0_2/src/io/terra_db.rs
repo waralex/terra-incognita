@@ -2,31 +2,25 @@
 //!
 //! All access to the underlying database goes through [`TerraDb`].
 //! Nothing outside this module should know about RocksDB.
+//!
+//! # Example
+//!
+//! ```ignore
+//! let db = TerraDb::builder(path)
+//!     .with::<EntityRecord>()
+//!     .with::<BranchRecord>()
+//!     .read_only()
+//!     .open()?;
+//! ```
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 
-/// Column family names — TerraDb level (generic storage primitives).
-pub(crate) const CF_SLUGS: &str = "slugs";
-pub(crate) const CF_VISIBILITY: &str = "visibility";
-
-// Domain-level CFs — will be opened when domain layer is built.
-// pub(crate) const CF_TRANSACTIONS: &str = "transactions";
-// pub(crate) const CF_ENTITY_MAIN: &str = "entity_main";
-// pub(crate) const CF_BRANCH_MAIN: &str = "branch_main";
-// pub(crate) const CF_SCHEMA_TYPES: &str = "schema_types";
-// pub(crate) const CF_SCHEMA_PROPS: &str = "schema_props";
-// pub(crate) const CF_SCHEMA_ATTACHMENTS: &str = "schema_attachments";
-// pub(crate) const CF_ASSERTIONS: &str = "assertions";
-// pub(crate) const CF_ASSERTION_LOG: &str = "assertion_log";
-// pub(crate) const CF_MANAGED_MAIN: &str = "managed_main";
-
-const ALL_CFS: &[&str] = &[
-    CF_SLUGS,
-    CF_VISIBILITY,
-];
+use crate::io::db_item::DbItem;
+use crate::io::write_batch::WriteBatch;
 
 /// Access mode for the database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +44,33 @@ impl From<rocksdb::Error> for DbError {
     }
 }
 
+/// Builder for [`TerraDb`]. Collects column families from registered
+/// types and opens the database.
+pub struct TerraDbBuilder {
+    path: PathBuf,
+    mode: AccessMode,
+    cf_names: BTreeSet<String>,
+}
+
+impl TerraDbBuilder {
+    /// Register a [`DbItem`] type — its column family will be created on open.
+    pub fn with<T: DbItem>(mut self) -> Self {
+        self.cf_names.insert(T::cf().to_string());
+        self
+    }
+
+    /// Set read-only mode. Default is read-write.
+    pub fn read_only(mut self) -> Self {
+        self.mode = AccessMode::ReadOnly;
+        self
+    }
+
+    /// Open the database with all registered column families.
+    pub fn open(self) -> Result<TerraDb, DbError> {
+        TerraDb::open_internal(&self.path, self.mode, &self.cf_names)
+    }
+}
+
 /// Single point of access to the underlying storage.
 ///
 /// Wraps a RocksDB instance and isolates the rest of the codebase
@@ -61,34 +82,13 @@ pub struct TerraDb {
 }
 
 impl TerraDb {
-    /// Open the database at the given path.
-    pub fn open(path: &Path, mode: AccessMode) -> Result<Self, DbError> {
-        let mut opts = Options::default();
-        opts.create_if_missing(mode == AccessMode::ReadWrite);
-        opts.create_missing_column_families(mode == AccessMode::ReadWrite);
-        opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
-
-        let cf_descriptors: Vec<ColumnFamilyDescriptor> = ALL_CFS
-            .iter()
-            .map(|name| {
-                let mut cf_opts = Options::default();
-                cf_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
-                ColumnFamilyDescriptor::new(*name, cf_opts)
-            })
-            .collect();
-
-        let db = match mode {
-            AccessMode::ReadWrite => DB::open_cf_descriptors(&opts, path, cf_descriptors)?,
-            AccessMode::ReadOnly => {
-                let cf_names: Vec<&str> = ALL_CFS.to_vec();
-                DB::open_cf_for_read_only(&opts, path, &cf_names, false)?
-            }
-        };
-
-        Ok(Self {
-            db: Arc::new(db),
-            mode,
-        })
+    /// Create a builder for opening a database at the given path.
+    pub fn builder(path: &Path) -> TerraDbBuilder {
+        TerraDbBuilder {
+            path: path.to_path_buf(),
+            mode: AccessMode::ReadWrite,
+            cf_names: BTreeSet::new(),
+        }
     }
 
     /// Access mode this database was opened with.
@@ -96,9 +96,48 @@ impl TerraDb {
         self.mode
     }
 
+    /// Get an item by its key.
+    pub fn get<T: DbItem>(&self, key: &[u8]) -> Result<Option<T>, DbError> {
+        let cf = self.db.cf_handle(T::cf())
+            .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
+        match self.db.get_cf(cf, key) {
+            Ok(Some(value)) => Ok(Some(T::decode(key, &value)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(DbError::Storage(e.to_string())),
+        }
+    }
+
     /// Create a new write batch bound to this database.
-    pub fn batch(&self) -> super::WriteBatch {
-        super::WriteBatch::new(Arc::clone(&self.db))
+    pub fn batch(&self) -> WriteBatch {
+        WriteBatch::new(Arc::clone(&self.db))
+    }
+
+    fn open_internal(path: &Path, mode: AccessMode, cf_names: &BTreeSet<String>) -> Result<Self, DbError> {
+        let mut opts = Options::default();
+        opts.create_if_missing(mode == AccessMode::ReadWrite);
+        opts.create_missing_column_families(mode == AccessMode::ReadWrite);
+        opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
+
+        let cf_descriptors: Vec<ColumnFamilyDescriptor> = cf_names
+            .iter()
+            .map(|name| {
+                let mut cf_opts = Options::default();
+                cf_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(16));
+                ColumnFamilyDescriptor::new(name.as_str(), cf_opts)
+            })
+            .collect();
+
+        let names: Vec<&str> = cf_names.iter().map(|s| s.as_str()).collect();
+
+        let db = match mode {
+            AccessMode::ReadWrite => DB::open_cf_descriptors(&opts, path, cf_descriptors)?,
+            AccessMode::ReadOnly => DB::open_cf_for_read_only(&opts, path, &names, false)?,
+        };
+
+        Ok(Self {
+            db: Arc::new(db),
+            mode,
+        })
     }
 }
 
@@ -106,31 +145,56 @@ impl TerraDb {
 mod tests {
     use super::*;
 
+    struct TestItem;
+
+    impl DbItem for TestItem {
+        fn cf() -> &'static str { "test_cf" }
+        fn encode_key(&self) -> Vec<u8> { vec![] }
+        fn encode_value(&self) -> Result<Vec<u8>, DbError> { Ok(vec![]) }
+        fn decode(_key: &[u8], _value: &[u8]) -> Result<Self, DbError> { Ok(TestItem) }
+    }
+
     #[test]
-    fn open_read_write() {
+    fn builder_read_write() {
         let dir = tempfile::tempdir().unwrap();
-        let db = TerraDb::open(dir.path(), AccessMode::ReadWrite).unwrap();
+        let db = TerraDb::builder(dir.path())
+            .with::<TestItem>()
+            .open()
+            .unwrap();
         assert_eq!(db.mode(), AccessMode::ReadWrite);
     }
 
     #[test]
-    fn open_read_only_after_init() {
+    fn builder_read_only_after_init() {
         let dir = tempfile::tempdir().unwrap();
-
-        // First open creates the DB and CFs.
         {
-            let _db = TerraDb::open(dir.path(), AccessMode::ReadWrite).unwrap();
+            let _db = TerraDb::builder(dir.path())
+                .with::<TestItem>()
+                .open()
+                .unwrap();
         }
-
-        // Second open is read-only.
-        let db = TerraDb::open(dir.path(), AccessMode::ReadOnly).unwrap();
+        let db = TerraDb::builder(dir.path())
+            .with::<TestItem>()
+            .read_only()
+            .open()
+            .unwrap();
         assert_eq!(db.mode(), AccessMode::ReadOnly);
     }
 
     #[test]
-    fn open_read_only_without_init_fails() {
+    fn builder_read_only_without_init_fails() {
         let dir = tempfile::tempdir().unwrap();
-        let err = TerraDb::open(dir.path(), AccessMode::ReadOnly);
+        let err = TerraDb::builder(dir.path())
+            .with::<TestItem>()
+            .read_only()
+            .open();
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn builder_no_cfs() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = TerraDb::builder(dir.path()).open().unwrap();
+        assert_eq!(db.mode(), AccessMode::ReadWrite);
     }
 }

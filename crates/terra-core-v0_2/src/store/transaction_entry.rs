@@ -13,20 +13,13 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_TRANSACTIONS: &str = "transactions";
 
 storage_key! {
-    pub(crate) struct TransactionKeyRaw(32) {
+    pub struct TransactionKey(32) {
         branch_id: Uuid,
         tx_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
     }
-}
-
-/// Transaction key.
-#[derive(Debug, Clone)]
-pub struct TransactionKey {
-    pub branch_id: Uuid,
-    pub tx_id: Uuid,
 }
 
 /// Transaction value — dynamic metadata fields.
@@ -49,11 +42,7 @@ impl DbItem for TransactionEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = TransactionKeyRaw {
-            branch_id: self.key.branch_id,
-            tx_id: self.key.tx_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -61,17 +50,11 @@ impl DbItem for TransactionEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = TransactionKeyRaw::decode(key)
+        let k = TransactionKey::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let val: TransactionValue =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: TransactionKey {
-                branch_id: raw.branch_id,
-                tx_id: raw.tx_id,
-            },
-            value: val,
-        })
+        Ok(Self { key: k, value: val })
     }
 }
 

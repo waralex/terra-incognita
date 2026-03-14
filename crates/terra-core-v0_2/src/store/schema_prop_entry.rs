@@ -13,20 +13,13 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_SCHEMA_PROPS: &str = "schema_props";
 
 storage_key! {
-    pub(crate) struct SchemaPropKeyRaw(32) {
+    pub struct SchemaPropKey(32) {
         branch_id: Uuid,
         prop_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
     }
-}
-
-/// Schema property key.
-#[derive(Debug, Clone)]
-pub struct SchemaPropKey {
-    pub branch_id: Uuid,
-    pub prop_id: Uuid,
 }
 
 /// Schema property value.
@@ -50,11 +43,7 @@ impl DbItem for SchemaPropEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = SchemaPropKeyRaw {
-            branch_id: self.key.branch_id,
-            prop_id: self.key.prop_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -62,17 +51,11 @@ impl DbItem for SchemaPropEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = SchemaPropKeyRaw::decode(key)
+        let k = SchemaPropKey::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let val: SchemaPropValue =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: SchemaPropKey {
-                branch_id: raw.branch_id,
-                prop_id: raw.prop_id,
-            },
-            value: val,
-        })
+        Ok(Self { key: k, value: val })
     }
 }
 

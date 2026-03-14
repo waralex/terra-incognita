@@ -12,20 +12,13 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_SCHEMA_TYPES: &str = "schema_types";
 
 storage_key! {
-    pub(crate) struct SchemaTypeKeyRaw(32) {
+    pub struct SchemaTypeKey(32) {
         branch_id: Uuid,
         type_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
     }
-}
-
-/// Schema type key.
-#[derive(Debug, Clone)]
-pub struct SchemaTypeKey {
-    pub branch_id: Uuid,
-    pub type_id: Uuid,
 }
 
 /// Schema type value.
@@ -49,11 +42,7 @@ impl DbItem for SchemaTypeEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = SchemaTypeKeyRaw {
-            branch_id: self.key.branch_id,
-            type_id: self.key.type_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -61,17 +50,11 @@ impl DbItem for SchemaTypeEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = SchemaTypeKeyRaw::decode(key)
+        let k = SchemaTypeKey::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let val: SchemaTypeValue =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: SchemaTypeKey {
-                branch_id: raw.branch_id,
-                type_id: raw.type_id,
-            },
-            value: val,
-        })
+        Ok(Self { key: k, value: val })
     }
 }
 

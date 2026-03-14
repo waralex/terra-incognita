@@ -11,7 +11,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_SCHEMA_ATTACHMENTS: &str = "schema_attachments";
 
 storage_key! {
-    pub(crate) struct SchemaAttachmentKeyRaw(48) {
+    pub struct SchemaAttachmentKey(48) {
         branch_id: Uuid,
         type_id: Uuid,
         prop_id: Uuid,
@@ -20,14 +20,6 @@ storage_key! {
         prefix_branch(branch_id: Uuid) -> 16,
         prefix_branch_type(branch_id: Uuid, type_id: Uuid) -> 32,
     }
-}
-
-/// Schema attachment key.
-#[derive(Debug, Clone)]
-pub struct SchemaAttachmentKey {
-    pub branch_id: Uuid,
-    pub type_id: Uuid,
-    pub prop_id: Uuid,
 }
 
 /// Schema attachment value.
@@ -49,12 +41,7 @@ impl DbItem for SchemaAttachmentEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = SchemaAttachmentKeyRaw {
-            branch_id: self.key.branch_id,
-            type_id: self.key.type_id,
-            prop_id: self.key.prop_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -62,16 +49,12 @@ impl DbItem for SchemaAttachmentEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = SchemaAttachmentKeyRaw::decode(key)
+        let k = SchemaAttachmentKey::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let tx_id = Uuid::from_slice(value)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         Ok(Self {
-            key: SchemaAttachmentKey {
-                branch_id: raw.branch_id,
-                type_id: raw.type_id,
-                prop_id: raw.prop_id,
-            },
+            key: k,
             value: SchemaAttachmentValue { tx_id },
         })
     }

@@ -15,7 +15,7 @@ use crate::io::{DbError, DbItem};
 const CF_MANAGED_MAIN: &str = "managed_main";
 
 storage_key! {
-    pub(crate) struct ManagedKeyRaw(64) {
+    pub struct ManagedKey(64) {
         type_hash: Uuid,
         branch_id: Uuid,
         item_id: Uuid,
@@ -26,15 +26,6 @@ storage_key! {
         prefix_type_branch(type_hash: Uuid, branch_id: Uuid) -> 32,
         prefix_type_branch_item(type_hash: Uuid, branch_id: Uuid, item_id: Uuid) -> 48,
     }
-}
-
-/// Managed type key.
-#[derive(Debug, Clone)]
-pub struct ManagedKey {
-    pub type_hash: Uuid,
-    pub branch_id: Uuid,
-    pub item_id: Uuid,
-    pub tx_id: Uuid,
 }
 
 /// Managed type value.
@@ -59,13 +50,7 @@ impl DbItem for ManagedEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = ManagedKeyRaw {
-            type_hash: self.key.type_hash,
-            branch_id: self.key.branch_id,
-            item_id: self.key.item_id,
-            tx_id: self.key.tx_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -73,18 +58,10 @@ impl DbItem for ManagedEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = ManagedKeyRaw::decode(key).map_err(|e| DbError::Storage(e.to_string()))?;
+        let k = ManagedKey::decode(key).map_err(|e| DbError::Storage(e.to_string()))?;
         let val: ManagedValue =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: ManagedKey {
-                type_hash: raw.type_hash,
-                branch_id: raw.branch_id,
-                item_id: raw.item_id,
-                tx_id: raw.tx_id,
-            },
-            value: val,
-        })
+        Ok(Self { key: k, value: val })
     }
 }
 
@@ -122,10 +99,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db
-            .get::<ManagedEntry>(&entry.encode_key())
-            .unwrap()
-            .unwrap();
+        let found = db.get::<ManagedEntry>(&entry.encode_key()).unwrap().unwrap();
         assert_eq!(found.value.slug, "explore-orders");
         assert_eq!(found.value.state, Some("open".into()));
         assert_eq!(found.value.fields["goal"], "explore orders table");
@@ -157,10 +131,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db
-            .get::<ManagedEntry>(&entry.encode_key())
-            .unwrap()
-            .unwrap();
+        let found = db.get::<ManagedEntry>(&entry.encode_key()).unwrap().unwrap();
         assert_eq!(found.value.state, None);
     }
 }

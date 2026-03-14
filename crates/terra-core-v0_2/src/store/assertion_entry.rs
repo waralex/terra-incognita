@@ -13,7 +13,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_ASSERTIONS: &str = "assertions";
 
 storage_key! {
-    pub(crate) struct AssertionKeyRaw(80) {
+    pub struct AssertionKey(80) {
         branch_id: Uuid,
         prop_id: Uuid,
         tx_id: Uuid,
@@ -24,16 +24,6 @@ storage_key! {
         prefix_branch(branch_id: Uuid) -> 16,
         prefix_branch_prop(branch_id: Uuid, prop_id: Uuid) -> 32,
     }
-}
-
-/// Assertion key.
-#[derive(Debug, Clone)]
-pub struct AssertionKey {
-    pub branch_id: Uuid,
-    pub prop_id: Uuid,
-    pub tx_id: Uuid,
-    pub entry_id: Uuid,
-    pub entity_id: Uuid,
 }
 
 /// Assertion value.
@@ -55,14 +45,7 @@ impl DbItem for AssertionEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = AssertionKeyRaw {
-            branch_id: self.key.branch_id,
-            prop_id: self.key.prop_id,
-            tx_id: self.key.tx_id,
-            entry_id: self.key.entry_id,
-            entity_id: self.key.entity_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -70,18 +53,12 @@ impl DbItem for AssertionEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = AssertionKeyRaw::decode(key)
+        let k = AssertionKey::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let val: serde_json::Value =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
         Ok(Self {
-            key: AssertionKey {
-                branch_id: raw.branch_id,
-                prop_id: raw.prop_id,
-                tx_id: raw.tx_id,
-                entry_id: raw.entry_id,
-                entity_id: raw.entity_id,
-            },
+            key: k,
             value: AssertionValue { value: val },
         })
     }

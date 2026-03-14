@@ -13,7 +13,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_ENTITY_MAIN: &str = "entity_main";
 
 storage_key! {
-    pub(crate) struct EntityKeyRaw(48) {
+    pub struct EntityKey(48) {
         branch_id: Uuid,
         entity_id: Uuid,
         tx_id: Uuid,
@@ -22,14 +22,6 @@ storage_key! {
         prefix_branch(branch_id: Uuid) -> 16,
         prefix_branch_entity(branch_id: Uuid, entity_id: Uuid) -> 32,
     }
-}
-
-/// Entity key.
-#[derive(Debug, Clone)]
-pub struct EntityKey {
-    pub branch_id: Uuid,
-    pub entity_id: Uuid,
-    pub tx_id: Uuid,
 }
 
 /// Entity value.
@@ -54,12 +46,7 @@ impl DbItem for EntityEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let raw = EntityKeyRaw {
-            branch_id: self.key.branch_id,
-            entity_id: self.key.entity_id,
-            tx_id: self.key.tx_id,
-        };
-        raw.encode()
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
@@ -67,18 +54,11 @@ impl DbItem for EntityEntry {
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let raw = EntityKeyRaw::decode(key)
+        let k = EntityKey::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let val: EntityValue =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: EntityKey {
-                branch_id: raw.branch_id,
-                entity_id: raw.entity_id,
-                tx_id: raw.tx_id,
-            },
-            value: val,
-        })
+        Ok(Self { key: k, value: val })
     }
 }
 

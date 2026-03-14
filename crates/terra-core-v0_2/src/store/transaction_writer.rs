@@ -15,7 +15,7 @@ use crate::store::transaction_entry::{TransactionEntry, TransactionKey, Transact
 /// Created via [`Branch::transaction`]. On `commit()`, writes the
 /// transaction record and all accumulated operations atomically.
 pub struct TransactionWriter {
-    branch_id: Slug,
+    branch: Slug,
     tx_id: Uuid,
     meta: Map<String, Value>,
     batch: WriteBatch,
@@ -23,12 +23,12 @@ pub struct TransactionWriter {
 
 impl TransactionWriter {
     pub(crate) fn new(
-        branch_id: Slug,
+        branch: Slug,
         meta: Map<String, Value>,
         batch: WriteBatch,
     ) -> Self {
         Self {
-            branch_id,
+            branch,
             tx_id: Uuid::now_v7(),
             meta,
             batch,
@@ -41,8 +41,8 @@ impl TransactionWriter {
     }
 
     /// Branch this transaction belongs to.
-    pub fn branch_id(&self) -> &Slug {
-        &self.branch_id
+    pub fn branch(&self) -> &Slug {
+        &self.branch
     }
 
     /// Commit the transaction atomically.
@@ -51,7 +51,7 @@ impl TransactionWriter {
 
         let entry = TransactionEntry {
             key: TransactionKey {
-                branch_id: self.branch_id,
+                branch: self.branch,
                 tx_id,
             },
             value: TransactionValue {
@@ -97,7 +97,7 @@ mod tests {
         let tx_id = tx.tx_id();
         tx.commit().unwrap();
 
-        let key = TransactionKey { branch_id: main_branch_slug(), tx_id };
+        let key = TransactionKey { branch: main_branch_slug(), tx_id };
         let found = storage.db.get::<TransactionEntry>(&key).unwrap();
         assert!(found.is_some());
         let found = found.unwrap();
@@ -130,7 +130,7 @@ mod tests {
         meta.insert("step".into(), serde_json::json!(2));
         branch.transaction(meta).unwrap().commit().unwrap();
 
-        let prefix = BranchPrefix { branch_id: main_branch_slug() };
+        let prefix = BranchPrefix { branch: main_branch_slug() };
         let txs: Vec<TransactionEntry> = storage.db
             .scan::<TransactionEntry>(&prefix)
             .unwrap()

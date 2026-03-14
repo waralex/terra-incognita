@@ -1,6 +1,6 @@
 //! Schema entity type entry.
 //!
-//! Key: `hash(branch_id)(16) | hash(type_id)(16) | tx_id(16)` = 48 bytes + slug suffixes.
+//! Key: `hash(branch)(16) | hash(entity_type)(16) | tx_id(16)` = 48 bytes + slug suffixes.
 //! Value: JSON with slug, description.
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ const CF_SCHEMA_TYPES: &str = "schema_types";
 
 versioned_key! {
     pub struct SchemaTypeKey {
-        type_id: Slug,
+        entity_type: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypePrefix(32)
@@ -81,8 +81,8 @@ mod tests {
 
         let entry = SchemaTypeEntry {
             key: SchemaTypeKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
-                type_id: "person".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
+                entity_type: "person".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: SchemaTypeValue {

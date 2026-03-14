@@ -12,10 +12,10 @@ use crate::store::versioned_key::VersionedKey;
 // Prefix for scanning all records on a given branch.
 storage_key! {
     pub struct BranchPrefix {
-        branch_id: Slug,
+        branch: Slug,
     }
 }
 
 // BranchPrefix is valid for any entry whose key is VersionedKey
-// (starts with branch_id by definition).
+// (starts with branch by definition).
 impl<T: DbItem> ValidPrefix<T> for BranchPrefix where T::Key: VersionedKey {}

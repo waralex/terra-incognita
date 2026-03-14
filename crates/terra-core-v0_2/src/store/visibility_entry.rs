@@ -1,6 +1,6 @@
 //! Visibility control — hide/unhide items per branch.
 //!
-//! Key: `branch_id(16) | tx_id(16) | item_kind(16) | item_id(16)` = 64 bytes.
+//! Key: `branch(16) | tx_id(16) | item_kind(16) | item_id(16)` = 64 bytes.
 //! Value: `1` = hidden, `0` = visible. Default (no record) = visible.
 //!
 //! `item_kind` is a UUID identifying the namespace (same as in slug index).
@@ -15,7 +15,7 @@ const CF_VISIBILITY: &str = "visibility";
 
 storage_key! {
     pub struct VisibilityKey {
-        branch_id: Slug,
+        branch: Slug,
         tx_id: Uuid,
         item_kind: Uuid,
         item_id: Uuid,
@@ -91,7 +91,7 @@ mod tests {
 
         let entry = VisibilityEntry {
             key: VisibilityKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
                 item_kind: KIND,
                 item_id: Uuid::now_v7(),
@@ -115,7 +115,7 @@ mod tests {
 
         let entry = VisibilityEntry {
             key: VisibilityKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
                 item_kind: KIND,
                 item_id: Uuid::now_v7(),

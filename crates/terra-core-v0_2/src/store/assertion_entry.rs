@@ -1,6 +1,6 @@
 //! Assertion entry — a single property value claim.
 //!
-//! Key: `branch_id(16) | prop_id(16) | tx_id(16) | change_id(16) | entity_id(16)` = 80 bytes.
+//! Key: `branch(16) | prop_id(16) | tx_id(16) | change_id(16) | entity_id(16)` = 80 bytes.
 //! Value: JSON (arbitrary property value).
 //!
 //! No fact/hypothesis distinction in v0.2 — all assertions are equal.
@@ -14,7 +14,7 @@ const CF_ASSERTIONS: &str = "assertions";
 
 storage_key! {
     pub struct AssertionKey {
-        branch_id: Slug,
+        branch: Slug,
         prop_id: Uuid,
         tx_id: Uuid,
         change_id: Uuid,
@@ -85,7 +85,7 @@ mod tests {
 
         let entry = AssertionEntry {
             key: AssertionKey {
-                branch_id: "main".parse::<crate::io::slug::Slug>().unwrap(),
+                branch: "main".parse::<crate::io::slug::Slug>().unwrap(),
                 prop_id: Uuid::now_v7(),
                 tx_id: Uuid::now_v7(),
                 change_id: Uuid::now_v7(),

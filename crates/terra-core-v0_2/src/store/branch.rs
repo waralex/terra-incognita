@@ -21,7 +21,7 @@ pub fn main_branch_slug() -> Slug {
 /// Precomputed ancestry entry: branch_id + upper tx bound.
 #[derive(Debug, Clone)]
 pub struct AncestryEntry {
-    pub branch_id: Slug,
+    pub branch: Slug,
     pub branch_point_tx: Uuid,
 }
 
@@ -29,7 +29,7 @@ pub struct AncestryEntry {
 #[derive(Clone)]
 pub struct Branch {
     storage: Storage,
-    branch_id: Slug,
+    branch: Slug,
     ancestry: Vec<AncestryEntry>,
 }
 
@@ -39,32 +39,32 @@ impl Branch {
         let main = main_branch_slug();
         Self {
             storage,
-            branch_id: main.clone(),
+            branch: main.clone(),
             ancestry: vec![AncestryEntry {
-                branch_id: main,
+                branch: main,
                 branch_point_tx: Uuid::max(),
             }],
         }
     }
 
     /// Open a branch by slug. Loads the branch record and computes ancestry.
-    pub fn open(storage: Storage, branch_id: Slug) -> Result<Self, DbError> {
-        if branch_id == main_branch_slug() {
+    pub fn open(storage: Storage, branch: Slug) -> Result<Self, DbError> {
+        if branch == main_branch_slug() {
             return Ok(Self::main(storage));
         }
 
         let max_depth = storage.config().max_branch_depth;
-        let ancestry = Self::compute_ancestry(&storage, branch_id.clone(), max_depth)?;
+        let ancestry = Self::compute_ancestry(&storage, branch.clone(), max_depth)?;
         Ok(Self {
             storage,
-            branch_id,
+            branch,
             ancestry,
         })
     }
 
     /// Branch slug.
     pub fn id(&self) -> &Slug {
-        &self.branch_id
+        &self.branch
     }
 
     /// Precomputed ancestry chain.
@@ -75,29 +75,29 @@ impl Branch {
     /// Start a new transaction on this branch.
     pub fn transaction(&self, meta: Map<String, Value>) -> Result<TransactionWriter, DbError> {
         let batch = self.storage.db.batch();
-        Ok(TransactionWriter::new(self.branch_id.clone(), meta, batch))
+        Ok(TransactionWriter::new(self.branch.clone(), meta, batch))
     }
 
-    fn compute_ancestry(storage: &Storage, branch_id: Slug, max_depth: usize) -> Result<Vec<AncestryEntry>, DbError> {
+    fn compute_ancestry(storage: &Storage, branch: Slug, max_depth: usize) -> Result<Vec<AncestryEntry>, DbError> {
         let main = main_branch_slug();
         let mut chain = vec![AncestryEntry {
-            branch_id: branch_id.clone(),
+            branch: branch.clone(),
             branch_point_tx: Uuid::max(),
         }];
 
-        let mut current_id = branch_id;
+        let mut current_id = branch;
 
         for _ in 0..max_depth {
-            let key = BranchKey { branch_id: current_id };
+            let key = BranchKey { branch: current_id };
             let entry = storage.db.get::<BranchEntry>(&key)?
-                .ok_or_else(|| DbError::Storage(format!("branch not found: {}", key.branch_id)))?;
+                .ok_or_else(|| DbError::Storage(format!("branch not found: {}", key.branch)))?;
 
             let parent_slug: Slug = entry.value.parent_branch_slug.parse()
                 .map_err(|e: crate::io::slug::SlugError| DbError::Storage(e.to_string()))?;
             let branch_point = entry.value.created_from_tx;
 
             chain.push(AncestryEntry {
-                branch_id: parent_slug.clone(),
+                branch: parent_slug.clone(),
                 branch_point_tx: branch_point,
             });
 
@@ -134,7 +134,7 @@ mod tests {
 
         assert_eq!(branch.id(), &main);
         assert_eq!(branch.ancestry().len(), 1);
-        assert_eq!(branch.ancestry()[0].branch_id, main);
+        assert_eq!(branch.ancestry()[0].branch, main);
         assert_eq!(branch.ancestry()[0].branch_point_tx, Uuid::max());
     }
 
@@ -148,7 +148,7 @@ mod tests {
         let branch_point = Uuid::now_v7();
 
         let entry = BranchEntry {
-            key: BranchKey { branch_id: child_slug.clone() },
+            key: BranchKey { branch: child_slug.clone() },
             value: BranchValue {
                 slug: "child".into(),
                 meta: serde_json::Map::new(),
@@ -163,9 +163,9 @@ mod tests {
         let branch = Branch::open(storage, child_slug.clone()).unwrap();
         assert_eq!(branch.id(), &child_slug);
         assert_eq!(branch.ancestry().len(), 2);
-        assert_eq!(branch.ancestry()[0].branch_id, child_slug);
+        assert_eq!(branch.ancestry()[0].branch, child_slug);
         assert_eq!(branch.ancestry()[0].branch_point_tx, Uuid::max());
-        assert_eq!(branch.ancestry()[1].branch_id, main);
+        assert_eq!(branch.ancestry()[1].branch, main);
         assert_eq!(branch.ancestry()[1].branch_point_tx, branch_point);
     }
 

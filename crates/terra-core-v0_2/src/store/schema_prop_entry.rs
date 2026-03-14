@@ -1,6 +1,6 @@
 //! Schema property entry.
 //!
-//! Key: `hash(branch_id)(16) | hash(entity_type_id)(16) | hash(prop_id)(16) | tx_id(16)` = 64 bytes + slug suffixes.
+//! Key: `hash(branch)(16) | hash(entity_type)(16) | hash(prop)(16) | tx_id(16)` = 64 bytes + slug suffixes.
 //! Value: JSON with slug, description.
 //! No ValueType — all values are arbitrary JSON in v0.2.
 
@@ -14,8 +14,8 @@ const CF_SCHEMA_PROPS: &str = "schema_props";
 
 versioned_key! {
     pub struct SchemaPropKey {
-        entity_type_id: Slug,
-        prop_id: Slug,
+        entity_type: Slug,
+        prop: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypePrefix(32), BranchTypePropPrefix(48)
@@ -83,9 +83,9 @@ mod tests {
 
         let entry = SchemaPropEntry {
             key: SchemaPropKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
-                entity_type_id: "country".parse::<Slug>().unwrap(),
-                prop_id: "population".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
+                entity_type: "country".parse::<Slug>().unwrap(),
+                prop: "population".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: SchemaPropValue {
@@ -100,6 +100,6 @@ mod tests {
 
         let found = db.get::<SchemaPropEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.value.slug, "population");
-        assert_eq!(found.key.entity_type_id, entry.key.entity_type_id);
+        assert_eq!(found.key.entity_type, entry.key.entity_type);
     }
 }

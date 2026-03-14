@@ -1,7 +1,7 @@
 //! Unified slug → UUID index.
 //!
 //! Single column family shared by all sluggable types.
-//! Key: `branch_id(16) | kind(16) | slug_hash(16)` = 48 bytes (fixed).
+//! Key: `branch(16) | kind(16) | slug_hash(16)` = 48 bytes (fixed).
 //! Value: `uuid(16) | slug_bytes` (binary, no JSON).
 //!
 //! `slug_hash` is UUID v5 derived from slug string (deterministic).
@@ -24,7 +24,7 @@ const SLUG_HASH_NAMESPACE: Uuid = Uuid::from_u128(0xA1B2C3D4_E5F6_7890_ABCD_EF12
 
 storage_key! {
     pub struct SlugKey {
-        branch_id: Slug,
+        branch: Slug,
         kind: Uuid,
         slug_hash: Uuid,
     }
@@ -72,10 +72,10 @@ pub struct SlugEntry {
 
 impl SlugEntry {
     /// Create a new slug entry from components.
-    pub fn new(branch_id: Slug, kind: Uuid, slug: &str, id: Uuid) -> Self {
+    pub fn new(branch: Slug, kind: Uuid, slug: &str, id: Uuid) -> Self {
         Self {
             key: SlugKey {
-                branch_id,
+                branch,
                 kind,
                 slug_hash: hash_slug(slug),
             },
@@ -181,7 +181,7 @@ mod tests {
     fn fixed_key_size() {
         let branch: Slug = "main".parse().unwrap();
         let entry = SlugEntry::new(branch, KIND_ENTITY, "any-length-slug-here", Uuid::now_v7());
-        // Fixed part: hash(branch_id)(16) + kind(16) + slug_hash(16) = 48
+        // Fixed part: hash(branch)(16) + kind(16) + slug_hash(16) = 48
         // Suffix: len(1) + "main"(4) = 5
         // Total: 53
         assert_eq!(SlugKey::SIZE, 48);

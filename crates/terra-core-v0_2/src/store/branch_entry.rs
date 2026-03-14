@@ -1,6 +1,6 @@
 //! Branch record entry.
 //!
-//! Key: `hash(branch_id)(16)` = 16 bytes + slug suffix.
+//! Key: `hash(branch)(16)` = 16 bytes + slug suffix.
 //! Value: JSON with slug, meta, created_from_tx.
 //! Not versioned — branches are immutable after creation.
 
@@ -15,7 +15,7 @@ const CF_BRANCH_MAIN: &str = "branch_main";
 
 storage_key! {
     pub struct BranchKey {
-        branch_id: Slug,
+        branch: Slug,
     }
 }
 
@@ -84,7 +84,7 @@ mod tests {
 
         let branch_slug: Slug = "exploration".parse().unwrap();
         let entry = BranchEntry {
-            key: BranchKey { branch_id: branch_slug.clone() },
+            key: BranchKey { branch: branch_slug.clone() },
             value: BranchValue {
                 slug: "exploration".into(),
                 meta: serde_json::Map::new(),
@@ -98,7 +98,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<BranchEntry>(&entry.key).unwrap().unwrap();
-        assert_eq!(found.key.branch_id, branch_slug);
+        assert_eq!(found.key.branch, branch_slug);
         assert_eq!(found.value.slug, "exploration");
     }
 }

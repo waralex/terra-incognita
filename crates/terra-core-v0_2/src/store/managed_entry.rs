@@ -1,6 +1,6 @@
 //! Managed type entry — generic versioned records (tasks, etc.).
 //!
-//! Key: `hash(branch_id)(16) | hash(type_name)(16) | hash(item_id)(16) | tx_id(16)` = 64 bytes + slug suffixes.
+//! Key: `hash(branch)(16) | hash(type_name)(16) | hash(item)(16) | tx_id(16)` = 64 bytes + slug suffixes.
 //! Value: JSON with slug, optional state, and dynamic fields.
 //!
 //! `type_name` is a Slug identifying the managed type (from DataSchema).
@@ -17,7 +17,7 @@ const CF_MANAGED_MAIN: &str = "managed_main";
 versioned_key! {
     pub struct ManagedKey {
         type_name: Slug,
-        item_id: Slug,
+        item: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypeHashPrefix(32), BranchTypeHashItemPrefix(48)
@@ -89,9 +89,9 @@ mod tests {
 
         let entry = ManagedEntry {
             key: ManagedKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
                 type_name: "task".parse::<Slug>().unwrap(),
-                item_id: "explore-orders".parse::<Slug>().unwrap(),
+                item: "explore-orders".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: ManagedValue {
@@ -121,9 +121,9 @@ mod tests {
 
         let entry = ManagedEntry {
             key: ManagedKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
                 type_name: "note".parse::<Slug>().unwrap(),
-                item_id: "my-note".parse::<Slug>().unwrap(),
+                item: "my-note".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: ManagedValue {

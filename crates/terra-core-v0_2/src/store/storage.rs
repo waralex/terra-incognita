@@ -43,8 +43,8 @@ impl Storage {
     }
 
     /// Open a branch by slug.
-    pub fn branch(&self, branch_id: Slug) -> Result<Branch, DbError> {
-        Branch::open(self.clone(), branch_id)
+    pub fn branch(&self, branch: Slug) -> Result<Branch, DbError> {
+        Branch::open(self.clone(), branch)
     }
 
     /// Access the project config.

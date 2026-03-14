@@ -1,6 +1,6 @@
 //! Entity record entry.
 //!
-//! Key: `hash(branch_id)(16) | hash(entity_id)(16) | tx_id(16)` = 48 bytes + slug suffixes.
+//! Key: `hash(branch)(16) | hash(entity)(16) | tx_id(16)` = 48 bytes + slug suffixes.
 //! Value: JSON with slug, entity_type_id, description.
 //! Versioned — each mutation writes a new record with a new tx_id.
 
@@ -15,7 +15,7 @@ const CF_ENTITY_MAIN: &str = "entity_main";
 
 versioned_key! {
     pub struct EntityKey {
-        entity_id: Slug,
+        entity: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchEntityPrefix(32)
@@ -83,8 +83,8 @@ mod tests {
 
         let entry = EntityEntry {
             key: EntityKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
-                entity_id: "test-entity".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
+                entity: "test-entity".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: EntityValue {
@@ -99,7 +99,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<EntityEntry>(&entry.key).unwrap().unwrap();
-        assert_eq!(found.key.entity_id, entry.key.entity_id);
+        assert_eq!(found.key.entity, entry.key.entity);
         assert_eq!(found.value.slug, "test-entity");
     }
 }

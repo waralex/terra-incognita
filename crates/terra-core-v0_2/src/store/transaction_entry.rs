@@ -1,6 +1,6 @@
 //! Transaction metadata entry.
 //!
-//! Key: `branch_id(16) | tx_id(16)` = 32 bytes.
+//! Key: `branch(16) | tx_id(16)` = 32 bytes.
 //! Value: JSON with dynamic metadata fields (defined by DataSchema).
 //! Timestamp is derived from tx_id (UUID v7) — not stored separately.
 
@@ -16,7 +16,7 @@ const CF_TRANSACTIONS: &str = "transactions";
 
 storage_key! {
     pub struct TransactionKey {
-        branch_id: Slug,
+        branch: Slug,
         tx_id: Uuid,
     }
 }
@@ -88,7 +88,7 @@ mod tests {
 
         let entry = TransactionEntry {
             key: TransactionKey {
-                branch_id: "main".parse::<Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: TransactionValue { meta },

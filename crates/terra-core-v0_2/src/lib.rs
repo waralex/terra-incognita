@@ -4,5 +4,6 @@
 //! See CLAUDE.md section "v0.2 Rewrite" for design rationale.
 
 pub mod config;
+pub mod domain;
 pub mod io;
 pub mod store;

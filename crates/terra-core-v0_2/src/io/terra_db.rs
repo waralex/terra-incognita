@@ -76,6 +76,7 @@ impl TerraDbBuilder {
 /// Wraps a RocksDB instance and isolates the rest of the codebase
 /// from storage engine details. If we ever swap RocksDB for something
 /// else, only this module changes.
+#[derive(Clone)]
 pub struct TerraDb {
     pub(super) db: Arc<DB>,
     mode: AccessMode,

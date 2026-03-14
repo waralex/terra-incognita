@@ -10,17 +10,27 @@
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use typed_builder::TypedBuilder;
 
 use super::DataSchema;
 
 /// Top-level project configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TypedBuilder)]
 pub struct ProjectConfig {
     /// Path to the RocksDB data directory.
     pub data_dir: PathBuf,
 
     /// Path to the data schema YAML file.
     pub schema_path: PathBuf,
+
+    /// Maximum branch nesting depth. Default: 8.
+    #[serde(default = "default_max_branch_depth")]
+    #[builder(default = 8)]
+    pub max_branch_depth: usize,
+}
+
+fn default_max_branch_depth() -> usize {
+    8
 }
 
 /// A resolved project: config + parsed data schema, ready to use.
@@ -87,6 +97,27 @@ schema_path: ./schema.yaml
         let config = ProjectConfig::from_yaml(yaml).unwrap();
         assert_eq!(config.data_dir, PathBuf::from("./data"));
         assert_eq!(config.schema_path, PathBuf::from("./schema.yaml"));
+        assert_eq!(config.max_branch_depth, 8);
+    }
+
+    #[test]
+    fn builder() {
+        let config = ProjectConfig::builder()
+            .data_dir("./data".into())
+            .schema_path("./schema.yaml".into())
+            .build();
+        assert_eq!(config.data_dir, PathBuf::from("./data"));
+        assert_eq!(config.max_branch_depth, 8);
+    }
+
+    #[test]
+    fn builder_custom_depth() {
+        let config = ProjectConfig::builder()
+            .data_dir("./data".into())
+            .schema_path("./schema.yaml".into())
+            .max_branch_depth(4)
+            .build();
+        assert_eq!(config.max_branch_depth, 4);
     }
 
     #[test]

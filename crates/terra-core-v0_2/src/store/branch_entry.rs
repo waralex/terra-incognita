@@ -22,6 +22,9 @@ pub struct BranchKey {
 pub struct BranchValue {
     pub slug: String,
     pub meta: serde_json::Map<String, serde_json::Value>,
+    /// Branch this was forked from. `Uuid::nil()` = forked from main.
+    pub parent_branch_id: Uuid,
+    /// Transaction on the parent branch at which this branch was created.
     pub created_from_tx: Uuid,
 }
 
@@ -76,6 +79,7 @@ mod tests {
             value: BranchValue {
                 slug: "exploration".into(),
                 meta: serde_json::Map::new(),
+                parent_branch_id: Uuid::nil(),
                 created_from_tx: Uuid::nil(),
             },
         };

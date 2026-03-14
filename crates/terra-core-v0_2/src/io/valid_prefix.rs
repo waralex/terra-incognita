@@ -1,13 +1,13 @@
 //! Compile-time prefix–entry compatibility marker.
 
 use crate::io::db_item::DbItem;
-use crate::io::storage_key::StorageKey;
+use crate::io::key_prefix::KeyPrefix;
 
 /// Marker trait: `P` is a valid scan prefix for entry type `T`.
 ///
 /// Prevents passing a wrong prefix to `scan`/`scan_rev` at compile time.
 /// Implemented via [`impl_prefix!`] macro.
-pub trait ValidPrefix<T: DbItem>: StorageKey {}
+pub trait ValidPrefix<T: DbItem>: KeyPrefix {}
 
 /// Declare that a prefix type is valid for one or more entry types.
 ///

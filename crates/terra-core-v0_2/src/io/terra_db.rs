@@ -124,22 +124,17 @@ impl TerraDb {
     }
 
     /// Iterate forward over items whose keys share the given prefix.
-    ///
-    /// Only the fixed part of the prefix key (first `SIZE` bytes) is used for matching.
-    /// Slug suffixes are excluded from prefix comparison since they appear after
-    /// the fixed part and won't align with the entry key layout.
     pub fn scan<'a, T: DbItem>(
         &'a self,
         prefix: &impl ValidPrefix<T>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let full_bytes = prefix.encode();
-        let fixed_prefix = full_bytes[..prefix.fixed_size()].to_vec();
+        let prefix_bytes = prefix.encode();
         let opts = ReadOptions::default();
-        let mode = IteratorMode::From(&fixed_prefix, Direction::Forward);
+        let mode = IteratorMode::From(&prefix_bytes, Direction::Forward);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, fixed_prefix))
+        Ok(DbIterator::new(inner, prefix_bytes))
     }
 
     /// Iterate in reverse over items whose keys share the given prefix.
@@ -152,15 +147,14 @@ impl TerraDb {
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let full_bytes = prefix.encode();
-        let fixed_prefix = full_bytes[..prefix.fixed_size()].to_vec();
+        let prefix_bytes = prefix.encode();
         let opts = ReadOptions::default();
-        let mut ceiling = fixed_prefix.clone();
-        let pad = T::Key::SIZE.saturating_sub(fixed_prefix.len());
+        let mut ceiling = prefix_bytes.clone();
+        let pad = T::Key::SIZE.saturating_sub(prefix_bytes.len());
         ceiling.extend(std::iter::repeat(0xFFu8).take(pad));
         let mode = IteratorMode::From(&ceiling, Direction::Reverse);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, fixed_prefix))
+        Ok(DbIterator::new(inner, prefix_bytes))
     }
 
     /// Create a new write batch bound to this database.
@@ -282,12 +276,12 @@ mod tests {
         use uuid::Uuid;
         use crate::io::TerraDb;
         use crate::io::slug::Slug;
-        use crate::io::storage_key::storage_key;
+        use crate::io::key_prefix::prefix_key;
         use crate::io::valid_prefix::impl_prefix;
         use crate::store::entity_entry::{EntityEntry, EntityKey, EntityValue};
         use crate::store::prefix::BranchPrefix;
 
-        storage_key! {
+        prefix_key! {
             pub struct BranchEntityPrefix {
                 branch: Slug,
                 entity: Slug,

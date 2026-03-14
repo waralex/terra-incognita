@@ -5,12 +5,12 @@
 //! if a key layout changes (e.g., branch becomes versioned).
 
 use crate::io::DbItem;
-use crate::io::storage_key::storage_key;
+use crate::io::key_prefix::prefix_key;
 use crate::io::valid_prefix::ValidPrefix;
 use crate::store::versioned_key::VersionedKey;
 
 // Prefix for scanning all records on a given branch.
-storage_key! {
+prefix_key! {
     pub struct BranchPrefix {
         branch: Slug,
     }

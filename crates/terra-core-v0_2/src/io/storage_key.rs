@@ -35,11 +35,6 @@ pub trait StorageKey: Sized {
 
     fn encode(&self) -> Vec<u8>;
     fn decode(bytes: &[u8]) -> Result<Self, KeyError>;
-
-    /// Returns the fixed part size. Same as `SIZE` but callable on instances.
-    fn fixed_size(&self) -> usize {
-        Self::SIZE
-    }
 }
 
 /// Declares a storage key struct with automatic encode/decode.

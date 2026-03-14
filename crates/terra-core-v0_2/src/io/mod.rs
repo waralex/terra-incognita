@@ -1,5 +1,6 @@
 mod db_item;
 pub(crate) mod db_iterator;
+pub mod key_prefix;
 pub mod slug;
 mod terra_db;
 pub(crate) mod valid_prefix;
@@ -9,6 +10,7 @@ pub mod storage_value;
 
 pub use db_item::DbItem;
 pub use db_iterator::DbIterator;
+pub use key_prefix::KeyPrefix;
 pub use slug::Slug;
 pub use terra_db::*;
 pub use valid_prefix::ValidPrefix;

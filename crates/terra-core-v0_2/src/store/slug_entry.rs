@@ -1,7 +1,11 @@
 //! Unified slug → UUID index.
 //!
 //! Single column family shared by all sluggable types.
-//! Key: `kind(16) | branch_id(16) | slug_bytes`. Value: UUID (16 bytes).
+//! Key: `branch_id(16) | kind(16) | slug_hash(16)` = 48 bytes (fixed).
+//! Value: `uuid(16) | slug_bytes` (binary, no JSON).
+//!
+//! `slug_hash` is UUID v5 derived from slug string (deterministic).
+//! Collision check: on write, if key exists, compare stored slug with new slug.
 //!
 //! `kind` is a UUID that identifies the namespace (entity, branch, managed type, etc.).
 //! Branch-aware lookups walk the ancestry chain.
@@ -9,21 +13,35 @@
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
+use crate::io::storage_key::{storage_key, StorageKey};
 
 const CF_SLUGS: &str = "slugs";
 
-/// Slug key.
-#[derive(Debug, Clone)]
-pub struct SlugKey {
-    pub kind: Uuid,
-    pub branch_id: Uuid,
-    pub slug: String,
+/// Namespace UUID for slug hashing (UUID v5).
+const SLUG_HASH_NAMESPACE: Uuid = Uuid::from_u128(0xA1B2C3D4_E5F6_7890_ABCD_EF1234567890);
+
+storage_key! {
+    pub struct SlugKey(48) {
+        branch_id: Uuid,
+        kind: Uuid,
+        slug_hash: Uuid,
+    }
+    prefixes {
+        prefix_branch(branch_id: Uuid) -> 16,
+        prefix_branch_kind(branch_id: Uuid, kind: Uuid) -> 32,
+    }
 }
 
-/// Slug value.
+/// Compute deterministic hash for a slug string.
+pub fn hash_slug(slug: &str) -> Uuid {
+    Uuid::new_v5(&SLUG_HASH_NAMESPACE, slug.as_bytes())
+}
+
+/// Slug value: uuid + original slug for collision check.
 #[derive(Debug, Clone)]
 pub struct SlugValue {
     pub id: Uuid,
+    pub slug: String,
 }
 
 /// Slug entry = key + value.
@@ -33,38 +51,52 @@ pub struct SlugEntry {
     pub value: SlugValue,
 }
 
+impl SlugEntry {
+    /// Create a new slug entry from components.
+    pub fn new(branch_id: Uuid, kind: Uuid, slug: &str, id: Uuid) -> Self {
+        Self {
+            key: SlugKey {
+                branch_id,
+                kind,
+                slug_hash: hash_slug(slug),
+            },
+            value: SlugValue {
+                id,
+                slug: slug.to_string(),
+            },
+        }
+    }
+}
+
 impl DbItem for SlugEntry {
     fn cf() -> &'static str {
         CF_SLUGS
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let mut key = Vec::with_capacity(32 + self.key.slug.len());
-        key.extend_from_slice(self.key.kind.as_bytes());
-        key.extend_from_slice(self.key.branch_id.as_bytes());
-        key.extend_from_slice(self.key.slug.as_bytes());
-        key
+        self.key.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        Ok(self.value.id.as_bytes().to_vec())
+        let mut val = Vec::with_capacity(16 + self.value.slug.len());
+        val.extend_from_slice(self.value.id.as_bytes());
+        val.extend_from_slice(self.value.slug.as_bytes());
+        Ok(val)
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        if key.len() < 32 {
-            return Err(DbError::Storage("slug key too short".into()));
+        let k = SlugKey::decode(key)
+            .map_err(|e| DbError::Storage(e.to_string()))?;
+        if value.len() < 16 {
+            return Err(DbError::Storage("slug value too short".into()));
         }
-        let kind = Uuid::from_slice(&key[..16])
+        let id = Uuid::from_slice(&value[..16])
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        let branch_id = Uuid::from_slice(&key[16..32])
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let slug = String::from_utf8(key[32..].to_vec())
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let id = Uuid::from_slice(value)
+        let slug = String::from_utf8(value[16..].to_vec())
             .map_err(|e| DbError::Storage(e.to_string()))?;
         Ok(Self {
-            key: SlugKey { kind, branch_id, slug },
-            value: SlugValue { id },
+            key: k,
+            value: SlugValue { id, slug },
         })
     }
 }
@@ -89,14 +121,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
 
-        let entry = SlugEntry {
-            key: SlugKey {
-                kind: KIND_ENTITY,
-                branch_id: Uuid::now_v7(),
-                slug: "my-entity".into(),
-            },
-            value: SlugValue { id: Uuid::now_v7() },
-        };
+        let entry = SlugEntry::new(Uuid::now_v7(), KIND_ENTITY, "my-entity", Uuid::now_v7());
 
         let mut batch = db.batch();
         batch.put(&entry).unwrap();
@@ -104,7 +129,7 @@ mod tests {
 
         let found = db.get::<SlugEntry>(&entry.encode_key()).unwrap().unwrap();
         assert_eq!(found.value.id, entry.value.id);
-        assert_eq!(found.key.slug, "my-entity");
+        assert_eq!(found.value.slug, "my-entity");
     }
 
     #[test]
@@ -116,14 +141,8 @@ mod tests {
         let id1 = Uuid::now_v7();
         let id2 = Uuid::now_v7();
 
-        let e1 = SlugEntry {
-            key: SlugKey { kind: KIND_ENTITY, branch_id: branch, slug: "same".into() },
-            value: SlugValue { id: id1 },
-        };
-        let e2 = SlugEntry {
-            key: SlugKey { kind: KIND_BRANCH, branch_id: branch, slug: "same".into() },
-            value: SlugValue { id: id2 },
-        };
+        let e1 = SlugEntry::new(branch, KIND_ENTITY, "same", id1);
+        let e2 = SlugEntry::new(branch, KIND_BRANCH, "same", id2);
 
         let mut batch = db.batch();
         batch.put(&e1).unwrap();
@@ -132,5 +151,25 @@ mod tests {
 
         assert_eq!(db.get::<SlugEntry>(&e1.encode_key()).unwrap().unwrap().value.id, id1);
         assert_eq!(db.get::<SlugEntry>(&e2.encode_key()).unwrap().unwrap().value.id, id2);
+    }
+
+    #[test]
+    fn hash_is_deterministic() {
+        let h1 = hash_slug("test-slug");
+        let h2 = hash_slug("test-slug");
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn different_slugs_different_hashes() {
+        let h1 = hash_slug("alpha");
+        let h2 = hash_slug("beta");
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn fixed_key_size() {
+        let entry = SlugEntry::new(Uuid::now_v7(), KIND_ENTITY, "any-length-slug-here", Uuid::now_v7());
+        assert_eq!(entry.encode_key().len(), 48);
     }
 }

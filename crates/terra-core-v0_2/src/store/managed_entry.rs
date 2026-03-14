@@ -1,6 +1,6 @@
 //! Managed type entry — generic versioned records (tasks, etc.).
 //!
-//! Key: `type_hash(16) | branch_id(16) | item_id(16) | tx_id(16)` = 64 bytes.
+//! Key: `branch_id(16) | type_hash(16) | item_id(16) | tx_id(16)` = 64 bytes.
 //! Value: JSON with slug, optional state, and dynamic fields.
 //!
 //! `type_hash` is a UUID derived from the managed type name (from DataSchema).
@@ -16,15 +16,15 @@ const CF_MANAGED_MAIN: &str = "managed_main";
 
 storage_key! {
     pub struct ManagedKey(64) {
-        type_hash: Uuid,
         branch_id: Uuid,
+        type_hash: Uuid,
         item_id: Uuid,
         tx_id: Uuid,
     }
     prefixes {
-        prefix_type(type_hash: Uuid) -> 16,
-        prefix_type_branch(type_hash: Uuid, branch_id: Uuid) -> 32,
-        prefix_type_branch_item(type_hash: Uuid, branch_id: Uuid, item_id: Uuid) -> 48,
+        prefix_branch(branch_id: Uuid) -> 16,
+        prefix_branch_type(branch_id: Uuid, type_hash: Uuid) -> 32,
+        prefix_branch_type_item(branch_id: Uuid, type_hash: Uuid, item_id: Uuid) -> 48,
     }
 }
 

@@ -2,7 +2,7 @@
 //!
 //! All versioned entries follow the pattern `branch_id | ... | tx_id` —
 //! branch first (for ancestry walk), tx last (for reverse scan to latest).
-//! The middle is domain-specific addressing.
+//! The middle is domain-specific addressing (all fields Uuid).
 
 use uuid::Uuid;
 
@@ -21,6 +21,7 @@ pub trait VersionedKey: StorageKey {
 ///
 /// Generates the struct, `StorageKey` impl, and `VersionedKey` impl.
 /// Only the middle domain fields need to be specified (all Uuid).
+/// Size is computed automatically.
 ///
 /// ```ignore
 /// versioned_key! {
@@ -31,56 +32,56 @@ pub trait VersionedKey: StorageKey {
 /// // Expands to a 48-byte key: branch_id(16) | entity_id(16) | tx_id(16)
 /// ```
 macro_rules! versioned_key {
-    // 0 middle fields: 32 bytes
-    ( $vis:vis struct $name:ident {} ) => {
-        versioned_key!(@impl $vis, $name, 32, { branch_id tx_id }, []);
-    };
-    // 1 middle field: 48 bytes
-    ( $vis:vis struct $name:ident { $f1:ident : Uuid $(,)? } ) => {
-        versioned_key!(@impl $vis, $name, 48, { branch_id $f1 tx_id }, [$f1]);
-    };
-    // 2 middle fields: 64 bytes
-    ( $vis:vis struct $name:ident { $f1:ident : Uuid, $f2:ident : Uuid $(,)? } ) => {
-        versioned_key!(@impl $vis, $name, 64, { branch_id $f1 $f2 tx_id }, [$f1 $f2]);
-    };
-    // 3 middle fields: 80 bytes
-    ( $vis:vis struct $name:ident { $f1:ident : Uuid, $f2:ident : Uuid, $f3:ident : Uuid $(,)? } ) => {
-        versioned_key!(@impl $vis, $name, 80, { branch_id $f1 $f2 $f3 tx_id }, [$f1 $f2 $f3]);
-    };
-
-    // Internal: generate struct + StorageKey + VersionedKey.
-    (@impl $vis:vis, $name:ident, $size:literal, { $( $field:ident )+ }, [ $( $mid:ident )* ]) => {
+    (
+        $vis:vis struct $name:ident {
+            $( $field:ident : Uuid ),* $(,)?
+        }
+    ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         $vis struct $name {
-            $( pub $field: uuid::Uuid ),+
+            pub branch_id: uuid::Uuid,
+            $( pub $field: uuid::Uuid, )*
+            pub tx_id: uuid::Uuid,
         }
 
         impl $crate::io::storage_key::StorageKey for $name {
-            const SIZE: usize = $size;
+            const SIZE: usize = (2 + versioned_key!(@count $( $field )*)) * 16;
 
             fn encode(&self) -> Vec<u8> {
-                let mut buf = vec![0u8; $size];
+                let mut buf = vec![0u8; Self::SIZE];
                 let mut _off: usize = 0;
+
+                buf[_off.._off + 16].copy_from_slice(self.branch_id.as_bytes());
+                _off += 16;
                 $({
                     buf[_off.._off + 16].copy_from_slice(self.$field.as_bytes());
                     _off += 16;
-                })+
+                })*
+                buf[_off.._off + 16].copy_from_slice(self.tx_id.as_bytes());
+
                 buf
             }
 
             fn decode(bytes: &[u8]) -> Result<Self, $crate::io::storage_key::KeyError> {
-                if bytes.len() < $size {
+                if bytes.len() < Self::SIZE {
                     return Err($crate::io::storage_key::KeyError(
-                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), $size)
+                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), Self::SIZE)
                     ));
                 }
                 let mut _off: usize = 0;
+
+                let branch_id = uuid::Uuid::from_slice(&bytes[_off.._off + 16])
+                    .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
+                _off += 16;
                 $(
                     let $field = uuid::Uuid::from_slice(&bytes[_off.._off + 16])
                         .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
                     _off += 16;
-                )+
-                Ok(Self { $( $field ),+ })
+                )*
+                let tx_id = uuid::Uuid::from_slice(&bytes[_off.._off + 16])
+                    .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
+
+                Ok(Self { branch_id, $( $field, )* tx_id })
             }
         }
 
@@ -89,6 +90,90 @@ macro_rules! versioned_key {
             fn tx_id(&self) -> uuid::Uuid { self.tx_id }
         }
     };
+
+    (@count) => { 0usize };
+    (@count $head:ident $( $tail:ident )*) => { 1usize + versioned_key!(@count $( $tail )*) };
 }
 
 pub(crate) use versioned_key;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    versioned_key! {
+        pub struct TwoFieldKey {
+            entity_id: Uuid,
+        }
+    }
+
+    versioned_key! {
+        pub struct EmptyMiddleKey {}
+    }
+
+    versioned_key! {
+        pub struct ThreeFieldKey {
+            a: Uuid,
+            b: Uuid,
+            c: Uuid,
+        }
+    }
+
+    #[test]
+    fn auto_size() {
+        assert_eq!(EmptyMiddleKey::SIZE, 32);
+        assert_eq!(TwoFieldKey::SIZE, 48);
+        assert_eq!(ThreeFieldKey::SIZE, 80);
+    }
+
+    #[test]
+    fn roundtrip_with_middle() {
+        let key = TwoFieldKey {
+            branch_id: Uuid::from_u128(1),
+            entity_id: Uuid::from_u128(2),
+            tx_id: Uuid::from_u128(3),
+        };
+        let bytes = key.encode();
+        assert_eq!(bytes.len(), 48);
+        let decoded = TwoFieldKey::decode(&bytes).unwrap();
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn roundtrip_empty_middle() {
+        let key = EmptyMiddleKey {
+            branch_id: Uuid::from_u128(1),
+            tx_id: Uuid::from_u128(2),
+        };
+        let bytes = key.encode();
+        assert_eq!(bytes.len(), 32);
+        let decoded = EmptyMiddleKey::decode(&bytes).unwrap();
+        assert_eq!(decoded, key);
+    }
+
+    #[test]
+    fn versioned_key_trait() {
+        let key = TwoFieldKey {
+            branch_id: Uuid::from_u128(10),
+            entity_id: Uuid::from_u128(20),
+            tx_id: Uuid::from_u128(30),
+        };
+        assert_eq!(key.branch_id(), Uuid::from_u128(10));
+        assert_eq!(key.tx_id(), Uuid::from_u128(30));
+    }
+
+    #[test]
+    fn keys_sort_by_fields_then_tx() {
+        let k1 = TwoFieldKey {
+            branch_id: Uuid::from_u128(1),
+            entity_id: Uuid::from_u128(2),
+            tx_id: Uuid::from_u128(10),
+        };
+        let k2 = TwoFieldKey {
+            branch_id: Uuid::from_u128(1),
+            entity_id: Uuid::from_u128(2),
+            tx_id: Uuid::from_u128(20),
+        };
+        assert!(k1.encode() < k2.encode());
+    }
+}

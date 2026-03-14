@@ -5,10 +5,10 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_TRANSACTIONS: &str = "transactions";
 
@@ -29,6 +29,16 @@ pub struct TransactionValue {
     pub timestamp: DateTime<Utc>,
 }
 
+impl StorageValue for TransactionValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Transaction entry = key + value.
 #[derive(Debug, Clone)]
 pub struct TransactionEntry {
@@ -37,30 +47,30 @@ pub struct TransactionEntry {
 }
 
 impl DbItem for TransactionEntry {
+    type Key = TransactionKey;
+    type Value = TransactionValue;
+
     fn cf() -> &'static str {
         CF_TRANSACTIONS
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &TransactionKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &TransactionValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = TransactionKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: TransactionValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { key: k, value: val })
+    fn from_parts(key: TransactionKey, value: TransactionValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
 
     #[test]
@@ -89,7 +99,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<TransactionEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<TransactionEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.tx_id, entry.key.tx_id);
         assert_eq!(found.value.meta["reasoning"], "test");
     }

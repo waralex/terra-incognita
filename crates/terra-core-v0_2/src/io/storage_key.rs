@@ -22,7 +22,7 @@
 pub struct KeyError(pub String);
 
 /// Trait for fixed-size storage keys with encode/decode.
-pub(crate) trait StorageKey: Sized {
+pub trait StorageKey: Sized {
     const SIZE: usize;
 
     fn encode(&self) -> Vec<u8>;

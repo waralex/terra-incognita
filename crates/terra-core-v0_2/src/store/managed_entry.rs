@@ -7,9 +7,9 @@
 //! All managed types share a single CF.
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 use crate::io::{DbError, DbItem};
 
 const CF_MANAGED_MAIN: &str = "managed_main";
@@ -37,6 +37,16 @@ pub struct ManagedValue {
     pub fields: serde_json::Map<String, serde_json::Value>,
 }
 
+impl StorageValue for ManagedValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Managed type entry = key + value.
 #[derive(Debug, Clone)]
 pub struct ManagedEntry {
@@ -45,29 +55,30 @@ pub struct ManagedEntry {
 }
 
 impl DbItem for ManagedEntry {
+    type Key = ManagedKey;
+    type Value = ManagedValue;
+
     fn cf() -> &'static str {
         CF_MANAGED_MAIN
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &ManagedKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &ManagedValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = ManagedKey::decode(key).map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: ManagedValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { key: k, value: val })
+    fn from_parts(key: ManagedKey, value: ManagedValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
 
     #[test]
@@ -99,7 +110,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<ManagedEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<ManagedEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.value.slug, "explore-orders");
         assert_eq!(found.value.state, Some("open".into()));
         assert_eq!(found.value.fields["goal"], "explore orders table");
@@ -131,7 +142,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<ManagedEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<ManagedEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.value.state, None);
     }
 }

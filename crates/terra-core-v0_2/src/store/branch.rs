@@ -6,7 +6,7 @@
 use uuid::Uuid;
 
 use crate::io::DbError;
-use crate::store::branch_entry::BranchEntry;
+use crate::store::branch_entry::{BranchEntry, BranchKey};
 use crate::store::storage::Storage;
 
 /// Main branch has a nil UUID and always exists implicitly.
@@ -74,8 +74,8 @@ impl Branch {
         let mut current_id = branch_id;
 
         for _ in 0..max_depth {
-            let key_bytes = current_id.as_bytes().to_vec();
-            let entry = storage.db.get::<BranchEntry>(&key_bytes)?
+            let key = BranchKey { branch_id: current_id };
+            let entry = storage.db.get::<BranchEntry>(&key)?
                 .ok_or_else(|| DbError::Storage(format!("branch not found: {}", current_id)))?;
 
             let parent_id = entry.value.parent_branch_id;

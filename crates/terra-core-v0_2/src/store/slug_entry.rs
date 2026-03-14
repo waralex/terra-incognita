@@ -13,7 +13,8 @@
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_SLUGS: &str = "slugs";
 
@@ -44,6 +45,26 @@ pub struct SlugValue {
     pub slug: String,
 }
 
+impl StorageValue for SlugValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        let mut val = Vec::with_capacity(16 + self.slug.len());
+        val.extend_from_slice(self.id.as_bytes());
+        val.extend_from_slice(self.slug.as_bytes());
+        Ok(val)
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        if bytes.len() < 16 {
+            return Err(DbError::Storage("slug value too short".into()));
+        }
+        let id = Uuid::from_slice(&bytes[..16])
+            .map_err(|e| DbError::Storage(e.to_string()))?;
+        let slug = String::from_utf8(bytes[16..].to_vec())
+            .map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self { id, slug })
+    }
+}
+
 /// Slug entry = key + value.
 #[derive(Debug, Clone)]
 pub struct SlugEntry {
@@ -69,41 +90,30 @@ impl SlugEntry {
 }
 
 impl DbItem for SlugEntry {
+    type Key = SlugKey;
+    type Value = SlugValue;
+
     fn cf() -> &'static str {
         CF_SLUGS
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &SlugKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        let mut val = Vec::with_capacity(16 + self.value.slug.len());
-        val.extend_from_slice(self.value.id.as_bytes());
-        val.extend_from_slice(self.value.slug.as_bytes());
-        Ok(val)
+    fn value(&self) -> &SlugValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = SlugKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        if value.len() < 16 {
-            return Err(DbError::Storage("slug value too short".into()));
-        }
-        let id = Uuid::from_slice(&value[..16])
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let slug = String::from_utf8(value[16..].to_vec())
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: k,
-            value: SlugValue { id, slug },
-        })
+    fn from_parts(key: SlugKey, value: SlugValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::storage_key::StorageKey;
     use crate::io::TerraDb;
 
     fn open_db(dir: &tempfile::TempDir) -> TerraDb {
@@ -127,7 +137,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<SlugEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<SlugEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.value.id, entry.value.id);
         assert_eq!(found.value.slug, "my-entity");
     }
@@ -149,8 +159,8 @@ mod tests {
         batch.put(&e2).unwrap();
         batch.commit().unwrap();
 
-        assert_eq!(db.get::<SlugEntry>(&e1.encode_key()).unwrap().unwrap().value.id, id1);
-        assert_eq!(db.get::<SlugEntry>(&e2.encode_key()).unwrap().unwrap().value.id, id2);
+        assert_eq!(db.get::<SlugEntry>(&e1.key).unwrap().unwrap().value.id, id1);
+        assert_eq!(db.get::<SlugEntry>(&e2.key).unwrap().unwrap().value.id, id2);
     }
 
     #[test]
@@ -170,6 +180,6 @@ mod tests {
     #[test]
     fn fixed_key_size() {
         let entry = SlugEntry::new(Uuid::now_v7(), KIND_ENTITY, "any-length-slug-here", Uuid::now_v7());
-        assert_eq!(entry.encode_key().len(), 48);
+        assert_eq!(entry.key().encode().len(), 48);
     }
 }

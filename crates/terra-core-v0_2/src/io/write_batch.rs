@@ -5,6 +5,8 @@ use std::sync::Arc;
 use rocksdb::DB;
 
 use crate::io::db_item::DbItem;
+use crate::io::storage_key::StorageKey;
+use crate::io::storage_value::StorageValue;
 use crate::io::terra_db::DbError;
 
 /// Atomic batch of writes bound to a specific database.
@@ -29,8 +31,8 @@ impl WriteBatch {
     pub fn put<T: DbItem>(&mut self, item: &T) -> Result<(), DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let key = item.encode_key();
-        let value = item.encode_value()?;
+        let key = item.key().encode();
+        let value = item.value().encode()?;
         self.inner.put_cf(cf, &key, &value);
         Ok(())
     }

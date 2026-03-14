@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_ENTITY_MAIN: &str = "entity_main";
 
@@ -33,6 +34,16 @@ pub struct EntityValue {
     pub description: Option<serde_json::Value>,
 }
 
+impl StorageValue for EntityValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Entity entry = key + value.
 #[derive(Debug, Clone)]
 pub struct EntityEntry {
@@ -41,24 +52,23 @@ pub struct EntityEntry {
 }
 
 impl DbItem for EntityEntry {
+    type Key = EntityKey;
+    type Value = EntityValue;
+
     fn cf() -> &'static str {
         CF_ENTITY_MAIN
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &EntityKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &EntityValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = EntityKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: EntityValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { key: k, value: val })
+    fn from_parts(key: EntityKey, value: EntityValue) -> Self {
+        Self { key, value }
     }
 }
 
@@ -92,7 +102,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<EntityEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<EntityEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.entity_id, entry.key.entity_id);
         assert_eq!(found.value.slug, "test-entity");
     }

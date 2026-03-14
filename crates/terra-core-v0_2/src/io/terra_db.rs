@@ -20,6 +20,8 @@ use std::sync::Arc;
 use rocksdb::{ColumnFamilyDescriptor, Options, DB};
 
 use crate::io::db_item::DbItem;
+use crate::io::storage_key::StorageKey;
+use crate::io::storage_value::StorageValue;
 use crate::io::write_batch::WriteBatch;
 
 /// Access mode for the database.
@@ -40,6 +42,12 @@ pub enum DbError {
 
 impl From<rocksdb::Error> for DbError {
     fn from(e: rocksdb::Error) -> Self {
+        DbError::Storage(e.to_string())
+    }
+}
+
+impl From<crate::io::storage_key::KeyError> for DbError {
+    fn from(e: crate::io::storage_key::KeyError) -> Self {
         DbError::Storage(e.to_string())
     }
 }
@@ -97,12 +105,17 @@ impl TerraDb {
         self.mode
     }
 
-    /// Get an item by its key.
-    pub fn get<T: DbItem>(&self, key: &[u8]) -> Result<Option<T>, DbError> {
+    /// Get an item by its typed key.
+    pub fn get<T: DbItem>(&self, key: &T::Key) -> Result<Option<T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        match self.db.get_cf(cf, key) {
-            Ok(Some(value)) => Ok(Some(T::decode(key, &value)?)),
+        let key_bytes = key.encode();
+        match self.db.get_cf(cf, &key_bytes) {
+            Ok(Some(val_bytes)) => {
+                let k = T::Key::decode(&key_bytes)?;
+                let v = T::Value::decode(&val_bytes)?;
+                Ok(Some(T::from_parts(k, v)))
+            }
             Ok(None) => Ok(None),
             Err(e) => Err(DbError::Storage(e.to_string())),
         }
@@ -146,13 +159,37 @@ impl TerraDb {
 mod tests {
     use super::*;
 
+    use crate::io::storage_key::KeyError;
+    use crate::io::storage_value::StorageValue;
+    use crate::io::storage_key::StorageKey;
+
+    #[derive(Debug, Clone)]
+    struct TestKey;
+
+    impl StorageKey for TestKey {
+        const SIZE: usize = 0;
+        fn encode(&self) -> Vec<u8> { vec![] }
+        fn decode(_bytes: &[u8]) -> Result<Self, KeyError> { Ok(TestKey) }
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestValue;
+
+    impl StorageValue for TestValue {
+        fn encode(&self) -> Result<Vec<u8>, DbError> { Ok(vec![]) }
+        fn decode(_bytes: &[u8]) -> Result<Self, DbError> { Ok(TestValue) }
+    }
+
     struct TestItem;
 
     impl DbItem for TestItem {
+        type Key = TestKey;
+        type Value = TestValue;
+
         fn cf() -> &'static str { "test_cf" }
-        fn encode_key(&self) -> Vec<u8> { vec![] }
-        fn encode_value(&self) -> Result<Vec<u8>, DbError> { Ok(vec![]) }
-        fn decode(_key: &[u8], _value: &[u8]) -> Result<Self, DbError> { Ok(TestItem) }
+        fn key(&self) -> &TestKey { &TestKey }
+        fn value(&self) -> &TestValue { &TestValue }
+        fn from_parts(_key: TestKey, _value: TestValue) -> Self { TestItem }
     }
 
     #[test]

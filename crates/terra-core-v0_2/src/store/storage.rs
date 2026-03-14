@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::config::ProjectConfig;
 use crate::io::{DbError, TerraDb};
-use crate::store::branch::{Branch, MAIN_BRANCH};
+use crate::store::branch::Branch;
 
 use crate::store::assertion_entry::AssertionEntry;
 use crate::store::entity_change_entry::EntityChangeEntry;
@@ -75,6 +75,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::branch::MAIN_BRANCH;
 
     fn test_config() -> Arc<ProjectConfig> {
         Arc::new(ProjectConfig::builder()

@@ -5,10 +5,10 @@
 //! No ValueType — all values are arbitrary JSON in v0.2.
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_SCHEMA_PROPS: &str = "schema_props";
 
@@ -34,6 +34,16 @@ pub struct SchemaPropValue {
     pub description: Option<serde_json::Value>,
 }
 
+impl StorageValue for SchemaPropValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Schema property entry = key + value.
 #[derive(Debug, Clone)]
 pub struct SchemaPropEntry {
@@ -42,30 +52,30 @@ pub struct SchemaPropEntry {
 }
 
 impl DbItem for SchemaPropEntry {
+    type Key = SchemaPropKey;
+    type Value = SchemaPropValue;
+
     fn cf() -> &'static str {
         CF_SCHEMA_PROPS
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &SchemaPropKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &SchemaPropValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = SchemaPropKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: SchemaPropValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { key: k, value: val })
+    fn from_parts(key: SchemaPropKey, value: SchemaPropValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
 
     #[test]
@@ -93,7 +103,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<SchemaPropEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<SchemaPropEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.value.slug, "population");
         assert_eq!(found.key.entity_type_id, entry.key.entity_type_id);
     }

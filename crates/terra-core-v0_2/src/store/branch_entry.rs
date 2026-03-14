@@ -8,13 +8,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_BRANCH_MAIN: &str = "branch_main";
 
-/// Branch key.
-#[derive(Debug, Clone)]
-pub struct BranchKey {
-    pub branch_id: Uuid,
+storage_key! {
+    pub struct BranchKey(16) {
+        branch_id: Uuid,
+    }
 }
 
 /// Branch value.
@@ -28,6 +30,16 @@ pub struct BranchValue {
     pub created_from_tx: Uuid,
 }
 
+impl StorageValue for BranchValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Branch entry = key + value.
 #[derive(Debug, Clone)]
 pub struct BranchEntry {
@@ -36,27 +48,23 @@ pub struct BranchEntry {
 }
 
 impl DbItem for BranchEntry {
+    type Key = BranchKey;
+    type Value = BranchValue;
+
     fn cf() -> &'static str {
         CF_BRANCH_MAIN
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.branch_id.as_bytes().to_vec()
+    fn key(&self) -> &BranchKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &BranchValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let branch_id = Uuid::from_slice(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: BranchValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: BranchKey { branch_id },
-            value: val,
-        })
+    fn from_parts(key: BranchKey, value: BranchValue) -> Self {
+        Self { key, value }
     }
 }
 
@@ -88,7 +96,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<BranchEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<BranchEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.branch_id, id);
         assert_eq!(found.value.slug, "exploration");
     }

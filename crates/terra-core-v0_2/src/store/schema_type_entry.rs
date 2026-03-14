@@ -4,10 +4,10 @@
 //! Value: JSON with slug, description.
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_SCHEMA_TYPES: &str = "schema_types";
 
@@ -31,6 +31,16 @@ pub struct SchemaTypeValue {
     pub description: Option<serde_json::Value>,
 }
 
+impl StorageValue for SchemaTypeValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Schema type entry = key + value.
 #[derive(Debug, Clone)]
 pub struct SchemaTypeEntry {
@@ -39,30 +49,30 @@ pub struct SchemaTypeEntry {
 }
 
 impl DbItem for SchemaTypeEntry {
+    type Key = SchemaTypeKey;
+    type Value = SchemaTypeValue;
+
     fn cf() -> &'static str {
         CF_SCHEMA_TYPES
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &SchemaTypeKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &SchemaTypeValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = SchemaTypeKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: SchemaTypeValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { key: k, value: val })
+    fn from_parts(key: SchemaTypeKey, value: SchemaTypeValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
 
     #[test]
@@ -89,7 +99,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<SchemaTypeEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<SchemaTypeEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.value.slug, "person");
     }
 }

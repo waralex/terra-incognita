@@ -11,13 +11,15 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_ENTITY_CHANGES: &str = "entity_changes";
 
-/// Entity change key.
-#[derive(Debug, Clone)]
-pub struct EntityChangeKey {
-    pub change_id: Uuid,
+storage_key! {
+    pub struct EntityChangeKey(16) {
+        change_id: Uuid,
+    }
 }
 
 /// Entity change value — reasoning for a batch of property assertions.
@@ -28,6 +30,16 @@ pub struct EntityChangeValue {
     pub reasoning: serde_json::Value,
 }
 
+impl StorageValue for EntityChangeValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
+    }
+}
+
 /// Entity change entry = key + value.
 #[derive(Debug, Clone)]
 pub struct EntityChangeEntry {
@@ -36,27 +48,23 @@ pub struct EntityChangeEntry {
 }
 
 impl DbItem for EntityChangeEntry {
+    type Key = EntityChangeKey;
+    type Value = EntityChangeValue;
+
     fn cf() -> &'static str {
         CF_ENTITY_CHANGES
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.change_id.as_bytes().to_vec()
+    fn key(&self) -> &EntityChangeKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &EntityChangeValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let change_id = Uuid::from_slice(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: EntityChangeValue =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: EntityChangeKey { change_id },
-            value: val,
-        })
+    fn from_parts(key: EntityChangeKey, value: EntityChangeValue) -> Self {
+        Self { key, value }
     }
 }
 
@@ -88,7 +96,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<EntityChangeEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<EntityChangeEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.change_id, entry.key.change_id);
         assert_eq!(found.value.reasoning, serde_json::json!("census data"));
     }

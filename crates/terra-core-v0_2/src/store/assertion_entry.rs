@@ -5,10 +5,10 @@
 //!
 //! No fact/hypothesis distinction in v0.2 — all assertions are equal.
 
-use uuid::Uuid;
-
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
+
 
 const CF_ASSERTIONS: &str = "assertions";
 
@@ -32,6 +32,18 @@ pub struct AssertionValue {
     pub value: serde_json::Value,
 }
 
+impl StorageValue for AssertionValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        let value: serde_json::Value =
+            serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self { value })
+    }
+}
+
 /// Assertion entry = key + value.
 #[derive(Debug, Clone)]
 pub struct AssertionEntry {
@@ -40,33 +52,30 @@ pub struct AssertionEntry {
 }
 
 impl DbItem for AssertionEntry {
+    type Key = AssertionKey;
+    type Value = AssertionValue;
+
     fn cf() -> &'static str {
         CF_ASSERTIONS
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &AssertionKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value.value).map_err(|e| DbError::Storage(e.to_string()))
+    fn value(&self) -> &AssertionValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = AssertionKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let val: serde_json::Value =
-            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self {
-            key: k,
-            value: AssertionValue { value: val },
-        })
+    fn from_parts(key: AssertionKey, value: AssertionValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
 
     #[test]
@@ -94,7 +103,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<AssertionEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<AssertionEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.entity_id, entry.key.entity_id);
         assert_eq!(found.value.value, serde_json::json!({"name": "London"}));
     }

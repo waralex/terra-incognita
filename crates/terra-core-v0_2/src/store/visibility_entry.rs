@@ -6,10 +6,10 @@
 //! `item_kind` is a UUID identifying the namespace (same as in slug index).
 //! Reads walk the ancestry chain, latest tx_id wins.
 
-use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::storage_key::storage_key;
+use crate::io::storage_value::StorageValue;
 
 const CF_VISIBILITY: &str = "visibility";
 
@@ -31,6 +31,17 @@ pub struct VisibilityValue {
     pub hidden: bool,
 }
 
+impl StorageValue for VisibilityValue {
+    fn encode(&self) -> Result<Vec<u8>, DbError> {
+        Ok(vec![if self.hidden { 1 } else { 0 }])
+    }
+
+    fn decode(bytes: &[u8]) -> Result<Self, DbError> {
+        let hidden = bytes.first().copied().unwrap_or(0) == 1;
+        Ok(Self { hidden })
+    }
+}
+
 /// Visibility entry = key + value.
 #[derive(Debug, Clone)]
 pub struct VisibilityEntry {
@@ -39,32 +50,30 @@ pub struct VisibilityEntry {
 }
 
 impl DbItem for VisibilityEntry {
+    type Key = VisibilityKey;
+    type Value = VisibilityValue;
+
     fn cf() -> &'static str {
         CF_VISIBILITY
     }
 
-    fn encode_key(&self) -> Vec<u8> {
-        self.key.encode()
+    fn key(&self) -> &VisibilityKey {
+        &self.key
     }
 
-    fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        Ok(vec![if self.value.hidden { 1 } else { 0 }])
+    fn value(&self) -> &VisibilityValue {
+        &self.value
     }
 
-    fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = VisibilityKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        let hidden = value.first().copied().unwrap_or(0) == 1;
-        Ok(Self {
-            key: k,
-            value: VisibilityValue { hidden },
-        })
+    fn from_parts(key: VisibilityKey, value: VisibilityValue) -> Self {
+        Self { key, value }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
 
     fn open_db(dir: &tempfile::TempDir) -> TerraDb {
@@ -95,7 +104,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<VisibilityEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<VisibilityEntry>(&entry.key).unwrap().unwrap();
         assert!(found.value.hidden);
         assert_eq!(found.key.item_id, entry.key.item_id);
     }
@@ -119,7 +128,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<VisibilityEntry>(&entry.encode_key()).unwrap().unwrap();
+        let found = db.get::<VisibilityEntry>(&entry.key).unwrap().unwrap();
         assert!(!found.value.hidden);
     }
 }

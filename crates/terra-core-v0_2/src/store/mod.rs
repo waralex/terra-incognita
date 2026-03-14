@@ -5,8 +5,6 @@ pub mod branch_entry;
 pub mod entity_entry;
 pub mod managed_entry;
 pub mod prefix;
-pub mod schema_prop_entry;
-pub mod schema_type_entry;
 pub mod slug_entry;
 pub mod storage;
 pub mod transaction_entry;

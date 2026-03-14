@@ -13,8 +13,6 @@ use crate::store::entity_change_entry::EntityChangeEntry;
 use crate::store::branch_entry::BranchEntry;
 use crate::store::entity_entry::EntityEntry;
 use crate::store::managed_entry::ManagedEntry;
-use crate::store::schema_prop_entry::SchemaPropEntry;
-use crate::store::schema_type_entry::SchemaTypeEntry;
 use crate::store::slug_entry::SlugEntry;
 use crate::store::transaction_entry::TransactionEntry;
 use crate::store::visibility_entry::VisibilityEntry;
@@ -59,8 +57,6 @@ impl Storage {
             .with::<BranchEntry>()
             .with::<EntityEntry>()
             .with::<ManagedEntry>()
-            .with::<SchemaPropEntry>()
-            .with::<SchemaTypeEntry>()
             .with::<SlugEntry>()
             .with::<TransactionEntry>()
             .with::<VisibilityEntry>();

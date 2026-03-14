@@ -7,17 +7,15 @@
 use serde::{Deserialize, Serialize};
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::store::versioned_key::versioned_key;
 
 const CF_SCHEMA_PROPS: &str = "schema_props";
 
-storage_key! {
+versioned_key! {
     pub struct SchemaPropKey {
-        branch_id: Uuid,
         entity_type_id: Uuid,
         prop_id: Uuid,
-        tx_id: Uuid,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypePrefix(32), BranchTypePropPrefix(48)

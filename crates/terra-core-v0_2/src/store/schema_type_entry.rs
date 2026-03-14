@@ -6,16 +6,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::store::versioned_key::versioned_key;
 
 const CF_SCHEMA_TYPES: &str = "schema_types";
 
-storage_key! {
+versioned_key! {
     pub struct SchemaTypeKey {
-        branch_id: Uuid,
         type_id: Uuid,
-        tx_id: Uuid,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypePrefix(32)

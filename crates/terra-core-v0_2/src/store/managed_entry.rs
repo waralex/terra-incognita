@@ -8,18 +8,16 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
 use crate::io::{DbError, DbItem};
+use crate::store::versioned_key::versioned_key;
 
 const CF_MANAGED_MAIN: &str = "managed_main";
 
-storage_key! {
+versioned_key! {
     pub struct ManagedKey {
-        branch_id: Uuid,
         type_hash: Uuid,
         item_id: Uuid,
-        tx_id: Uuid,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypeHashPrefix(32), BranchTypeHashItemPrefix(48)

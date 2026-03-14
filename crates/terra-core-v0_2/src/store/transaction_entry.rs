@@ -2,8 +2,8 @@
 //!
 //! Key: `branch_id(16) | tx_id(16)` = 32 bytes.
 //! Value: JSON with dynamic metadata fields (defined by DataSchema).
+//! Timestamp is derived from tx_id (UUID v7) — not stored separately.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::io::{DbItem, DbError};
@@ -24,7 +24,6 @@ storage_key! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionValue {
     pub meta: serde_json::Map<String, serde_json::Value>,
-    pub timestamp: DateTime<Utc>,
 }
 
 impl StorageValue for TransactionValue {
@@ -87,10 +86,7 @@ mod tests {
                 branch_id: Uuid::now_v7(),
                 tx_id: Uuid::now_v7(),
             },
-            value: TransactionValue {
-                meta,
-                timestamp: Utc::now(),
-            },
+            value: TransactionValue { meta },
         };
 
         let mut batch = db.batch();

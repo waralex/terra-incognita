@@ -5,9 +5,12 @@
 
 use uuid::Uuid;
 
+use serde_json::{Map, Value};
+
 use crate::io::DbError;
 use crate::store::branch_entry::{BranchEntry, BranchKey};
 use crate::store::storage::Storage;
+use crate::store::transaction_writer::TransactionWriter;
 
 /// Main branch has a nil UUID and always exists implicitly.
 pub const MAIN_BRANCH: Uuid = Uuid::nil();
@@ -63,6 +66,12 @@ impl Branch {
     /// Precomputed ancestry chain.
     pub fn ancestry(&self) -> &[AncestryEntry] {
         &self.ancestry
+    }
+
+    /// Start a new transaction on this branch.
+    pub fn transaction(&self, meta: Map<String, Value>) -> Result<TransactionWriter, DbError> {
+        let batch = self.storage.db.batch();
+        Ok(TransactionWriter::new(self.branch_id, meta, batch))
     }
 
     fn compute_ancestry(storage: &Storage, branch_id: Uuid, max_depth: usize) -> Result<Vec<AncestryEntry>, DbError> {

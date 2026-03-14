@@ -10,4 +10,5 @@ pub mod schema_type_entry;
 pub mod slug_entry;
 pub mod storage;
 pub mod transaction_entry;
+pub mod transaction_writer;
 pub mod visibility_entry;

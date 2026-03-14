@@ -1,7 +1,7 @@
 //! Branch record entry.
 //!
 //! Key: `branch_id(16)` = 16 bytes.
-//! Value: JSON with slug, meta, created_from_tx, ancestry.
+//! Value: JSON with slug, meta, created_from_tx.
 //! Not versioned — branches are immutable after creation.
 
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,6 @@ pub struct BranchValue {
     pub slug: String,
     pub meta: serde_json::Map<String, serde_json::Value>,
     pub created_from_tx: Uuid,
-    pub ancestry: Vec<(Uuid, Uuid)>,
 }
 
 /// Branch entry = key + value.
@@ -78,7 +77,6 @@ mod tests {
                 slug: "exploration".into(),
                 meta: serde_json::Map::new(),
                 created_from_tx: Uuid::nil(),
-                ancestry: vec![(id, Uuid::max()), (Uuid::nil(), Uuid::max())],
             },
         };
 
@@ -89,6 +87,5 @@ mod tests {
         let found = db.get::<BranchEntry>(&entry.encode_key()).unwrap().unwrap();
         assert_eq!(found.key.branch_id, id);
         assert_eq!(found.value.slug, "exploration");
-        assert_eq!(found.value.ancestry.len(), 2);
     }
 }

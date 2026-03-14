@@ -7,7 +7,7 @@
 use crate::io::DbItem;
 use crate::io::storage_key::storage_key;
 use crate::io::valid_prefix::{ValidPrefix, impl_prefix};
-use crate::io::versioned_key::VersionedKey;
+use crate::store::versioned_key::VersionedKey;
 
 use crate::store::transaction_entry::TransactionEntry;
 

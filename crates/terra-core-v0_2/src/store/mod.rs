@@ -11,4 +11,5 @@ pub mod slug_entry;
 pub mod storage;
 pub mod transaction_entry;
 pub mod transaction_writer;
+pub mod versioned_key;
 pub mod visibility_entry;

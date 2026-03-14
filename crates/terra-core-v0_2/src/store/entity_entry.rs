@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
 use crate::io::storage_value::StorageValue;
-use crate::io::versioned_key::versioned_key;
+use crate::store::versioned_key::versioned_key;
 
 const CF_ENTITY_MAIN: &str = "entity_main";
 

@@ -14,7 +14,7 @@ const CF_ASSERTIONS: &str = "assertions";
 
 storage_key! {
     pub struct AssertionKey {
-        branch_id: Uuid,
+        branch_id: Slug,
         prop_id: Uuid,
         tx_id: Uuid,
         change_id: Uuid,
@@ -85,7 +85,7 @@ mod tests {
 
         let entry = AssertionEntry {
             key: AssertionKey {
-                branch_id: Uuid::now_v7(),
+                branch_id: "main".parse::<crate::io::slug::Slug>().unwrap(),
                 prop_id: Uuid::now_v7(),
                 tx_id: Uuid::now_v7(),
                 change_id: Uuid::now_v7(),

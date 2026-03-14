@@ -16,7 +16,7 @@ const CF_TRANSACTIONS: &str = "transactions";
 
 storage_key! {
     pub struct TransactionKey {
-        branch_id: Uuid,
+        branch_id: Slug,
         tx_id: Uuid,
     }
 }
@@ -72,6 +72,7 @@ impl_prefix!(BranchPrefix => TransactionEntry);
 mod tests {
     use super::*;
     use uuid::Uuid;
+    use crate::io::slug::Slug;
     use crate::io::TerraDb;
 
     #[test]
@@ -87,7 +88,7 @@ mod tests {
 
         let entry = TransactionEntry {
             key: TransactionKey {
-                branch_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: TransactionValue { meta },

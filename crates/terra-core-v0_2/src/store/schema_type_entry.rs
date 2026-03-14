@@ -1,6 +1,6 @@
 //! Schema entity type entry.
 //!
-//! Key: `branch_id(16) | type_id(16) | tx_id(16)` = 48 bytes.
+//! Key: `hash(branch_id)(16) | hash(type_id)(16) | tx_id(16)` = 48 bytes + slug suffixes.
 //! Value: JSON with slug, description.
 
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ const CF_SCHEMA_TYPES: &str = "schema_types";
 
 versioned_key! {
     pub struct SchemaTypeKey {
-        type_id: Uuid,
+        type_id: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypePrefix(32)
@@ -69,6 +69,7 @@ mod tests {
     use super::*;
     use uuid::Uuid;
     use crate::io::TerraDb;
+    use crate::io::slug::Slug;
 
     #[test]
     fn roundtrip() {
@@ -80,8 +81,8 @@ mod tests {
 
         let entry = SchemaTypeEntry {
             key: SchemaTypeKey {
-                branch_id: Uuid::now_v7(),
-                type_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
+                type_id: "person".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: SchemaTypeValue {

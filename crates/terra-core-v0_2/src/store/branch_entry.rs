@@ -1,6 +1,6 @@
 //! Branch record entry.
 //!
-//! Key: `branch_id(16)` = 16 bytes.
+//! Key: `hash(branch_id)(16)` = 16 bytes + slug suffix.
 //! Value: JSON with slug, meta, created_from_tx.
 //! Not versioned — branches are immutable after creation.
 
@@ -15,7 +15,7 @@ const CF_BRANCH_MAIN: &str = "branch_main";
 
 storage_key! {
     pub struct BranchKey {
-        branch_id: Uuid,
+        branch_id: Slug,
     }
 }
 
@@ -24,8 +24,8 @@ storage_key! {
 pub struct BranchValue {
     pub slug: String,
     pub meta: serde_json::Map<String, serde_json::Value>,
-    /// Branch this was forked from. `Uuid::nil()` = forked from main.
-    pub parent_branch_id: Uuid,
+    /// Parent branch slug. "main" for branches forked from main.
+    pub parent_branch_slug: String,
     /// Transaction on the parent branch at which this branch was created.
     pub created_from_tx: Uuid,
 }
@@ -71,6 +71,7 @@ impl DbItem for BranchEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::slug::Slug;
     use crate::io::TerraDb;
 
     #[test]
@@ -81,13 +82,13 @@ mod tests {
             .open()
             .unwrap();
 
-        let id = Uuid::now_v7();
+        let branch_slug: Slug = "exploration".parse().unwrap();
         let entry = BranchEntry {
-            key: BranchKey { branch_id: id },
+            key: BranchKey { branch_id: branch_slug.clone() },
             value: BranchValue {
                 slug: "exploration".into(),
                 meta: serde_json::Map::new(),
-                parent_branch_id: Uuid::nil(),
+                parent_branch_slug: "main".into(),
                 created_from_tx: Uuid::nil(),
             },
         };
@@ -97,7 +98,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<BranchEntry>(&entry.key).unwrap().unwrap();
-        assert_eq!(found.key.branch_id, id);
+        assert_eq!(found.key.branch_id, branch_slug);
         assert_eq!(found.value.slug, "exploration");
     }
 }

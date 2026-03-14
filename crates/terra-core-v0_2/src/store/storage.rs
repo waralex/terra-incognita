@@ -3,10 +3,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::config::ProjectConfig;
 use crate::io::{DbError, TerraDb};
+use crate::io::slug::Slug;
 use crate::store::branch::Branch;
 
 use crate::store::assertion_entry::AssertionEntry;
@@ -43,8 +42,8 @@ impl Storage {
         Branch::main(self.clone())
     }
 
-    /// Open a branch by ID.
-    pub fn branch(&self, branch_id: Uuid) -> Result<Branch, DbError> {
+    /// Open a branch by slug.
+    pub fn branch(&self, branch_id: Slug) -> Result<Branch, DbError> {
         Branch::open(self.clone(), branch_id)
     }
 
@@ -75,7 +74,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::branch::MAIN_BRANCH;
+    use crate::store::branch::main_branch_slug;
 
     fn test_config() -> Arc<ProjectConfig> {
         Arc::new(ProjectConfig::builder()
@@ -100,6 +99,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = storage.main_branch();
-        assert_eq!(branch.id(), MAIN_BRANCH);
+        assert_eq!(branch.id(), &main_branch_slug());
     }
 }

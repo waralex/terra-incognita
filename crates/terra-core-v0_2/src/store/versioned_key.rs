@@ -1,63 +1,76 @@
 //! Trait and macro for keys of records that live inside transactions.
 //!
-//! All versioned entries follow the pattern `branch_id | ... | tx_id` —
+//! All versioned entries follow the pattern `branch_id(Slug) | ... | tx_id(Uuid)` —
 //! branch first (for ancestry walk), tx last (for reverse scan to latest).
-//! The middle is domain-specific addressing (all fields Uuid).
+//! The middle is domain-specific addressing (Slug or Uuid fields).
 
-use uuid::Uuid;
-
+use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
 
 /// Key of a versioned, branch-scoped record.
 ///
 /// Implemented by keys whose entries are created inside transactions
-/// and follow the `branch_id | domain | tx_id` layout.
+/// and follow the `branch_id(Slug) | domain | tx_id(Uuid)` layout.
 pub trait VersionedKey: StorageKey {
-    fn branch_id(&self) -> Uuid;
-    fn tx_id(&self) -> Uuid;
+    fn branch_id(&self) -> &Slug;
+    fn tx_id(&self) -> uuid::Uuid;
 }
 
-/// Declares a versioned storage key: `branch_id(16) | middle Uuid fields | tx_id(16)`.
+/// Declares a versioned storage key: `branch_id(Slug) | middle fields | tx_id(Uuid)`.
 ///
 /// Generates the struct, `StorageKey` impl, and `VersionedKey` impl.
-/// Only the middle domain fields need to be specified (all Uuid).
-/// Size is computed automatically.
+/// Only the middle domain fields need to be specified.
+/// `branch_id: Slug` and `tx_id: Uuid` are added automatically.
 ///
 /// ```ignore
 /// versioned_key! {
 ///     pub struct EntityKey {
-///         entity_id: Uuid,
+///         entity_id: Slug,
 ///     }
 /// }
-/// // Expands to a 48-byte key: branch_id(16) | entity_id(16) | tx_id(16)
+/// // Fixed part (48 bytes): hash(branch_id)(16) | hash(entity_id)(16) | tx_id(16)
+/// // Suffix: branch_id slug + entity_id slug
 /// ```
 macro_rules! versioned_key {
     (
         $vis:vis struct $name:ident {
-            $( $field:ident : Uuid ),* $(,)?
+            $( $field:ident : $ty:ident ),* $(,)?
         }
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         $vis struct $name {
-            pub branch_id: uuid::Uuid,
-            $( pub $field: uuid::Uuid, )*
+            pub branch_id: $crate::io::slug::Slug,
+            $( pub $field: versioned_key!(@rust_type $ty), )*
             pub tx_id: uuid::Uuid,
         }
 
         impl $crate::io::storage_key::StorageKey for $name {
-            const SIZE: usize = (2 + versioned_key!(@count $( $field )*)) * 16;
+            // Fixed: branch hash(16) + middle fields + tx(16)
+            const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )* + 16;
 
             fn encode(&self) -> Vec<u8> {
-                let mut buf = vec![0u8; Self::SIZE];
+                let _suffix_size: usize = 1 + self.branch_id.len()
+                    $( + versioned_key!(@suffix_size self.$field, $ty) )*;
+                let mut buf = Vec::with_capacity(Self::SIZE + _suffix_size);
+                buf.resize(Self::SIZE, 0u8);
                 let mut _off: usize = 0;
 
-                buf[_off.._off + 16].copy_from_slice(self.branch_id.as_bytes());
+                // Pass 1: fixed part
+                // branch_id hash
+                let _hash = self.branch_id.hash();
+                buf[_off.._off + 16].copy_from_slice(_hash.as_bytes());
                 _off += 16;
-                $({
-                    buf[_off.._off + 16].copy_from_slice(self.$field.as_bytes());
-                    _off += 16;
-                })*
+                // middle fields
+                $( versioned_key!(@encode_fixed buf, _off, self.$field, $ty); )*
+                // tx_id
                 buf[_off.._off + 16].copy_from_slice(self.tx_id.as_bytes());
+
+                // Pass 2: slug suffixes
+                // branch_id slug
+                buf.push(self.branch_id.len() as u8);
+                buf.extend_from_slice(self.branch_id.as_str().as_bytes());
+                // middle slug fields
+                $( versioned_key!(@encode_suffix buf, self.$field, $ty); )*
 
                 buf
             }
@@ -69,15 +82,22 @@ macro_rules! versioned_key {
                     ));
                 }
                 let mut _off: usize = 0;
+                let mut _suf: usize = Self::SIZE;
 
-                let branch_id = uuid::Uuid::from_slice(&bytes[_off.._off + 16])
-                    .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
+                // branch_id: skip hash, read from suffix
                 _off += 16;
-                $(
-                    let $field = uuid::Uuid::from_slice(&bytes[_off.._off + 16])
-                        .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
-                    _off += 16;
-                )*
+                let _len = bytes[_suf] as usize;
+                _suf += 1;
+                let _slug_str = std::str::from_utf8(&bytes[_suf.._suf + _len])
+                    .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
+                let branch_id: $crate::io::slug::Slug = _slug_str.parse()
+                    .map_err(|e: $crate::io::slug::SlugError| $crate::io::storage_key::KeyError(e.to_string()))?;
+                _suf += _len;
+
+                // middle fields
+                $( let $field = versioned_key!(@decode bytes, _off, _suf, $ty)?; )*
+
+                // tx_id
                 let tx_id = uuid::Uuid::from_slice(&bytes[_off.._off + 16])
                     .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
 
@@ -86,13 +106,59 @@ macro_rules! versioned_key {
         }
 
         impl $crate::store::versioned_key::VersionedKey for $name {
-            fn branch_id(&self) -> uuid::Uuid { self.branch_id }
+            fn branch_id(&self) -> &$crate::io::slug::Slug { &self.branch_id }
             fn tx_id(&self) -> uuid::Uuid { self.tx_id }
         }
     };
 
-    (@count) => { 0usize };
-    (@count $head:ident $( $tail:ident )*) => { 1usize + versioned_key!(@count $( $tail )*) };
+    // --- Type mappings ---
+    (@rust_type Uuid) => { uuid::Uuid };
+    (@rust_type Slug) => { $crate::io::slug::Slug };
+
+    // --- Fixed part sizes ---
+    (@field_size Uuid) => { 16 };
+    (@field_size Slug) => { 16 };
+
+    // --- Suffix sizes (runtime) ---
+    (@suffix_size $val:expr, Uuid) => { 0usize };
+    (@suffix_size $val:expr, Slug) => { 1 + $val.len() };
+
+    // --- Encode fixed part ---
+    (@encode_fixed $buf:ident, $off:ident, $val:expr, Uuid) => {
+        $buf[$off..$off + 16].copy_from_slice($val.as_bytes());
+        $off += 16;
+    };
+    (@encode_fixed $buf:ident, $off:ident, $val:expr, Slug) => {
+        let _hash = $val.hash();
+        $buf[$off..$off + 16].copy_from_slice(_hash.as_bytes());
+        $off += 16;
+    };
+
+    // --- Encode suffix ---
+    (@encode_suffix $buf:ident, $val:expr, Uuid) => {};
+    (@encode_suffix $buf:ident, $val:expr, Slug) => {
+        $buf.push($val.len() as u8);
+        $buf.extend_from_slice($val.as_str().as_bytes());
+    };
+
+    // --- Decode (two offsets: _off for fixed, _suf for suffix) ---
+    (@decode $buf:ident, $off:ident, $suf:ident, Uuid) => {{
+        let val = uuid::Uuid::from_slice(&$buf[$off..$off + 16])
+            .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()));
+        $off += 16;
+        val
+    }};
+    (@decode $buf:ident, $off:ident, $suf:ident, Slug) => {{
+        $off += 16; // skip hash
+        let _len = $buf[$suf] as usize;
+        $suf += 1;
+        let _slug_str = std::str::from_utf8(&$buf[$suf..$suf + _len])
+            .map_err(|e| $crate::io::storage_key::KeyError(e.to_string()))?;
+        $suf += _len;
+        let val: Result<$crate::io::slug::Slug, $crate::io::storage_key::KeyError> = _slug_str.parse()
+            .map_err(|e: $crate::io::slug::SlugError| $crate::io::storage_key::KeyError(e.to_string()));
+        val
+    }};
 }
 
 pub(crate) use versioned_key;
@@ -100,10 +166,17 @@ pub(crate) use versioned_key;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     versioned_key! {
-        pub struct TwoFieldKey {
-            entity_id: Uuid,
+        pub struct SlugMiddleKey {
+            entity_id: Slug,
+        }
+    }
+
+    versioned_key! {
+        pub struct UuidMiddleKey {
+            change_id: Uuid,
         }
     }
 
@@ -112,68 +185,134 @@ mod tests {
     }
 
     versioned_key! {
-        pub struct ThreeFieldKey {
-            a: Uuid,
-            b: Uuid,
-            c: Uuid,
+        pub struct MultiSlugKey {
+            type_name: Slug,
+            prop_name: Slug,
+        }
+    }
+
+    versioned_key! {
+        pub struct MixedKey {
+            type_name: Slug,
+            seq: Uuid,
         }
     }
 
     #[test]
     fn auto_size() {
         assert_eq!(EmptyMiddleKey::SIZE, 32);
-        assert_eq!(TwoFieldKey::SIZE, 48);
-        assert_eq!(ThreeFieldKey::SIZE, 80);
+        assert_eq!(SlugMiddleKey::SIZE, 48);
+        assert_eq!(UuidMiddleKey::SIZE, 48);
+        assert_eq!(MultiSlugKey::SIZE, 64);
+        assert_eq!(MixedKey::SIZE, 64);
     }
 
     #[test]
-    fn roundtrip_with_middle() {
-        let key = TwoFieldKey {
-            branch_id: Uuid::from_u128(1),
-            entity_id: Uuid::from_u128(2),
+    fn roundtrip_slug_middle() {
+        let branch: Slug = "main".parse().unwrap();
+        let entity: Slug = "my-entity".parse().unwrap();
+        let key = SlugMiddleKey {
+            branch_id: branch.clone(),
+            entity_id: entity.clone(),
             tx_id: Uuid::from_u128(3),
         };
         let bytes = key.encode();
-        assert_eq!(bytes.len(), 48);
-        let decoded = TwoFieldKey::decode(&bytes).unwrap();
-        assert_eq!(decoded, key);
+        assert!(bytes.len() > SlugMiddleKey::SIZE); // has suffix
+        let decoded = SlugMiddleKey::decode(&bytes).unwrap();
+        assert_eq!(decoded.branch_id, branch);
+        assert_eq!(decoded.entity_id, entity);
+        assert_eq!(decoded.tx_id, Uuid::from_u128(3));
+    }
+
+    #[test]
+    fn roundtrip_uuid_middle() {
+        let branch: Slug = "main".parse().unwrap();
+        let key = UuidMiddleKey {
+            branch_id: branch.clone(),
+            change_id: Uuid::from_u128(42),
+            tx_id: Uuid::from_u128(3),
+        };
+        let bytes = key.encode();
+        let decoded = UuidMiddleKey::decode(&bytes).unwrap();
+        assert_eq!(decoded.branch_id, branch);
+        assert_eq!(decoded.change_id, Uuid::from_u128(42));
     }
 
     #[test]
     fn roundtrip_empty_middle() {
+        let branch: Slug = "exploration".parse().unwrap();
         let key = EmptyMiddleKey {
-            branch_id: Uuid::from_u128(1),
-            tx_id: Uuid::from_u128(2),
+            branch_id: branch.clone(),
+            tx_id: Uuid::from_u128(1),
         };
         let bytes = key.encode();
-        assert_eq!(bytes.len(), 32);
         let decoded = EmptyMiddleKey::decode(&bytes).unwrap();
-        assert_eq!(decoded, key);
+        assert_eq!(decoded.branch_id, branch);
+        assert_eq!(decoded.tx_id, Uuid::from_u128(1));
+    }
+
+    #[test]
+    fn roundtrip_multi_slug() {
+        let branch: Slug = "main".parse().unwrap();
+        let t: Slug = "person".parse().unwrap();
+        let p: Slug = "age".parse().unwrap();
+        let key = MultiSlugKey {
+            branch_id: branch.clone(),
+            type_name: t.clone(),
+            prop_name: p.clone(),
+            tx_id: Uuid::from_u128(1),
+        };
+        let bytes = key.encode();
+        let decoded = MultiSlugKey::decode(&bytes).unwrap();
+        assert_eq!(decoded.branch_id, branch);
+        assert_eq!(decoded.type_name, t);
+        assert_eq!(decoded.prop_name, p);
+    }
+
+    #[test]
+    fn roundtrip_mixed() {
+        let branch: Slug = "main".parse().unwrap();
+        let t: Slug = "task".parse().unwrap();
+        let key = MixedKey {
+            branch_id: branch.clone(),
+            type_name: t.clone(),
+            seq: Uuid::from_u128(99),
+            tx_id: Uuid::from_u128(1),
+        };
+        let bytes = key.encode();
+        let decoded = MixedKey::decode(&bytes).unwrap();
+        assert_eq!(decoded.type_name, t);
+        assert_eq!(decoded.seq, Uuid::from_u128(99));
     }
 
     #[test]
     fn versioned_key_trait() {
-        let key = TwoFieldKey {
-            branch_id: Uuid::from_u128(10),
-            entity_id: Uuid::from_u128(20),
+        let branch: Slug = "main".parse().unwrap();
+        let key = SlugMiddleKey {
+            branch_id: branch.clone(),
+            entity_id: "test".parse().unwrap(),
             tx_id: Uuid::from_u128(30),
         };
-        assert_eq!(key.branch_id(), Uuid::from_u128(10));
+        assert_eq!(key.branch_id(), &branch);
         assert_eq!(key.tx_id(), Uuid::from_u128(30));
     }
 
     #[test]
-    fn keys_sort_by_fields_then_tx() {
-        let k1 = TwoFieldKey {
-            branch_id: Uuid::from_u128(1),
-            entity_id: Uuid::from_u128(2),
-            tx_id: Uuid::from_u128(10),
+    fn fixed_part_sorts_by_hash() {
+        let branch: Slug = "main".parse().unwrap();
+        let k1 = SlugMiddleKey {
+            branch_id: branch.clone(),
+            entity_id: "alpha".parse().unwrap(),
+            tx_id: Uuid::from_u128(1),
         };
-        let k2 = TwoFieldKey {
-            branch_id: Uuid::from_u128(1),
-            entity_id: Uuid::from_u128(2),
-            tx_id: Uuid::from_u128(20),
+        let k2 = SlugMiddleKey {
+            branch_id: branch.clone(),
+            entity_id: "beta".parse().unwrap(),
+            tx_id: Uuid::from_u128(1),
         };
-        assert!(k1.encode() < k2.encode());
+        let e1 = k1.encode();
+        let e2 = k2.encode();
+        // Fixed parts (first SIZE bytes) differ by hash
+        assert_ne!(&e1[..SlugMiddleKey::SIZE], &e2[..SlugMiddleKey::SIZE]);
     }
 }

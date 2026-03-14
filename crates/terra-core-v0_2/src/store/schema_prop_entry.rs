@@ -1,6 +1,6 @@
 //! Schema property entry.
 //!
-//! Key: `branch_id(16) | entity_type_id(16) | prop_id(16) | tx_id(16)` = 64 bytes.
+//! Key: `hash(branch_id)(16) | hash(entity_type_id)(16) | hash(prop_id)(16) | tx_id(16)` = 64 bytes + slug suffixes.
 //! Value: JSON with slug, description.
 //! No ValueType — all values are arbitrary JSON in v0.2.
 
@@ -14,8 +14,8 @@ const CF_SCHEMA_PROPS: &str = "schema_props";
 
 versioned_key! {
     pub struct SchemaPropKey {
-        entity_type_id: Uuid,
-        prop_id: Uuid,
+        entity_type_id: Slug,
+        prop_id: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypePrefix(32), BranchTypePropPrefix(48)
@@ -71,6 +71,7 @@ mod tests {
     use super::*;
     use uuid::Uuid;
     use crate::io::TerraDb;
+    use crate::io::slug::Slug;
 
     #[test]
     fn roundtrip() {
@@ -82,9 +83,9 @@ mod tests {
 
         let entry = SchemaPropEntry {
             key: SchemaPropKey {
-                branch_id: Uuid::now_v7(),
-                entity_type_id: Uuid::now_v7(),
-                prop_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
+                entity_type_id: "country".parse::<Slug>().unwrap(),
+                prop_id: "population".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: SchemaPropValue {

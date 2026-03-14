@@ -1,6 +1,6 @@
 //! Entity record entry.
 //!
-//! Key: `branch_id(16) | entity_id(16) | tx_id(16)` = 48 bytes.
+//! Key: `hash(branch_id)(16) | hash(entity_id)(16) | tx_id(16)` = 48 bytes + slug suffixes.
 //! Value: JSON with slug, entity_type_id, description.
 //! Versioned — each mutation writes a new record with a new tx_id.
 
@@ -15,7 +15,7 @@ const CF_ENTITY_MAIN: &str = "entity_main";
 
 versioned_key! {
     pub struct EntityKey {
-        entity_id: Uuid,
+        entity_id: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchEntityPrefix(32)
@@ -71,6 +71,7 @@ impl DbItem for EntityEntry {
 mod tests {
     use super::*;
     use crate::io::TerraDb;
+    use crate::io::slug::Slug;
 
     #[test]
     fn roundtrip() {
@@ -82,8 +83,8 @@ mod tests {
 
         let entry = EntityEntry {
             key: EntityKey {
-                branch_id: Uuid::now_v7(),
-                entity_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
+                entity_id: "test-entity".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: EntityValue {

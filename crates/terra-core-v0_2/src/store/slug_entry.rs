@@ -13,6 +13,7 @@
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
+use crate::io::slug::Slug;
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
 
@@ -23,7 +24,7 @@ const SLUG_HASH_NAMESPACE: Uuid = Uuid::from_u128(0xA1B2C3D4_E5F6_7890_ABCD_EF12
 
 storage_key! {
     pub struct SlugKey {
-        branch_id: Uuid,
+        branch_id: Slug,
         kind: Uuid,
         slug_hash: Uuid,
     }
@@ -71,7 +72,7 @@ pub struct SlugEntry {
 
 impl SlugEntry {
     /// Create a new slug entry from components.
-    pub fn new(branch_id: Uuid, kind: Uuid, slug: &str, id: Uuid) -> Self {
+    pub fn new(branch_id: Slug, kind: Uuid, slug: &str, id: Uuid) -> Self {
         Self {
             key: SlugKey {
                 branch_id,
@@ -110,6 +111,7 @@ impl DbItem for SlugEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::slug::Slug;
     use crate::io::storage_key::StorageKey;
     use crate::io::TerraDb;
 
@@ -128,7 +130,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
 
-        let entry = SlugEntry::new(Uuid::now_v7(), KIND_ENTITY, "my-entity", Uuid::now_v7());
+        let branch: Slug = "main".parse().unwrap();
+        let entry = SlugEntry::new(branch, KIND_ENTITY, "my-entity", Uuid::now_v7());
 
         let mut batch = db.batch();
         batch.put(&entry).unwrap();
@@ -144,11 +147,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
 
-        let branch = Uuid::now_v7();
+        let branch: Slug = "main".parse().unwrap();
         let id1 = Uuid::now_v7();
         let id2 = Uuid::now_v7();
 
-        let e1 = SlugEntry::new(branch, KIND_ENTITY, "same", id1);
+        let e1 = SlugEntry::new(branch.clone(), KIND_ENTITY, "same", id1);
         let e2 = SlugEntry::new(branch, KIND_BRANCH, "same", id2);
 
         let mut batch = db.batch();
@@ -176,7 +179,12 @@ mod tests {
 
     #[test]
     fn fixed_key_size() {
-        let entry = SlugEntry::new(Uuid::now_v7(), KIND_ENTITY, "any-length-slug-here", Uuid::now_v7());
-        assert_eq!(entry.key().encode().len(), 48);
+        let branch: Slug = "main".parse().unwrap();
+        let entry = SlugEntry::new(branch, KIND_ENTITY, "any-length-slug-here", Uuid::now_v7());
+        // Fixed part: hash(branch_id)(16) + kind(16) + slug_hash(16) = 48
+        // Suffix: len(1) + "main"(4) = 5
+        // Total: 53
+        assert_eq!(SlugKey::SIZE, 48);
+        assert_eq!(entry.key().encode().len(), 48 + 1 + 4);
     }
 }

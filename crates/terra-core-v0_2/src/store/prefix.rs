@@ -12,7 +12,7 @@ use crate::store::versioned_key::VersionedKey;
 // Prefix for scanning all records on a given branch.
 storage_key! {
     pub struct BranchPrefix {
-        branch_id: Uuid,
+        branch_id: Slug,
     }
 }
 

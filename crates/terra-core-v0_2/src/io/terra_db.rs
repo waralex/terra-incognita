@@ -124,17 +124,22 @@ impl TerraDb {
     }
 
     /// Iterate forward over items whose keys share the given prefix.
+    ///
+    /// Only the fixed part of the prefix key (first `SIZE` bytes) is used for matching.
+    /// Slug suffixes are excluded from prefix comparison since they appear after
+    /// the fixed part and won't align with the entry key layout.
     pub fn scan<'a, T: DbItem>(
         &'a self,
         prefix: &impl ValidPrefix<T>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let prefix_bytes = prefix.encode();
+        let full_bytes = prefix.encode();
+        let fixed_prefix = full_bytes[..prefix.fixed_size()].to_vec();
         let opts = ReadOptions::default();
-        let mode = IteratorMode::From(&prefix_bytes, Direction::Forward);
+        let mode = IteratorMode::From(&fixed_prefix, Direction::Forward);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, prefix_bytes))
+        Ok(DbIterator::new(inner, fixed_prefix))
     }
 
     /// Iterate in reverse over items whose keys share the given prefix.
@@ -147,14 +152,15 @@ impl TerraDb {
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let prefix_bytes = prefix.encode();
+        let full_bytes = prefix.encode();
+        let fixed_prefix = full_bytes[..prefix.fixed_size()].to_vec();
         let opts = ReadOptions::default();
-        let mut ceiling = prefix_bytes.clone();
-        let pad = T::Key::SIZE.saturating_sub(prefix_bytes.len());
+        let mut ceiling = fixed_prefix.clone();
+        let pad = T::Key::SIZE.saturating_sub(fixed_prefix.len());
         ceiling.extend(std::iter::repeat(0xFFu8).take(pad));
         let mode = IteratorMode::From(&ceiling, Direction::Reverse);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, prefix_bytes))
+        Ok(DbIterator::new(inner, fixed_prefix))
     }
 
     /// Create a new write batch bound to this database.
@@ -275,6 +281,7 @@ mod tests {
     mod scan_tests {
         use uuid::Uuid;
         use crate::io::TerraDb;
+        use crate::io::slug::Slug;
         use crate::io::storage_key::storage_key;
         use crate::io::valid_prefix::impl_prefix;
         use crate::store::entity_entry::{EntityEntry, EntityKey, EntityValue};
@@ -282,14 +289,14 @@ mod tests {
 
         storage_key! {
             pub struct BranchEntityPrefix {
-                branch_id: Uuid,
-                entity_id: Uuid,
+                branch_id: Slug,
+                entity_id: Slug,
             }
         }
 
         impl_prefix!(BranchEntityPrefix => EntityEntry);
 
-        fn write_entity(db: &TerraDb, branch_id: Uuid, entity_id: Uuid, tx_id: Uuid, slug: &str) {
+        fn write_entity(db: &TerraDb, branch_id: Slug, entity_id: Slug, tx_id: Uuid, slug: &str) {
             let entry = EntityEntry {
                 key: EntityKey { branch_id, entity_id, tx_id },
                 value: EntityValue {
@@ -303,6 +310,8 @@ mod tests {
             batch.commit().unwrap();
         }
 
+        fn s(val: &str) -> Slug { val.parse().unwrap() }
+
         #[test]
         fn scan_forward() {
             let dir = tempfile::tempdir().unwrap();
@@ -311,15 +320,15 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let entity = Uuid::from_u128(2);
+            let branch = s("main");
+            let entity = s("test-entity");
             let tx1 = Uuid::from_u128(10);
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch, entity, tx1, "v1");
-            write_entity(&db, branch, entity, tx2, "v2");
-            write_entity(&db, branch, entity, tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
+            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
+            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
 
             let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
@@ -341,15 +350,15 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let entity = Uuid::from_u128(2);
+            let branch = s("main");
+            let entity = s("test-entity");
             let tx1 = Uuid::from_u128(10);
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch, entity, tx1, "v1");
-            write_entity(&db, branch, entity, tx2, "v2");
-            write_entity(&db, branch, entity, tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
+            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
+            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
 
             let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
             let items: Vec<EntityEntry> = db.scan_rev::<EntityEntry>(&prefix)
@@ -371,13 +380,13 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let e1 = Uuid::from_u128(100);
-            let e2 = Uuid::from_u128(200);
+            let branch = s("main");
+            let e1 = s("entity.1");
+            let e2 = s("entity.2");
             let tx = Uuid::from_u128(10);
 
-            write_entity(&db, branch, e1, tx, "entity-1");
-            write_entity(&db, branch, e2, tx, "entity-2");
+            write_entity(&db, branch.clone(), e1.clone(), tx, "entity-1");
+            write_entity(&db, branch.clone(), e2, tx, "entity-2");
 
             let prefix = BranchEntityPrefix { branch_id: branch, entity_id: e1 };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
@@ -397,8 +406,8 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let entity = Uuid::from_u128(999);
+            let branch = s("main");
+            let entity = s("nonexistent");
 
             let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
@@ -417,15 +426,15 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let entity = Uuid::from_u128(2);
+            let branch = s("main");
+            let entity = s("test-entity");
             let tx1 = Uuid::from_u128(10);
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch, entity, tx1, "v1");
-            write_entity(&db, branch, entity, tx2, "v2");
-            write_entity(&db, branch, entity, tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
+            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
+            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
 
             let bound = Uuid::from_u128(25);
             let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
@@ -450,15 +459,15 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let entity = Uuid::from_u128(2);
+            let branch = s("main");
+            let entity = s("test-entity");
             let tx1 = Uuid::from_u128(10);
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch, entity, tx1, "v1");
-            write_entity(&db, branch, entity, tx2, "v2");
-            write_entity(&db, branch, entity, tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
+            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
+            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
 
             let bound = Uuid::from_u128(25);
             let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
@@ -479,12 +488,12 @@ mod tests {
                 .open()
                 .unwrap();
 
-            let branch = Uuid::from_u128(1);
-            let e1 = Uuid::from_u128(100);
-            let e2 = Uuid::from_u128(200);
+            let branch = s("main");
+            let e1 = s("entity.1");
+            let e2 = s("entity.2");
 
-            write_entity(&db, branch, e1, Uuid::from_u128(10), "a");
-            write_entity(&db, branch, e2, Uuid::from_u128(20), "b");
+            write_entity(&db, branch.clone(), e1, Uuid::from_u128(10), "a");
+            write_entity(&db, branch.clone(), e2, Uuid::from_u128(20), "b");
 
             let prefix = BranchPrefix { branch_id: branch };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)

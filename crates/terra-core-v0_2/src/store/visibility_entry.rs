@@ -15,7 +15,7 @@ const CF_VISIBILITY: &str = "visibility";
 
 storage_key! {
     pub struct VisibilityKey {
-        branch_id: Uuid,
+        branch_id: Slug,
         tx_id: Uuid,
         item_kind: Uuid,
         item_id: Uuid,
@@ -72,6 +72,7 @@ impl DbItem for VisibilityEntry {
 mod tests {
     use super::*;
     use uuid::Uuid;
+    use crate::io::slug::Slug;
     use crate::io::TerraDb;
 
     fn open_db(dir: &tempfile::TempDir) -> TerraDb {
@@ -90,7 +91,7 @@ mod tests {
 
         let entry = VisibilityEntry {
             key: VisibilityKey {
-                branch_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
                 item_kind: KIND,
                 item_id: Uuid::now_v7(),
@@ -114,7 +115,7 @@ mod tests {
 
         let entry = VisibilityEntry {
             key: VisibilityKey {
-                branch_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
                 item_kind: KIND,
                 item_id: Uuid::now_v7(),

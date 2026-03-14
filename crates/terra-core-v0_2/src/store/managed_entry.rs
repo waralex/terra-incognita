@@ -1,9 +1,9 @@
 //! Managed type entry — generic versioned records (tasks, etc.).
 //!
-//! Key: `branch_id(16) | type_hash(16) | item_id(16) | tx_id(16)` = 64 bytes.
+//! Key: `hash(branch_id)(16) | hash(type_name)(16) | hash(item_id)(16) | tx_id(16)` = 64 bytes + slug suffixes.
 //! Value: JSON with slug, optional state, and dynamic fields.
 //!
-//! `type_hash` is a UUID derived from the managed type name (from DataSchema).
+//! `type_name` is a Slug identifying the managed type (from DataSchema).
 //! All managed types share a single CF.
 
 use serde::{Deserialize, Serialize};
@@ -16,8 +16,8 @@ const CF_MANAGED_MAIN: &str = "managed_main";
 
 versioned_key! {
     pub struct ManagedKey {
-        type_hash: Uuid,
-        item_id: Uuid,
+        type_name: Slug,
+        item_id: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchTypeHashPrefix(32), BranchTypeHashItemPrefix(48)
@@ -74,6 +74,7 @@ mod tests {
     use super::*;
     use uuid::Uuid;
     use crate::io::TerraDb;
+    use crate::io::slug::Slug;
 
     #[test]
     fn roundtrip() {
@@ -88,9 +89,9 @@ mod tests {
 
         let entry = ManagedEntry {
             key: ManagedKey {
-                type_hash: Uuid::from_u128(0xAAAA),
-                branch_id: Uuid::now_v7(),
-                item_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
+                type_name: "task".parse::<Slug>().unwrap(),
+                item_id: "explore-orders".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: ManagedValue {
@@ -120,9 +121,9 @@ mod tests {
 
         let entry = ManagedEntry {
             key: ManagedKey {
-                type_hash: Uuid::from_u128(0xBBBB),
-                branch_id: Uuid::now_v7(),
-                item_id: Uuid::now_v7(),
+                branch_id: "main".parse::<Slug>().unwrap(),
+                type_name: "note".parse::<Slug>().unwrap(),
+                item_id: "my-note".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
             },
             value: ManagedValue {

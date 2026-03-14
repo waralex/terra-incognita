@@ -17,9 +17,10 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rocksdb::{ColumnFamilyDescriptor, Options, DB};
+use rocksdb::{ColumnFamilyDescriptor, Direction, IteratorMode, Options, ReadOptions, DB};
 
 use crate::io::db_item::DbItem;
+use crate::io::db_iterator::DbIterator;
 use crate::io::storage_key::StorageKey;
 use crate::io::storage_value::StorageValue;
 use crate::io::write_batch::WriteBatch;
@@ -119,6 +120,40 @@ impl TerraDb {
             Ok(None) => Ok(None),
             Err(e) => Err(DbError::Storage(e.to_string())),
         }
+    }
+
+    /// Iterate forward over items whose keys share the given prefix.
+    pub fn scan<'a, T: DbItem>(
+        &'a self,
+        prefix: &impl StorageKey,
+    ) -> Result<DbIterator<'a, T>, DbError> {
+        let cf = self.db.cf_handle(T::cf())
+            .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
+        let prefix_bytes = prefix.encode();
+        let opts = ReadOptions::default();
+        let mode = IteratorMode::From(&prefix_bytes, Direction::Forward);
+        let inner = self.db.iterator_cf_opt(cf, opts, mode);
+        Ok(DbIterator::new(inner, prefix_bytes))
+    }
+
+    /// Iterate in reverse over items whose keys share the given prefix.
+    ///
+    /// Yields entries from the largest key down to the smallest within
+    /// the prefix range — useful for finding the latest version.
+    pub fn scan_rev<'a, T: DbItem>(
+        &'a self,
+        prefix: &impl StorageKey,
+    ) -> Result<DbIterator<'a, T>, DbError> {
+        let cf = self.db.cf_handle(T::cf())
+            .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
+        let prefix_bytes = prefix.encode();
+        let opts = ReadOptions::default();
+        let mut ceiling = prefix_bytes.clone();
+        let pad = T::Key::SIZE.saturating_sub(prefix_bytes.len());
+        ceiling.extend(std::iter::repeat(0xFFu8).take(pad));
+        let mode = IteratorMode::From(&ceiling, Direction::Reverse);
+        let inner = self.db.iterator_cf_opt(cf, opts, mode);
+        Ok(DbIterator::new(inner, prefix_bytes))
     }
 
     /// Create a new write batch bound to this database.
@@ -234,5 +269,231 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = TerraDb::builder(dir.path()).open().unwrap();
         assert_eq!(db.mode(), AccessMode::ReadWrite);
+    }
+
+    mod scan_tests {
+        use uuid::Uuid;
+        use crate::io::TerraDb;
+        use crate::io::storage_key::storage_key;
+        use crate::store::entity_entry::{EntityEntry, EntityKey, EntityValue};
+
+        storage_key! {
+            pub struct BranchEntityPrefix(32) {
+                branch_id: Uuid,
+                entity_id: Uuid,
+            }
+        }
+
+        storage_key! {
+            pub struct BranchPrefix(16) {
+                branch_id: Uuid,
+            }
+        }
+
+        fn write_entity(db: &TerraDb, branch_id: Uuid, entity_id: Uuid, tx_id: Uuid, slug: &str) {
+            let entry = EntityEntry {
+                key: EntityKey { branch_id, entity_id, tx_id },
+                value: EntityValue {
+                    slug: slug.into(),
+                    entity_type_id: Uuid::nil(),
+                    description: None,
+                },
+            };
+            let mut batch = db.batch();
+            batch.put(&entry).unwrap();
+            batch.commit().unwrap();
+        }
+
+        #[test]
+        fn scan_forward() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let entity = Uuid::from_u128(2);
+            let tx1 = Uuid::from_u128(10);
+            let tx2 = Uuid::from_u128(20);
+            let tx3 = Uuid::from_u128(30);
+
+            write_entity(&db, branch, entity, tx1, "v1");
+            write_entity(&db, branch, entity, tx2, "v2");
+            write_entity(&db, branch, entity, tx3, "v3");
+
+            let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
+            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+
+            assert_eq!(items.len(), 3);
+            assert_eq!(items[0].value.slug, "v1");
+            assert_eq!(items[1].value.slug, "v2");
+            assert_eq!(items[2].value.slug, "v3");
+        }
+
+        #[test]
+        fn scan_reverse() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let entity = Uuid::from_u128(2);
+            let tx1 = Uuid::from_u128(10);
+            let tx2 = Uuid::from_u128(20);
+            let tx3 = Uuid::from_u128(30);
+
+            write_entity(&db, branch, entity, tx1, "v1");
+            write_entity(&db, branch, entity, tx2, "v2");
+            write_entity(&db, branch, entity, tx3, "v3");
+
+            let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
+            let items: Vec<EntityEntry> = db.scan_rev::<EntityEntry>(&prefix)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+
+            assert_eq!(items.len(), 3);
+            assert_eq!(items[0].value.slug, "v3");
+            assert_eq!(items[1].value.slug, "v2");
+            assert_eq!(items[2].value.slug, "v1");
+        }
+
+        #[test]
+        fn scan_prefix_isolates_entities() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let e1 = Uuid::from_u128(100);
+            let e2 = Uuid::from_u128(200);
+            let tx = Uuid::from_u128(10);
+
+            write_entity(&db, branch, e1, tx, "entity-1");
+            write_entity(&db, branch, e2, tx, "entity-2");
+
+            let prefix = BranchEntityPrefix { branch_id: branch, entity_id: e1 };
+            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].value.slug, "entity-1");
+        }
+
+        #[test]
+        fn scan_empty_prefix_range() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let entity = Uuid::from_u128(999);
+
+            let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
+            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+
+            assert!(items.is_empty());
+        }
+
+        #[test]
+        fn scan_with_filter() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let entity = Uuid::from_u128(2);
+            let tx1 = Uuid::from_u128(10);
+            let tx2 = Uuid::from_u128(20);
+            let tx3 = Uuid::from_u128(30);
+
+            write_entity(&db, branch, entity, tx1, "v1");
+            write_entity(&db, branch, entity, tx2, "v2");
+            write_entity(&db, branch, entity, tx3, "v3");
+
+            let bound = Uuid::from_u128(25);
+            let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
+            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+                .unwrap()
+                .filter_map(|r| {
+                    let e = r.ok()?;
+                    (e.key.tx_id <= bound).then_some(e)
+                })
+                .collect();
+
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].value.slug, "v1");
+            assert_eq!(items[1].value.slug, "v2");
+        }
+
+        #[test]
+        fn scan_rev_latest_version() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let entity = Uuid::from_u128(2);
+            let tx1 = Uuid::from_u128(10);
+            let tx2 = Uuid::from_u128(20);
+            let tx3 = Uuid::from_u128(30);
+
+            write_entity(&db, branch, entity, tx1, "v1");
+            write_entity(&db, branch, entity, tx2, "v2");
+            write_entity(&db, branch, entity, tx3, "v3");
+
+            let bound = Uuid::from_u128(25);
+            let prefix = BranchEntityPrefix { branch_id: branch, entity_id: entity };
+            let latest = db.scan_rev::<EntityEntry>(&prefix)
+                .unwrap()
+                .filter_map(|r| r.ok())
+                .find(|e| e.key.tx_id <= bound);
+
+            assert!(latest.is_some());
+            assert_eq!(latest.unwrap().value.slug, "v2");
+        }
+
+        #[test]
+        fn scan_broader_prefix() {
+            let dir = tempfile::tempdir().unwrap();
+            let db = TerraDb::builder(dir.path())
+                .with::<EntityEntry>()
+                .open()
+                .unwrap();
+
+            let branch = Uuid::from_u128(1);
+            let e1 = Uuid::from_u128(100);
+            let e2 = Uuid::from_u128(200);
+
+            write_entity(&db, branch, e1, Uuid::from_u128(10), "a");
+            write_entity(&db, branch, e2, Uuid::from_u128(20), "b");
+
+            let prefix = BranchPrefix { branch_id: branch };
+            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+
+            assert_eq!(items.len(), 2);
+        }
     }
 }

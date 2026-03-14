@@ -17,11 +17,8 @@ storage_key! {
         type_id: Uuid,
         tx_id: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-        prefix_branch_type(branch_id: Uuid, type_id: Uuid) -> 32,
-    }
 }
+// Known prefixes: BranchPrefix(16), BranchTypePrefix(32)
 
 /// Schema type value.
 #[derive(Debug, Clone, Serialize, Deserialize)]

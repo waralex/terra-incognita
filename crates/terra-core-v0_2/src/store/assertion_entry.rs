@@ -20,11 +20,8 @@ storage_key! {
         change_id: Uuid,
         entity_id: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-        prefix_branch_prop(branch_id: Uuid, prop_id: Uuid) -> 32,
-    }
 }
+// Known prefixes: BranchPrefix(16), BranchPropPrefix(32)
 
 /// Assertion value.
 #[derive(Debug, Clone)]

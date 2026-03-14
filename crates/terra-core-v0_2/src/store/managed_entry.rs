@@ -21,12 +21,8 @@ storage_key! {
         item_id: Uuid,
         tx_id: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-        prefix_branch_type(branch_id: Uuid, type_hash: Uuid) -> 32,
-        prefix_branch_type_item(branch_id: Uuid, type_hash: Uuid, item_id: Uuid) -> 48,
-    }
 }
+// Known prefixes: BranchPrefix(16), BranchTypeHashPrefix(32), BranchTypeHashItemPrefix(48)
 
 /// Managed type value.
 #[derive(Debug, Clone, Serialize, Deserialize)]

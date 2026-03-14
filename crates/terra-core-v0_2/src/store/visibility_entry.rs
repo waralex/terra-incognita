@@ -20,10 +20,8 @@ storage_key! {
         item_kind: Uuid,
         item_id: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-    }
 }
+// Known prefixes: BranchPrefix(16)
 
 /// Visibility value.
 #[derive(Debug, Clone)]

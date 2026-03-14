@@ -19,11 +19,8 @@ storage_key! {
         entity_id: Uuid,
         tx_id: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-        prefix_branch_entity(branch_id: Uuid, entity_id: Uuid) -> 32,
-    }
 }
+// Known prefixes: BranchPrefix(16), BranchEntityPrefix(32)
 
 /// Entity value.
 #[derive(Debug, Clone, Serialize, Deserialize)]

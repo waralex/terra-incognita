@@ -9,10 +9,6 @@
 //!         entity_id: Uuid,
 //!         tx_id: Uuid,
 //!     }
-//!     prefixes {
-//!         prefix_branch(branch_id: Uuid) -> 16,
-//!         prefix_branch_entity(branch_id: Uuid, entity_id: Uuid) -> 32,
-//!     }
 //! }
 //! ```
 
@@ -29,8 +25,7 @@ pub trait StorageKey: Sized {
     fn decode(bytes: &[u8]) -> Result<Self, KeyError>;
 }
 
-/// Declares a fixed-size storage key struct with automatic encode/decode
-/// and named prefix methods.
+/// Declares a fixed-size storage key struct with automatic encode/decode.
 ///
 /// Supported field types: `Uuid` (16 bytes), `i64` (8 bytes big-endian), `u8` (1 byte).
 macro_rules! storage_key {
@@ -38,9 +33,6 @@ macro_rules! storage_key {
         $vis:vis struct $name:ident($size:literal) {
             $( $field:ident : $ty:ident ),+ $(,)?
         }
-        $(prefixes {
-            $( $prefix_name:ident( $( $pf:ident : $pt:ident ),+ ) -> $prefix_size:literal ),+ $(,)?
-        })?
     ) => {
         #[derive(Debug, Clone, PartialEq, Eq)]
         $vis struct $name {
@@ -73,24 +65,6 @@ macro_rules! storage_key {
                 Ok(Self { $( $field ),+ })
             }
         }
-
-        $(
-            $( const _: () = assert!(
-                0 $( + storage_key!(@field_size $pt) )+ == $prefix_size,
-                concat!("prefix size mismatch for ", stringify!($prefix_name))
-            ); )+
-
-            impl $name {
-                $(
-                    $vis fn $prefix_name( $( $pf: &storage_key!(@rust_type $pt) ),+ ) -> Vec<u8> {
-                        let mut buf = vec![0u8; $prefix_size];
-                        let mut _off: usize = 0;
-                        $( storage_key!(@encode_ref buf, _off, $pf, $pt); )+
-                        buf
-                    }
-                )+
-            }
-        )?
     };
 
     (@rust_type Uuid) => { uuid::Uuid };
@@ -111,19 +85,6 @@ macro_rules! storage_key {
     };
     (@encode $buf:ident, $off:ident, $val:expr, u8) => {
         $buf[$off] = $val;
-        $off += 1;
-    };
-
-    (@encode_ref $buf:ident, $off:ident, $val:expr, Uuid) => {
-        $buf[$off..$off + 16].copy_from_slice($val.as_bytes());
-        $off += 16;
-    };
-    (@encode_ref $buf:ident, $off:ident, $val:expr, i64) => {
-        $buf[$off..$off + 8].copy_from_slice(&$val.to_be_bytes());
-        $off += 8;
-    };
-    (@encode_ref $buf:ident, $off:ident, $val:expr, u8) => {
-        $buf[$off] = *$val;
         $off += 1;
     };
 
@@ -161,10 +122,6 @@ mod tests {
             entity_id: Uuid,
             timestamp_us: i64,
         }
-        prefixes {
-            prefix_branch(branch_id: Uuid) -> 16,
-            prefix_branch_entity(branch_id: Uuid, entity_id: Uuid) -> 32,
-        }
     }
 
     #[test]
@@ -181,33 +138,11 @@ mod tests {
         assert_eq!(decoded, key);
     }
 
-    #[test]
-    fn prefix_branch() {
-        let branch = Uuid::nil();
-        let prefix = TestKey::prefix_branch(&branch);
-        assert_eq!(prefix.len(), 16);
-        assert_eq!(&prefix[..], branch.as_bytes());
-    }
-
-    #[test]
-    fn prefix_branch_entity() {
-        let branch = Uuid::nil();
-        let entity = Uuid::from_u128(7);
-        let prefix = TestKey::prefix_branch_entity(&branch, &entity);
-        assert_eq!(prefix.len(), 32);
-        assert_eq!(&prefix[..16], branch.as_bytes());
-        assert_eq!(&prefix[16..], entity.as_bytes());
-    }
-
     storage_key! {
         pub(crate) struct TestKeyWithU8(33) {
             branch_id: Uuid,
             kind: u8,
             item_id: Uuid,
-        }
-        prefixes {
-            prefix_branch(branch_id: Uuid) -> 16,
-            prefix_branch_kind(branch_id: Uuid, kind: u8) -> 17,
         }
     }
 
@@ -224,14 +159,6 @@ mod tests {
 
         let decoded = TestKeyWithU8::decode(&encoded).unwrap();
         assert_eq!(decoded, key);
-    }
-
-    #[test]
-    fn u8_prefix() {
-        let branch = Uuid::nil();
-        let prefix = TestKeyWithU8::prefix_branch_kind(&branch, &2);
-        assert_eq!(prefix.len(), 17);
-        assert_eq!(prefix[16], 2);
     }
 
     #[test]

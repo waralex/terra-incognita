@@ -17,10 +17,8 @@ storage_key! {
         branch_id: Uuid,
         tx_id: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-    }
 }
+// Known prefixes: BranchPrefix(16)
 
 /// Transaction value — dynamic metadata fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]

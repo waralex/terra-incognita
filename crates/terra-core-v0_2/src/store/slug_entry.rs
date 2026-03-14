@@ -27,11 +27,8 @@ storage_key! {
         kind: Uuid,
         slug_hash: Uuid,
     }
-    prefixes {
-        prefix_branch(branch_id: Uuid) -> 16,
-        prefix_branch_kind(branch_id: Uuid, kind: Uuid) -> 32,
-    }
 }
+// Known prefixes: BranchPrefix(16), BranchKindPrefix(32)
 
 /// Compute deterministic hash for a slug string.
 pub fn hash_slug(slug: &str) -> Uuid {

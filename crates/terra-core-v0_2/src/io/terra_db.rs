@@ -23,6 +23,7 @@ use crate::io::db_item::DbItem;
 use crate::io::db_iterator::DbIterator;
 use crate::io::storage_key::StorageKey;
 use crate::io::storage_value::StorageValue;
+use crate::io::valid_prefix::ValidPrefix;
 use crate::io::write_batch::WriteBatch;
 
 /// Access mode for the database.
@@ -125,7 +126,7 @@ impl TerraDb {
     /// Iterate forward over items whose keys share the given prefix.
     pub fn scan<'a, T: DbItem>(
         &'a self,
-        prefix: &impl StorageKey,
+        prefix: &impl ValidPrefix<T>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
@@ -142,7 +143,7 @@ impl TerraDb {
     /// the prefix range — useful for finding the latest version.
     pub fn scan_rev<'a, T: DbItem>(
         &'a self,
-        prefix: &impl StorageKey,
+        prefix: &impl ValidPrefix<T>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
@@ -275,7 +276,9 @@ mod tests {
         use uuid::Uuid;
         use crate::io::TerraDb;
         use crate::io::storage_key::storage_key;
+        use crate::io::valid_prefix::impl_prefix;
         use crate::store::entity_entry::{EntityEntry, EntityKey, EntityValue};
+        use crate::store::prefix::BranchPrefix;
 
         storage_key! {
             pub struct BranchEntityPrefix(32) {
@@ -284,11 +287,7 @@ mod tests {
             }
         }
 
-        storage_key! {
-            pub struct BranchPrefix(16) {
-                branch_id: Uuid,
-            }
-        }
+        impl_prefix!(BranchEntityPrefix => EntityEntry);
 
         fn write_entity(db: &TerraDb, branch_id: Uuid, entity_id: Uuid, tx_id: Uuid, slug: &str) {
             let entry = EntityEntry {

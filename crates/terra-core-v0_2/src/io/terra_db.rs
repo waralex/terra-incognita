@@ -281,7 +281,7 @@ mod tests {
         use crate::store::prefix::BranchPrefix;
 
         storage_key! {
-            pub struct BranchEntityPrefix(32) {
+            pub struct BranchEntityPrefix {
                 branch_id: Uuid,
                 entity_id: Uuid,
             }

@@ -13,7 +13,7 @@ use crate::io::storage_value::StorageValue;
 const CF_ASSERTIONS: &str = "assertions";
 
 storage_key! {
-    pub struct AssertionKey(80) {
+    pub struct AssertionKey {
         branch_id: Uuid,
         prop_id: Uuid,
         tx_id: Uuid,

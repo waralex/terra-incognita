@@ -14,7 +14,7 @@ use crate::io::storage_value::StorageValue;
 const CF_BRANCH_MAIN: &str = "branch_main";
 
 storage_key! {
-    pub struct BranchKey(16) {
+    pub struct BranchKey {
         branch_id: Uuid,
     }
 }

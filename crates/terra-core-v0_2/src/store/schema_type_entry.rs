@@ -12,7 +12,7 @@ use crate::io::storage_value::StorageValue;
 const CF_SCHEMA_TYPES: &str = "schema_types";
 
 storage_key! {
-    pub struct SchemaTypeKey(48) {
+    pub struct SchemaTypeKey {
         branch_id: Uuid,
         type_id: Uuid,
         tx_id: Uuid,

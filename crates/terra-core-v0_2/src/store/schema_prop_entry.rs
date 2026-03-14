@@ -13,7 +13,7 @@ use crate::io::storage_value::StorageValue;
 const CF_SCHEMA_PROPS: &str = "schema_props";
 
 storage_key! {
-    pub struct SchemaPropKey(64) {
+    pub struct SchemaPropKey {
         branch_id: Uuid,
         entity_type_id: Uuid,
         prop_id: Uuid,

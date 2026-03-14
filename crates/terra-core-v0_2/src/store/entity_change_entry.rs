@@ -17,7 +17,7 @@ use crate::io::storage_value::StorageValue;
 const CF_ENTITY_CHANGES: &str = "entity_changes";
 
 storage_key! {
-    pub struct EntityChangeKey(16) {
+    pub struct EntityChangeKey {
         change_id: Uuid,
     }
 }

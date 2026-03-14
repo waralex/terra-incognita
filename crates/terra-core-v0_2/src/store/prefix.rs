@@ -13,7 +13,7 @@ use crate::store::transaction_entry::TransactionEntry;
 
 // Prefix for scanning all records on a given branch.
 storage_key! {
-    pub struct BranchPrefix(16) {
+    pub struct BranchPrefix {
         branch_id: Uuid,
     }
 }

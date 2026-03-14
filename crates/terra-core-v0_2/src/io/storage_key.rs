@@ -4,12 +4,13 @@
 //!
 //! ```ignore
 //! storage_key! {
-//!     pub(crate) struct EntityKey(48) {
+//!     pub(crate) struct EntityKey {
 //!         branch_id: Uuid,
 //!         entity_id: Uuid,
 //!         tx_id: Uuid,
 //!     }
 //! }
+//! // Size (48) is computed automatically from field types.
 //! ```
 
 /// Error decoding a storage key from bytes.
@@ -26,11 +27,12 @@ pub trait StorageKey: Sized {
 }
 
 /// Declares a fixed-size storage key struct with automatic encode/decode.
+/// Size is computed from field types at compile time.
 ///
 /// Supported field types: `Uuid` (16 bytes), `i64` (8 bytes big-endian), `u8` (1 byte).
 macro_rules! storage_key {
     (
-        $vis:vis struct $name:ident($size:literal) {
+        $vis:vis struct $name:ident {
             $( $field:ident : $ty:ident ),+ $(,)?
         }
     ) => {
@@ -39,25 +41,20 @@ macro_rules! storage_key {
             $( pub $field: storage_key!(@rust_type $ty) ),+
         }
 
-        const _: () = assert!(
-            0 $( + storage_key!(@field_size $ty) )+ == $size,
-            concat!("storage key size mismatch for ", stringify!($name))
-        );
-
         impl $crate::io::storage_key::StorageKey for $name {
-            const SIZE: usize = $size;
+            const SIZE: usize = 0 $( + storage_key!(@field_size $ty) )+;
 
             fn encode(&self) -> Vec<u8> {
-                let mut buf = vec![0u8; $size];
+                let mut buf = vec![0u8; Self::SIZE];
                 let mut _off: usize = 0;
                 $( storage_key!(@encode buf, _off, self.$field, $ty); )+
                 buf
             }
 
             fn decode(bytes: &[u8]) -> Result<Self, $crate::io::storage_key::KeyError> {
-                if bytes.len() < $size {
+                if bytes.len() < Self::SIZE {
                     return Err($crate::io::storage_key::KeyError(
-                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), $size)
+                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), Self::SIZE)
                     ));
                 }
                 let mut _off: usize = 0;
@@ -117,11 +114,16 @@ mod tests {
     use uuid::Uuid;
 
     storage_key! {
-        pub(crate) struct TestKey(40) {
+        pub(crate) struct TestKey {
             branch_id: Uuid,
             entity_id: Uuid,
             timestamp_us: i64,
         }
+    }
+
+    #[test]
+    fn auto_size() {
+        assert_eq!(TestKey::SIZE, 40);
     }
 
     #[test]
@@ -139,11 +141,16 @@ mod tests {
     }
 
     storage_key! {
-        pub(crate) struct TestKeyWithU8(33) {
+        pub(crate) struct TestKeyWithU8 {
             branch_id: Uuid,
             kind: u8,
             item_id: Uuid,
         }
+    }
+
+    #[test]
+    fn u8_auto_size() {
+        assert_eq!(TestKeyWithU8::SIZE, 33);
     }
 
     #[test]

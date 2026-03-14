@@ -22,7 +22,7 @@ const CF_SLUGS: &str = "slugs";
 const SLUG_HASH_NAMESPACE: Uuid = Uuid::from_u128(0xA1B2C3D4_E5F6_7890_ABCD_EF1234567890);
 
 storage_key! {
-    pub struct SlugKey(48) {
+    pub struct SlugKey {
         branch_id: Uuid,
         kind: Uuid,
         slug_hash: Uuid,

@@ -14,7 +14,7 @@ use crate::io::storage_value::StorageValue;
 const CF_VISIBILITY: &str = "visibility";
 
 storage_key! {
-    pub struct VisibilityKey(64) {
+    pub struct VisibilityKey {
         branch_id: Uuid,
         tx_id: Uuid,
         item_kind: Uuid,

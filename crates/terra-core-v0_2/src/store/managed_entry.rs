@@ -15,7 +15,7 @@ use crate::io::{DbError, DbItem};
 const CF_MANAGED_MAIN: &str = "managed_main";
 
 storage_key! {
-    pub struct ManagedKey(64) {
+    pub struct ManagedKey {
         branch_id: Uuid,
         type_hash: Uuid,
         item_id: Uuid,

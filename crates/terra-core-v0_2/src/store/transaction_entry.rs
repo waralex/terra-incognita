@@ -13,7 +13,7 @@ use crate::io::storage_value::StorageValue;
 const CF_TRANSACTIONS: &str = "transactions";
 
 storage_key! {
-    pub struct TransactionKey(32) {
+    pub struct TransactionKey {
         branch_id: Uuid,
         tx_id: Uuid,
     }

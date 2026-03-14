@@ -11,9 +11,6 @@ use crate::io::{DbItem, DbError};
 
 const CF_BRANCH_MAIN: &str = "branch_main";
 
-/// Maximum branch ancestry depth.
-pub const MAX_BRANCH_DEPTH: usize = 8;
-
 /// Branch key.
 #[derive(Debug, Clone)]
 pub struct BranchKey {

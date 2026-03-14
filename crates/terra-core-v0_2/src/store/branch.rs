@@ -5,13 +5,13 @@
 
 use uuid::Uuid;
 
-use serde_json::{Map, Value};
-
+use crate::domain::transaction::Transaction;
+use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::store::branch_entry::{BranchEntry, BranchKey};
 use crate::store::storage::Storage;
-use crate::store::transaction_writer::TransactionWriter;
+use crate::store::transaction_entry::{TransactionEntry, TransactionKey, TransactionValue};
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -72,10 +72,29 @@ impl Branch {
         &self.ancestry
     }
 
-    /// Start a new transaction on this branch.
-    pub fn transaction(&self, meta: Map<String, Value>) -> Result<TransactionWriter, DbError> {
-        let batch = self.storage.db.batch();
-        Ok(TransactionWriter::new(self.branch.clone(), meta, batch))
+    /// Commit a transaction on this branch.
+    pub fn commit(&self, tx: Transaction) -> Result<Transaction<TxMeta>, DbError> {
+        let tx_id = Uuid::now_v7();
+
+        let entry = TransactionEntry {
+            key: TransactionKey {
+                branch: self.branch.clone(),
+                tx_id,
+            },
+            value: TransactionValue { meta: tx.meta.clone() },
+        };
+
+        let mut batch = self.storage.db.batch();
+        batch.put(&entry)?;
+        batch.commit()?;
+
+        Ok(Transaction {
+            meta: tx.meta,
+            context: TxMeta {
+                tx_id,
+                branch: self.branch.clone(),
+            },
+        })
     }
 
     fn compute_ancestry(storage: &Storage, branch: Slug, max_depth: usize) -> Result<Vec<AncestryEntry>, DbError> {
@@ -167,6 +186,30 @@ mod tests {
         assert_eq!(branch.ancestry()[0].branch_point_tx, Uuid::max());
         assert_eq!(branch.ancestry()[1].branch, main);
         assert_eq!(branch.ancestry()[1].branch_point_tx, branch_point);
+    }
+
+    #[test]
+    fn commit_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = Branch::main(storage.clone());
+
+        let mut meta = serde_json::Map::new();
+        meta.insert("reasoning".into(), serde_json::json!("test"));
+
+        let tx = Transaction::new(meta);
+        let committed = branch.commit(tx).unwrap();
+
+        assert_eq!(committed.context.branch, main_branch_slug());
+        assert_eq!(committed.meta["reasoning"], "test");
+
+        // Verify written to DB
+        let key = TransactionKey {
+            branch: main_branch_slug(),
+            tx_id: committed.context.tx_id,
+        };
+        let found = storage.db.get::<TransactionEntry>(&key).unwrap().unwrap();
+        assert_eq!(found.value.meta["reasoning"], "test");
     }
 
     #[test]

@@ -30,6 +30,11 @@ pub enum SlugError {
 }
 
 impl Slug {
+    /// Trusted constructor for hardcoded slugs. No validation.
+    pub(crate) fn new_unchecked(s: &str) -> Self {
+        Self(s.to_string())
+    }
+
     /// Deterministic hash for use in storage keys.
     pub fn hash(&self) -> Uuid {
         Uuid::new_v5(&SLUG_HASH_NAMESPACE, self.0.as_bytes())

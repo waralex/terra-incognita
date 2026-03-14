@@ -1,6 +1,6 @@
 //! Schema property entry.
 //!
-//! Key: `branch_id(16) | prop_id(16)` = 32 bytes.
+//! Key: `branch_id(16) | entity_type_id(16) | prop_id(16) | tx_id(16)` = 64 bytes.
 //! Value: JSON with slug, description.
 //! No ValueType — all values are arbitrary JSON in v0.2.
 
@@ -13,12 +13,16 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_SCHEMA_PROPS: &str = "schema_props";
 
 storage_key! {
-    pub struct SchemaPropKey(32) {
+    pub struct SchemaPropKey(64) {
         branch_id: Uuid,
+        entity_type_id: Uuid,
         prop_id: Uuid,
+        tx_id: Uuid,
     }
     prefixes {
         prefix_branch(branch_id: Uuid) -> 16,
+        prefix_branch_type(branch_id: Uuid, entity_type_id: Uuid) -> 32,
+        prefix_branch_type_prop(branch_id: Uuid, entity_type_id: Uuid, prop_id: Uuid) -> 48,
     }
 }
 
@@ -75,7 +79,9 @@ mod tests {
         let entry = SchemaPropEntry {
             key: SchemaPropKey {
                 branch_id: Uuid::now_v7(),
+                entity_type_id: Uuid::now_v7(),
                 prop_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
             },
             value: SchemaPropValue {
                 slug: "population".into(),
@@ -89,5 +95,6 @@ mod tests {
 
         let found = db.get::<SchemaPropEntry>(&entry.encode_key()).unwrap().unwrap();
         assert_eq!(found.value.slug, "population");
+        assert_eq!(found.key.entity_type_id, entry.key.entity_type_id);
     }
 }

@@ -1,7 +1,7 @@
 //! Entity change — provenance record for a batch of assertions on one entity.
 //!
 //! Key: `change_id(16)` = 16 bytes.
-//! Value: JSON with entity_id, tx_id, properties, reasoning.
+//! Value: JSON with entity_id, tx_id, reasoning.
 //! Append-only, global (not branch-scoped).
 //!
 //! Multiple assertions (different properties) reference the same change_id,
@@ -25,7 +25,6 @@ pub struct EntityChangeKey {
 pub struct EntityChangeValue {
     pub entity_id: Uuid,
     pub tx_id: Uuid,
-    pub properties: serde_json::Value,
     pub reasoning: serde_json::Value,
 }
 
@@ -81,7 +80,6 @@ mod tests {
             value: EntityChangeValue {
                 entity_id: Uuid::now_v7(),
                 tx_id: Uuid::now_v7(),
-                properties: serde_json::json!({"population": 56000000}),
                 reasoning: serde_json::json!("census data"),
             },
         };

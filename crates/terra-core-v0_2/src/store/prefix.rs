@@ -4,17 +4,12 @@
 //! not a record identifier. Keeping them separate prevents silent breakage
 //! if a key layout changes (e.g., branch becomes versioned).
 
+use crate::io::DbItem;
 use crate::io::storage_key::storage_key;
-use crate::io::valid_prefix::impl_prefix;
+use crate::io::valid_prefix::{ValidPrefix, impl_prefix};
+use crate::io::versioned_key::VersionedKey;
 
-use crate::store::assertion_entry::AssertionEntry;
-use crate::store::entity_entry::EntityEntry;
-use crate::store::managed_entry::ManagedEntry;
-use crate::store::schema_prop_entry::SchemaPropEntry;
-use crate::store::schema_type_entry::SchemaTypeEntry;
-use crate::store::slug_entry::SlugEntry;
 use crate::store::transaction_entry::TransactionEntry;
-use crate::store::visibility_entry::VisibilityEntry;
 
 // Prefix for scanning all records on a given branch.
 storage_key! {
@@ -23,13 +18,9 @@ storage_key! {
     }
 }
 
-impl_prefix!(BranchPrefix =>
-    AssertionEntry,
-    EntityEntry,
-    ManagedEntry,
-    SchemaPropEntry,
-    SchemaTypeEntry,
-    SlugEntry,
-    TransactionEntry,
-    VisibilityEntry,
-);
+// BranchPrefix is valid for any entry whose key is VersionedKey
+// (starts with branch_id by definition).
+impl<T: DbItem> ValidPrefix<T> for BranchPrefix where T::Key: VersionedKey {}
+
+// TransactionEntry is not versioned but starts with branch_id.
+impl_prefix!(BranchPrefix => TransactionEntry);

@@ -8,16 +8,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
-use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::io::versioned_key::versioned_key;
 
 const CF_ENTITY_MAIN: &str = "entity_main";
 
-storage_key! {
-    pub struct EntityKey(48) {
-        branch_id: Uuid,
+versioned_key! {
+    pub struct EntityKey {
         entity_id: Uuid,
-        tx_id: Uuid,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchEntityPrefix(32)

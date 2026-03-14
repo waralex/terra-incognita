@@ -1,6 +1,6 @@
 //! Assertion entry — a single property value claim.
 //!
-//! Key: `branch_id(16) | prop_id(16) | tx_id(16) | entry_id(16) | entity_id(16)` = 80 bytes.
+//! Key: `branch_id(16) | prop_id(16) | tx_id(16) | change_id(16) | entity_id(16)` = 80 bytes.
 //! Value: JSON (arbitrary property value).
 //!
 //! No fact/hypothesis distinction in v0.2 — all assertions are equal.
@@ -17,7 +17,7 @@ storage_key! {
         branch_id: Uuid,
         prop_id: Uuid,
         tx_id: Uuid,
-        entry_id: Uuid,
+        change_id: Uuid,
         entity_id: Uuid,
     }
     prefixes {
@@ -82,7 +82,7 @@ mod tests {
                 branch_id: Uuid::now_v7(),
                 prop_id: Uuid::now_v7(),
                 tx_id: Uuid::now_v7(),
-                entry_id: Uuid::now_v7(),
+                change_id: Uuid::now_v7(),
                 entity_id: Uuid::now_v7(),
             },
             value: AssertionValue {

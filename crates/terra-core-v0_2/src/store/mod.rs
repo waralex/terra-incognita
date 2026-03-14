@@ -1,5 +1,5 @@
 pub mod assertion_entry;
-pub mod assertion_log_entry;
+pub mod entity_change_entry;
 pub mod branch_entry;
 pub mod entity_entry;
 pub mod managed_entry;

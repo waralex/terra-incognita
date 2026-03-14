@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::io::{DbError, TerraDb};
 
 use crate::store::assertion_entry::AssertionEntry;
-use crate::store::assertion_log_entry::AssertionLogEntry;
+use crate::store::entity_change_entry::EntityChangeEntry;
 use crate::store::branch_entry::BranchEntry;
 use crate::store::entity_entry::EntityEntry;
 use crate::store::managed_entry::ManagedEntry;
@@ -35,7 +35,7 @@ impl Storage {
     fn open_impl(path: &Path, read_only: bool) -> Result<Self, DbError> {
         let mut builder = TerraDb::builder(path)
             .with::<AssertionEntry>()
-            .with::<AssertionLogEntry>()
+            .with::<EntityChangeEntry>()
             .with::<BranchEntry>()
             .with::<EntityEntry>()
             .with::<ManagedEntry>()

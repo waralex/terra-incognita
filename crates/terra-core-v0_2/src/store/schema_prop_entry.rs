@@ -13,7 +13,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_SCHEMA_PROPS: &str = "schema_props";
 
 storage_key! {
-    pub(crate) struct SchemaPropKey(32) {
+    pub(crate) struct SchemaPropKeyRaw(32) {
         branch_id: Uuid,
         prop_id: Uuid,
     }
@@ -22,14 +22,26 @@ storage_key! {
     }
 }
 
-/// A registered property in the schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaPropEntry {
-    pub id: Uuid,
+/// Schema property key.
+#[derive(Debug, Clone)]
+pub struct SchemaPropKey {
     pub branch_id: Uuid,
+    pub prop_id: Uuid,
+}
+
+/// Schema property value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaPropValue {
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
+}
+
+/// Schema property entry = key + value.
+#[derive(Debug, Clone)]
+pub struct SchemaPropEntry {
+    pub key: SchemaPropKey,
+    pub value: SchemaPropValue,
 }
 
 impl DbItem for SchemaPropEntry {
@@ -38,21 +50,29 @@ impl DbItem for SchemaPropEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = SchemaPropKey {
-            branch_id: self.branch_id,
-            prop_id: self.id,
+        let raw = SchemaPropKeyRaw {
+            branch_id: self.key.branch_id,
+            prop_id: self.key.prop_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _k = SchemaPropKey::decode(key)
+        let raw = SchemaPropKeyRaw::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let val: SchemaPropValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: SchemaPropKey {
+                branch_id: raw.branch_id,
+                prop_id: raw.prop_id,
+            },
+            value: val,
+        })
     }
 }
 
@@ -70,10 +90,14 @@ mod tests {
             .unwrap();
 
         let entry = SchemaPropEntry {
-            id: Uuid::now_v7(),
-            branch_id: Uuid::now_v7(),
-            slug: "population".into(),
-            description: None,
+            key: SchemaPropKey {
+                branch_id: Uuid::now_v7(),
+                prop_id: Uuid::now_v7(),
+            },
+            value: SchemaPropValue {
+                slug: "population".into(),
+                description: None,
+            },
         };
 
         let mut batch = db.batch();
@@ -81,6 +105,6 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<SchemaPropEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.slug, "population");
+        assert_eq!(found.value.slug, "population");
     }
 }

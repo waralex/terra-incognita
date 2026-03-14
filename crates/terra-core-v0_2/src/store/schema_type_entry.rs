@@ -12,7 +12,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_SCHEMA_TYPES: &str = "schema_types";
 
 storage_key! {
-    pub(crate) struct SchemaTypeKey(32) {
+    pub(crate) struct SchemaTypeKeyRaw(32) {
         branch_id: Uuid,
         type_id: Uuid,
     }
@@ -21,14 +21,26 @@ storage_key! {
     }
 }
 
-/// A registered entity type in the schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaTypeEntry {
-    pub id: Uuid,
+/// Schema type key.
+#[derive(Debug, Clone)]
+pub struct SchemaTypeKey {
     pub branch_id: Uuid,
+    pub type_id: Uuid,
+}
+
+/// Schema type value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaTypeValue {
     pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
+}
+
+/// Schema type entry = key + value.
+#[derive(Debug, Clone)]
+pub struct SchemaTypeEntry {
+    pub key: SchemaTypeKey,
+    pub value: SchemaTypeValue,
 }
 
 impl DbItem for SchemaTypeEntry {
@@ -37,21 +49,29 @@ impl DbItem for SchemaTypeEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = SchemaTypeKey {
-            branch_id: self.branch_id,
-            type_id: self.id,
+        let raw = SchemaTypeKeyRaw {
+            branch_id: self.key.branch_id,
+            type_id: self.key.type_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _k = SchemaTypeKey::decode(key)
+        let raw = SchemaTypeKeyRaw::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let val: SchemaTypeValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: SchemaTypeKey {
+                branch_id: raw.branch_id,
+                type_id: raw.type_id,
+            },
+            value: val,
+        })
     }
 }
 
@@ -69,10 +89,14 @@ mod tests {
             .unwrap();
 
         let entry = SchemaTypeEntry {
-            id: Uuid::now_v7(),
-            branch_id: Uuid::now_v7(),
-            slug: "person".into(),
-            description: Some(serde_json::json!("A person entity")),
+            key: SchemaTypeKey {
+                branch_id: Uuid::now_v7(),
+                type_id: Uuid::now_v7(),
+            },
+            value: SchemaTypeValue {
+                slug: "person".into(),
+                description: Some(serde_json::json!("A person entity")),
+            },
         };
 
         let mut batch = db.batch();
@@ -80,6 +104,6 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<SchemaTypeEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.slug, "person");
+        assert_eq!(found.value.slug, "person");
     }
 }

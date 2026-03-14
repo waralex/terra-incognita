@@ -7,5 +7,6 @@ pub mod schema_attachment_entry;
 pub mod schema_prop_entry;
 pub mod schema_type_entry;
 pub mod slug_entry;
+pub mod storage;
 pub mod transaction_entry;
 pub mod visibility_entry;

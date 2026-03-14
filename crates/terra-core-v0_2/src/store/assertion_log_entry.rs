@@ -11,14 +11,26 @@ use crate::io::{DbItem, DbError};
 
 const CF_ASSERTION_LOG: &str = "assertion_log";
 
-/// Provenance record for an assertion.
+/// Assertion log key.
+#[derive(Debug, Clone)]
+pub struct AssertionLogKey {
+    pub entry_id: Uuid,
+}
+
+/// Assertion log value — provenance record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssertionLogEntry {
-    pub id: Uuid,
+pub struct AssertionLogValue {
     pub entity_id: Uuid,
     pub tx_id: Uuid,
     pub properties: serde_json::Value,
     pub reasoning: serde_json::Value,
+}
+
+/// Assertion log entry = key + value.
+#[derive(Debug, Clone)]
+pub struct AssertionLogEntry {
+    pub key: AssertionLogKey,
+    pub value: AssertionLogValue,
 }
 
 impl DbItem for AssertionLogEntry {
@@ -27,17 +39,22 @@ impl DbItem for AssertionLogEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        self.id.as_bytes().to_vec()
+        self.key.entry_id.as_bytes().to_vec()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _id = Uuid::from_slice(key)
+        let entry_id = Uuid::from_slice(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let val: AssertionLogValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: AssertionLogKey { entry_id },
+            value: val,
+        })
     }
 }
 
@@ -55,11 +72,15 @@ mod tests {
             .unwrap();
 
         let entry = AssertionLogEntry {
-            id: Uuid::now_v7(),
-            entity_id: Uuid::now_v7(),
-            tx_id: Uuid::now_v7(),
-            properties: serde_json::json!({"population": 56000000}),
-            reasoning: serde_json::json!("census data"),
+            key: AssertionLogKey {
+                entry_id: Uuid::now_v7(),
+            },
+            value: AssertionLogValue {
+                entity_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+                properties: serde_json::json!({"population": 56000000}),
+                reasoning: serde_json::json!("census data"),
+            },
         };
 
         let mut batch = db.batch();
@@ -67,7 +88,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<AssertionLogEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.id, entry.id);
-        assert_eq!(found.reasoning, serde_json::json!("census data"));
+        assert_eq!(found.key.entry_id, entry.key.entry_id);
+        assert_eq!(found.value.reasoning, serde_json::json!("census data"));
     }
 }

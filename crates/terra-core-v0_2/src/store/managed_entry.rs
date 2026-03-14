@@ -1,7 +1,7 @@
 //! Managed type entry — generic versioned records (tasks, etc.).
 //!
 //! Key: `type_hash(16) | branch_id(16) | item_id(16) | tx_id(16)` = 64 bytes.
-//! Value: JSON with fields + optional state.
+//! Value: JSON with slug, optional state, and dynamic fields.
 //!
 //! `type_hash` is a UUID derived from the managed type name (from DataSchema).
 //! All managed types share a single CF.
@@ -9,13 +9,13 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::io::{DbItem, DbError};
 use crate::io::storage_key::{storage_key, StorageKey};
+use crate::io::{DbError, DbItem};
 
 const CF_MANAGED_MAIN: &str = "managed_main";
 
 storage_key! {
-    pub(crate) struct ManagedKey(64) {
+    pub(crate) struct ManagedKeyRaw(64) {
         type_hash: Uuid,
         branch_id: Uuid,
         item_id: Uuid,
@@ -28,19 +28,29 @@ storage_key! {
     }
 }
 
-/// A versioned managed type record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManagedEntry {
+/// Managed type key.
+#[derive(Debug, Clone)]
+pub struct ManagedKey {
     pub type_hash: Uuid,
     pub branch_id: Uuid,
     pub item_id: Uuid,
     pub tx_id: Uuid,
+}
+
+/// Managed type value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedValue {
     pub slug: String,
-    /// Current lifecycle state, if the managed type has a lifecycle.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<String>,
-    /// Dynamic fields defined by the managed type's schema.
     pub fields: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Managed type entry = key + value.
+#[derive(Debug, Clone)]
+pub struct ManagedEntry {
+    pub key: ManagedKey,
+    pub value: ManagedValue,
 }
 
 impl DbItem for ManagedEntry {
@@ -49,23 +59,32 @@ impl DbItem for ManagedEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = ManagedKey {
-            type_hash: self.type_hash,
-            branch_id: self.branch_id,
-            item_id: self.item_id,
-            tx_id: self.tx_id,
+        let raw = ManagedKeyRaw {
+            type_hash: self.key.type_hash,
+            branch_id: self.key.branch_id,
+            item_id: self.key.item_id,
+            tx_id: self.key.tx_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _k = ManagedKey::decode(key)
-            .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let raw = ManagedKeyRaw::decode(key).map_err(|e| DbError::Storage(e.to_string()))?;
+        let val: ManagedValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: ManagedKey {
+                type_hash: raw.type_hash,
+                branch_id: raw.branch_id,
+                item_id: raw.item_id,
+                tx_id: raw.tx_id,
+            },
+            value: val,
+        })
     }
 }
 
@@ -86,23 +105,30 @@ mod tests {
         fields.insert("goal".into(), serde_json::json!("explore orders table"));
 
         let entry = ManagedEntry {
-            type_hash: Uuid::from_u128(0xAAAA),
-            branch_id: Uuid::now_v7(),
-            item_id: Uuid::now_v7(),
-            tx_id: Uuid::now_v7(),
-            slug: "explore-orders".into(),
-            state: Some("open".into()),
-            fields,
+            key: ManagedKey {
+                type_hash: Uuid::from_u128(0xAAAA),
+                branch_id: Uuid::now_v7(),
+                item_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+            },
+            value: ManagedValue {
+                slug: "explore-orders".into(),
+                state: Some("open".into()),
+                fields,
+            },
         };
 
         let mut batch = db.batch();
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<ManagedEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.slug, "explore-orders");
-        assert_eq!(found.state, Some("open".into()));
-        assert_eq!(found.fields["goal"], "explore orders table");
+        let found = db
+            .get::<ManagedEntry>(&entry.encode_key())
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.value.slug, "explore-orders");
+        assert_eq!(found.value.state, Some("open".into()));
+        assert_eq!(found.value.fields["goal"], "explore orders table");
     }
 
     #[test]
@@ -114,20 +140,27 @@ mod tests {
             .unwrap();
 
         let entry = ManagedEntry {
-            type_hash: Uuid::from_u128(0xBBBB),
-            branch_id: Uuid::now_v7(),
-            item_id: Uuid::now_v7(),
-            tx_id: Uuid::now_v7(),
-            slug: "my-note".into(),
-            state: None,
-            fields: serde_json::Map::new(),
+            key: ManagedKey {
+                type_hash: Uuid::from_u128(0xBBBB),
+                branch_id: Uuid::now_v7(),
+                item_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+            },
+            value: ManagedValue {
+                slug: "my-note".into(),
+                state: None,
+                fields: serde_json::Map::new(),
+            },
         };
 
         let mut batch = db.batch();
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let found = db.get::<ManagedEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.state, None);
+        let found = db
+            .get::<ManagedEntry>(&entry.encode_key())
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.value.state, None);
     }
 }

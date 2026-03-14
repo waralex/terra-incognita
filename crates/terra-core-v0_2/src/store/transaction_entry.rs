@@ -13,7 +13,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_TRANSACTIONS: &str = "transactions";
 
 storage_key! {
-    pub(crate) struct TransactionKey(32) {
+    pub(crate) struct TransactionKeyRaw(32) {
         branch_id: Uuid,
         tx_id: Uuid,
     }
@@ -22,13 +22,25 @@ storage_key! {
     }
 }
 
-/// Transaction metadata — dynamic fields defined by project config.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionEntry {
-    pub id: Uuid,
+/// Transaction key.
+#[derive(Debug, Clone)]
+pub struct TransactionKey {
     pub branch_id: Uuid,
+    pub tx_id: Uuid,
+}
+
+/// Transaction value — dynamic metadata fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionValue {
     pub meta: serde_json::Map<String, serde_json::Value>,
     pub timestamp: DateTime<Utc>,
+}
+
+/// Transaction entry = key + value.
+#[derive(Debug, Clone)]
+pub struct TransactionEntry {
+    pub key: TransactionKey,
+    pub value: TransactionValue,
 }
 
 impl DbItem for TransactionEntry {
@@ -37,21 +49,29 @@ impl DbItem for TransactionEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = TransactionKey {
-            branch_id: self.branch_id,
-            tx_id: self.id,
+        let raw = TransactionKeyRaw {
+            branch_id: self.key.branch_id,
+            tx_id: self.key.tx_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _k = TransactionKey::decode(key)
+        let raw = TransactionKeyRaw::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let val: TransactionValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: TransactionKey {
+                branch_id: raw.branch_id,
+                tx_id: raw.tx_id,
+            },
+            value: val,
+        })
     }
 }
 
@@ -72,10 +92,14 @@ mod tests {
         meta.insert("reasoning".into(), serde_json::json!("test"));
 
         let entry = TransactionEntry {
-            id: Uuid::now_v7(),
-            branch_id: Uuid::now_v7(),
-            meta,
-            timestamp: Utc::now(),
+            key: TransactionKey {
+                branch_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+            },
+            value: TransactionValue {
+                meta,
+                timestamp: Utc::now(),
+            },
         };
 
         let mut batch = db.batch();
@@ -83,7 +107,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<TransactionEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.id, entry.id);
-        assert_eq!(found.meta["reasoning"], "test");
+        assert_eq!(found.key.tx_id, entry.key.tx_id);
+        assert_eq!(found.value.meta["reasoning"], "test");
     }
 }

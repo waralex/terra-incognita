@@ -5,7 +5,6 @@
 //!
 //! No fact/hypothesis distinction in v0.2 — all assertions are equal.
 
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
@@ -14,7 +13,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_ASSERTIONS: &str = "assertions";
 
 storage_key! {
-    pub(crate) struct AssertionKey(80) {
+    pub(crate) struct AssertionKeyRaw(80) {
         branch_id: Uuid,
         prop_id: Uuid,
         tx_id: Uuid,
@@ -27,15 +26,27 @@ storage_key! {
     }
 }
 
-/// A single assertion: one property value for one entity.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssertionEntry {
+/// Assertion key.
+#[derive(Debug, Clone)]
+pub struct AssertionKey {
     pub branch_id: Uuid,
     pub prop_id: Uuid,
     pub tx_id: Uuid,
     pub entry_id: Uuid,
     pub entity_id: Uuid,
+}
+
+/// Assertion value.
+#[derive(Debug, Clone)]
+pub struct AssertionValue {
     pub value: serde_json::Value,
+}
+
+/// Assertion entry = key + value.
+#[derive(Debug, Clone)]
+pub struct AssertionEntry {
+    pub key: AssertionKey,
+    pub value: AssertionValue,
 }
 
 impl DbItem for AssertionEntry {
@@ -44,32 +55,34 @@ impl DbItem for AssertionEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = AssertionKey {
-            branch_id: self.branch_id,
-            prop_id: self.prop_id,
-            tx_id: self.tx_id,
-            entry_id: self.entry_id,
-            entity_id: self.entity_id,
+        let raw = AssertionKeyRaw {
+            branch_id: self.key.branch_id,
+            prop_id: self.key.prop_id,
+            tx_id: self.key.tx_id,
+            entry_id: self.key.entry_id,
+            entity_id: self.key.entity_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = AssertionKey::decode(key)
+        let raw = AssertionKeyRaw::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let val: serde_json::Value =
             serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
         Ok(Self {
-            branch_id: k.branch_id,
-            prop_id: k.prop_id,
-            tx_id: k.tx_id,
-            entry_id: k.entry_id,
-            entity_id: k.entity_id,
-            value: val,
+            key: AssertionKey {
+                branch_id: raw.branch_id,
+                prop_id: raw.prop_id,
+                tx_id: raw.tx_id,
+                entry_id: raw.entry_id,
+                entity_id: raw.entity_id,
+            },
+            value: AssertionValue { value: val },
         })
     }
 }
@@ -88,12 +101,16 @@ mod tests {
             .unwrap();
 
         let entry = AssertionEntry {
-            branch_id: Uuid::now_v7(),
-            prop_id: Uuid::now_v7(),
-            tx_id: Uuid::now_v7(),
-            entry_id: Uuid::now_v7(),
-            entity_id: Uuid::now_v7(),
-            value: serde_json::json!({"name": "London"}),
+            key: AssertionKey {
+                branch_id: Uuid::now_v7(),
+                prop_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+                entry_id: Uuid::now_v7(),
+                entity_id: Uuid::now_v7(),
+            },
+            value: AssertionValue {
+                value: serde_json::json!({"name": "London"}),
+            },
         };
 
         let mut batch = db.batch();
@@ -101,7 +118,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<AssertionEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.entity_id, entry.entity_id);
-        assert_eq!(found.value, serde_json::json!({"name": "London"}));
+        assert_eq!(found.key.entity_id, entry.key.entity_id);
+        assert_eq!(found.value.value, serde_json::json!({"name": "London"}));
     }
 }

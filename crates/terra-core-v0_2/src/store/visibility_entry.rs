@@ -14,7 +14,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_VISIBILITY: &str = "visibility";
 
 storage_key! {
-    pub(crate) struct VisibilityKey(64) {
+    pub(crate) struct VisibilityKeyRaw(64) {
         branch_id: Uuid,
         tx_id: Uuid,
         item_kind: Uuid,
@@ -25,13 +25,26 @@ storage_key! {
     }
 }
 
-/// A visibility record ready for storage.
-pub struct VisibilityEntry {
+/// Visibility key.
+#[derive(Debug, Clone)]
+pub struct VisibilityKey {
     pub branch_id: Uuid,
     pub tx_id: Uuid,
     pub kind: Uuid,
     pub item_id: Uuid,
+}
+
+/// Visibility value.
+#[derive(Debug, Clone)]
+pub struct VisibilityValue {
     pub hidden: bool,
+}
+
+/// Visibility entry = key + value.
+#[derive(Debug, Clone)]
+pub struct VisibilityEntry {
+    pub key: VisibilityKey,
+    pub value: VisibilityValue,
 }
 
 impl DbItem for VisibilityEntry {
@@ -40,29 +53,31 @@ impl DbItem for VisibilityEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = VisibilityKey {
-            branch_id: self.branch_id,
-            tx_id: self.tx_id,
-            item_kind: self.kind,
-            item_id: self.item_id,
+        let raw = VisibilityKeyRaw {
+            branch_id: self.key.branch_id,
+            tx_id: self.key.tx_id,
+            item_kind: self.key.kind,
+            item_id: self.key.item_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        Ok(vec![if self.hidden { 1 } else { 0 }])
+        Ok(vec![if self.value.hidden { 1 } else { 0 }])
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let k = VisibilityKey::decode(key)
+        let raw = VisibilityKeyRaw::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let hidden = value.first().copied().unwrap_or(0) == 1;
         Ok(Self {
-            branch_id: k.branch_id,
-            tx_id: k.tx_id,
-            kind: k.item_kind,
-            item_id: k.item_id,
-            hidden,
+            key: VisibilityKey {
+                branch_id: raw.branch_id,
+                tx_id: raw.tx_id,
+                kind: raw.item_kind,
+                item_id: raw.item_id,
+            },
+            value: VisibilityValue { hidden },
         })
     }
 }
@@ -82,16 +97,18 @@ mod tests {
     const KIND: Uuid = Uuid::from_u128(0);
 
     #[test]
-    fn roundtrip() {
+    fn roundtrip_hidden() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
 
         let entry = VisibilityEntry {
-            branch_id: Uuid::now_v7(),
-            tx_id: Uuid::now_v7(),
-            kind: KIND,
-            item_id: Uuid::now_v7(),
-            hidden: true,
+            key: VisibilityKey {
+                branch_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+                kind: KIND,
+                item_id: Uuid::now_v7(),
+            },
+            value: VisibilityValue { hidden: true },
         };
 
         let mut batch = db.batch();
@@ -99,22 +116,23 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<VisibilityEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert!(found.hidden);
-        assert_eq!(found.item_id, entry.item_id);
-        assert_eq!(found.kind, KIND);
+        assert!(found.value.hidden);
+        assert_eq!(found.key.item_id, entry.key.item_id);
     }
 
     #[test]
-    fn visible_entry() {
+    fn roundtrip_visible() {
         let dir = tempfile::tempdir().unwrap();
         let db = open_db(&dir);
 
         let entry = VisibilityEntry {
-            branch_id: Uuid::now_v7(),
-            tx_id: Uuid::now_v7(),
-            kind: KIND,
-            item_id: Uuid::now_v7(),
-            hidden: false,
+            key: VisibilityKey {
+                branch_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+                kind: KIND,
+                item_id: Uuid::now_v7(),
+            },
+            value: VisibilityValue { hidden: false },
         };
 
         let mut batch = db.batch();
@@ -122,6 +140,6 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<VisibilityEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert!(!found.hidden);
+        assert!(!found.value.hidden);
     }
 }

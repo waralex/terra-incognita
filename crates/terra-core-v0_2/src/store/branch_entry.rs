@@ -14,18 +14,26 @@ const CF_BRANCH_MAIN: &str = "branch_main";
 /// Maximum branch ancestry depth.
 pub const MAX_BRANCH_DEPTH: usize = 8;
 
-/// A branch record.
+/// Branch key.
+#[derive(Debug, Clone)]
+pub struct BranchKey {
+    pub branch_id: Uuid,
+}
+
+/// Branch value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BranchEntry {
-    pub id: Uuid,
+pub struct BranchValue {
     pub slug: String,
-    /// Why this branch was created — dynamic metadata.
     pub meta: serde_json::Map<String, serde_json::Value>,
-    /// Transaction from which this branch was created. `Uuid::nil()` = genesis.
     pub created_from_tx: Uuid,
-    /// Precomputed ancestry: `[(branch_id, branch_point_tx)]`.
-    /// First entry is self with `Uuid::max()`, last is main.
     pub ancestry: Vec<(Uuid, Uuid)>,
+}
+
+/// Branch entry = key + value.
+#[derive(Debug, Clone)]
+pub struct BranchEntry {
+    pub key: BranchKey,
+    pub value: BranchValue,
 }
 
 impl DbItem for BranchEntry {
@@ -34,17 +42,22 @@ impl DbItem for BranchEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        self.id.as_bytes().to_vec()
+        self.key.branch_id.as_bytes().to_vec()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _id = Uuid::from_slice(key)
+        let branch_id = Uuid::from_slice(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let val: BranchValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: BranchKey { branch_id },
+            value: val,
+        })
     }
 }
 
@@ -63,11 +76,13 @@ mod tests {
 
         let id = Uuid::now_v7();
         let entry = BranchEntry {
-            id,
-            slug: "exploration".into(),
-            meta: serde_json::Map::new(),
-            created_from_tx: Uuid::nil(),
-            ancestry: vec![(id, Uuid::max()), (Uuid::nil(), Uuid::max())],
+            key: BranchKey { branch_id: id },
+            value: BranchValue {
+                slug: "exploration".into(),
+                meta: serde_json::Map::new(),
+                created_from_tx: Uuid::nil(),
+                ancestry: vec![(id, Uuid::max()), (Uuid::nil(), Uuid::max())],
+            },
         };
 
         let mut batch = db.batch();
@@ -75,8 +90,8 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<BranchEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.id, id);
-        assert_eq!(found.slug, "exploration");
-        assert_eq!(found.ancestry.len(), 2);
+        assert_eq!(found.key.branch_id, id);
+        assert_eq!(found.value.slug, "exploration");
+        assert_eq!(found.value.ancestry.len(), 2);
     }
 }

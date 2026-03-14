@@ -13,7 +13,7 @@ use crate::io::storage_key::{storage_key, StorageKey};
 const CF_ENTITY_MAIN: &str = "entity_main";
 
 storage_key! {
-    pub(crate) struct EntityKey(48) {
+    pub(crate) struct EntityKeyRaw(48) {
         branch_id: Uuid,
         entity_id: Uuid,
         tx_id: Uuid,
@@ -24,16 +24,28 @@ storage_key! {
     }
 }
 
-/// A versioned entity record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityEntry {
-    pub id: Uuid,
+/// Entity key.
+#[derive(Debug, Clone)]
+pub struct EntityKey {
     pub branch_id: Uuid,
+    pub entity_id: Uuid,
+    pub tx_id: Uuid,
+}
+
+/// Entity value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityValue {
     pub slug: String,
     pub entity_type_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
-    pub tx_id: Uuid,
+}
+
+/// Entity entry = key + value.
+#[derive(Debug, Clone)]
+pub struct EntityEntry {
+    pub key: EntityKey,
+    pub value: EntityValue,
 }
 
 impl DbItem for EntityEntry {
@@ -42,22 +54,31 @@ impl DbItem for EntityEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let key = EntityKey {
-            branch_id: self.branch_id,
-            entity_id: self.id,
-            tx_id: self.tx_id,
+        let raw = EntityKeyRaw {
+            branch_id: self.key.branch_id,
+            entity_id: self.key.entity_id,
+            tx_id: self.key.tx_id,
         };
-        key.encode()
+        raw.encode()
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
-        let _k = EntityKey::decode(key)
+        let raw = EntityKeyRaw::decode(key)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))
+        let val: EntityValue =
+            serde_json::from_slice(value).map_err(|e| DbError::Storage(e.to_string()))?;
+        Ok(Self {
+            key: EntityKey {
+                branch_id: raw.branch_id,
+                entity_id: raw.entity_id,
+                tx_id: raw.tx_id,
+            },
+            value: val,
+        })
     }
 }
 
@@ -75,12 +96,16 @@ mod tests {
             .unwrap();
 
         let entry = EntityEntry {
-            id: Uuid::now_v7(),
-            branch_id: Uuid::now_v7(),
-            slug: "test-entity".into(),
-            entity_type_id: Uuid::now_v7(),
-            description: Some(serde_json::json!("A test")),
-            tx_id: Uuid::now_v7(),
+            key: EntityKey {
+                branch_id: Uuid::now_v7(),
+                entity_id: Uuid::now_v7(),
+                tx_id: Uuid::now_v7(),
+            },
+            value: EntityValue {
+                slug: "test-entity".into(),
+                entity_type_id: Uuid::now_v7(),
+                description: Some(serde_json::json!("A test")),
+            },
         };
 
         let mut batch = db.batch();
@@ -88,7 +113,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<EntityEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.id, entry.id);
-        assert_eq!(found.slug, "test-entity");
+        assert_eq!(found.key.entity_id, entry.key.entity_id);
+        assert_eq!(found.value.slug, "test-entity");
     }
 }

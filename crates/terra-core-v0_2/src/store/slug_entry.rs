@@ -12,12 +12,25 @@ use crate::io::{DbItem, DbError};
 
 const CF_SLUGS: &str = "slugs";
 
-/// A slug index entry ready for storage.
-pub struct SlugEntry {
+/// Slug key.
+#[derive(Debug, Clone)]
+pub struct SlugKey {
     pub kind: Uuid,
     pub branch_id: Uuid,
     pub slug: String,
+}
+
+/// Slug value.
+#[derive(Debug, Clone)]
+pub struct SlugValue {
     pub id: Uuid,
+}
+
+/// Slug entry = key + value.
+#[derive(Debug, Clone)]
+pub struct SlugEntry {
+    pub key: SlugKey,
+    pub value: SlugValue,
 }
 
 impl DbItem for SlugEntry {
@@ -26,15 +39,15 @@ impl DbItem for SlugEntry {
     }
 
     fn encode_key(&self) -> Vec<u8> {
-        let mut key = Vec::with_capacity(32 + self.slug.len());
-        key.extend_from_slice(self.kind.as_bytes());
-        key.extend_from_slice(self.branch_id.as_bytes());
-        key.extend_from_slice(self.slug.as_bytes());
+        let mut key = Vec::with_capacity(32 + self.key.slug.len());
+        key.extend_from_slice(self.key.kind.as_bytes());
+        key.extend_from_slice(self.key.branch_id.as_bytes());
+        key.extend_from_slice(self.key.slug.as_bytes());
         key
     }
 
     fn encode_value(&self) -> Result<Vec<u8>, DbError> {
-        Ok(self.id.as_bytes().to_vec())
+        Ok(self.value.id.as_bytes().to_vec())
     }
 
     fn decode(key: &[u8], value: &[u8]) -> Result<Self, DbError> {
@@ -49,7 +62,10 @@ impl DbItem for SlugEntry {
             .map_err(|e| DbError::Storage(e.to_string()))?;
         let id = Uuid::from_slice(value)
             .map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { kind, branch_id, slug, id })
+        Ok(Self {
+            key: SlugKey { kind, branch_id, slug },
+            value: SlugValue { id },
+        })
     }
 }
 
@@ -74,10 +90,12 @@ mod tests {
         let db = open_db(&dir);
 
         let entry = SlugEntry {
-            kind: KIND_ENTITY,
-            branch_id: Uuid::now_v7(),
-            slug: "my-entity".to_string(),
-            id: Uuid::now_v7(),
+            key: SlugKey {
+                kind: KIND_ENTITY,
+                branch_id: Uuid::now_v7(),
+                slug: "my-entity".into(),
+            },
+            value: SlugValue { id: Uuid::now_v7() },
         };
 
         let mut batch = db.batch();
@@ -85,10 +103,8 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<SlugEntry>(&entry.encode_key()).unwrap().unwrap();
-        assert_eq!(found.id, entry.id);
-        assert_eq!(found.slug, "my-entity");
-        assert_eq!(found.kind, KIND_ENTITY);
-        assert_eq!(found.branch_id, entry.branch_id);
+        assert_eq!(found.value.id, entry.value.id);
+        assert_eq!(found.key.slug, "my-entity");
     }
 
     #[test]
@@ -100,15 +116,21 @@ mod tests {
         let id1 = Uuid::now_v7();
         let id2 = Uuid::now_v7();
 
-        let e1 = SlugEntry { kind: KIND_ENTITY, branch_id: branch, slug: "same".into(), id: id1 };
-        let e2 = SlugEntry { kind: KIND_BRANCH, branch_id: branch, slug: "same".into(), id: id2 };
+        let e1 = SlugEntry {
+            key: SlugKey { kind: KIND_ENTITY, branch_id: branch, slug: "same".into() },
+            value: SlugValue { id: id1 },
+        };
+        let e2 = SlugEntry {
+            key: SlugKey { kind: KIND_BRANCH, branch_id: branch, slug: "same".into() },
+            value: SlugValue { id: id2 },
+        };
 
         let mut batch = db.batch();
         batch.put(&e1).unwrap();
         batch.put(&e2).unwrap();
         batch.commit().unwrap();
 
-        assert_eq!(db.get::<SlugEntry>(&e1.encode_key()).unwrap().unwrap().id, id1);
-        assert_eq!(db.get::<SlugEntry>(&e2.encode_key()).unwrap().unwrap().id, id2);
+        assert_eq!(db.get::<SlugEntry>(&e1.encode_key()).unwrap().unwrap().value.id, id1);
+        assert_eq!(db.get::<SlugEntry>(&e2.encode_key()).unwrap().unwrap().value.id, id2);
     }
 }

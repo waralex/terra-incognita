@@ -7,12 +7,12 @@ use uuid::Uuid;
 
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
-use crate::io::DbError;
+use crate::io::{DbError, DbItem, ValidPrefix};
 use crate::io::slug::Slug;
 use crate::store::entry::branch::{BranchEntry, BranchKey};
-use crate::store::entry::entity::{EntityEntry, EntityKeyPrefix};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
+use crate::store::versioned_key::VersionedPrefix;
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -78,23 +78,15 @@ impl BranchContext {
         &self.ancestry
     }
 
-    /// Check if an entity exists on this branch.
-    pub fn entity_exists(&self, slug: &Slug) -> Result<bool, DbError> {
-        let prefix = EntityKeyPrefix {
-            branch: self.branch.clone(),
-            entity: slug.clone(),
-        };
-        let mut iter = self.storage.db.scan::<EntityEntry>(&prefix)?;
+    /// Check if any record exists for the given prefix.
+    pub fn exists<T: DbItem>(&self, prefix: &(impl VersionedPrefix + ValidPrefix<T>)) -> Result<bool, DbError> {
+        let mut iter = self.storage.db.scan::<T>(prefix)?;
         Ok(iter.next().is_some())
     }
 
-    /// Get the latest version of an entity on this branch.
-    pub fn get_latest_entity(&self, slug: &Slug) -> Result<Option<EntityEntry>, DbError> {
-        let prefix = EntityKeyPrefix {
-            branch: self.branch.clone(),
-            entity: slug.clone(),
-        };
-        let mut iter = self.storage.db.scan_rev::<EntityEntry>(&prefix)?;
+    /// Get the latest version (highest tx_id) for the given prefix.
+    pub fn get_latest<T: DbItem>(&self, prefix: &(impl VersionedPrefix + ValidPrefix<T>)) -> Result<Option<T>, DbError> {
+        let mut iter = self.storage.db.scan_rev::<T>(prefix)?;
         match iter.next() {
             Some(result) => Ok(Some(result?)),
             None => Ok(None),

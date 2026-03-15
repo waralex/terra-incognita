@@ -10,7 +10,7 @@ use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::WriteBatch;
 use crate::store::branch_context::BranchContext;
-use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
+use crate::store::entry::entity::{EntityEntry, EntityKey, EntityKeyPrefix, EntityValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 
 /// Executes a validated domain transaction against a branch.
@@ -24,7 +24,11 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
-        if branch.entity_exists(&entity.slug)? {
+        let prefix = EntityKeyPrefix {
+            branch: branch.id().clone(),
+            entity: entity.slug.clone(),
+        };
+        if branch.exists::<EntityEntry>(&prefix)? {
             return Err(DbError::Storage(format!(
                 "entity already exists: {}", entity.slug
             )));
@@ -100,6 +104,13 @@ mod tests {
         m
     }
 
+    fn entity_prefix(branch: &BranchContext, slug: &str) -> EntityKeyPrefix {
+        EntityKeyPrefix {
+            branch: branch.id().clone(),
+            entity: slug.parse().unwrap(),
+        }
+    }
+
     #[test]
     fn create_single_entity() {
         let dir = tempfile::tempdir().unwrap();
@@ -120,7 +131,7 @@ mod tests {
         assert_eq!(result.context.branch.as_str(), "main");
 
         // Verify entity record was written
-        let entry = branch.get_latest_entity(&"alice".parse().unwrap()).unwrap().unwrap();
+        let entry = branch.get_latest::<EntityEntry>(&entity_prefix(&branch, "alice")).unwrap().unwrap();
         assert_eq!(entry.key.entity.as_str(), "alice");
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
     }
@@ -186,7 +197,7 @@ mod tests {
         let result = cmd.execute(&branch, input).unwrap();
 
         for name in ["alice", "bob"] {
-            let entry = branch.get_latest_entity(&name.parse().unwrap()).unwrap().unwrap();
+            let entry = branch.get_latest::<EntityEntry>(&entity_prefix(&branch, name)).unwrap().unwrap();
             assert_eq!(entry.key.entity.as_str(), name);
             assert_eq!(entry.key.tx_id, result.context.tx_id);
         }
@@ -198,7 +209,8 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        assert!(!branch.entity_exists(&"alice".parse().unwrap()).unwrap());
+        let prefix = entity_prefix(&branch, "alice");
+        assert!(!branch.exists::<EntityEntry>(&prefix).unwrap());
 
         let cmd = ExecuteTransaction;
         let input = TransactionInput::new(meta("create"))
@@ -209,6 +221,6 @@ mod tests {
             ));
         cmd.execute(&branch, input).unwrap();
 
-        assert!(branch.entity_exists(&"alice".parse().unwrap()).unwrap());
+        assert!(branch.exists::<EntityEntry>(&prefix).unwrap());
     }
 }

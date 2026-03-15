@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::config::ProjectConfig;
-use crate::io::{DbError, TerraDb};
+use crate::io::{DbError, DbItem, TerraDb, ValidPrefix};
 use crate::io::slug::Slug;
 use crate::store::branch_context::BranchContext;
 
@@ -47,6 +47,33 @@ impl Storage {
     /// Access the project config.
     pub fn config(&self) -> &ProjectConfig {
         &self.config
+    }
+
+    /// Check if any versioned record exists for the given prefix.
+    ///
+    /// If `bound` is `Some(tx_id)`, only considers records with `tx_id <= bound`.
+    /// If `None`, checks for any record.
+    pub fn exists<P: ValidPrefix<T>, T: DbItem>(
+        &self,
+        prefix: &P,
+    ) -> Result<bool, DbError> {
+        let mut iter = self.db.scan_rev::<T>(prefix)?;
+        Ok(iter.next().is_some())
+    }
+
+    /// Get the latest version of a versioned record for the given prefix.
+    ///
+    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `to_full(tx_id)`)
+    /// for latest at or before a specific transaction.
+    pub fn get_latest<P: ValidPrefix<T>, T: DbItem>(
+        &self,
+        prefix: &P,
+    ) -> Result<Option<T>, DbError> {
+        let mut iter = self.db.scan_rev::<T>(prefix)?;
+        match iter.next() {
+            Some(result) => Ok(Some(result?)),
+            None => Ok(None),
+        }
     }
 
     fn open_impl(path: &Path, read_only: bool, config: Arc<ProjectConfig>) -> Result<Self, DbError> {

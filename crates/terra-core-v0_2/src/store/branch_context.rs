@@ -15,7 +15,7 @@ use crate::io::storage_key::StorageKey;
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
-use crate::store::versioned_key::{VersionedKey, VersionedPrefix};
+use crate::store::versioned_key::VersionedKey;
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -82,18 +82,19 @@ impl BranchContext {
     }
 
     /// Check if any record exists for the given prefix.
-    pub fn exists<T: DbItem>(&self, prefix: &(impl VersionedPrefix + ValidPrefix<T>)) -> Result<bool, DbError> {
-        let mut iter = self.storage.db.scan::<T>(prefix)?;
-        Ok(iter.next().is_some())
+    ///
+    /// Pass `VersionedPrefix` for unbounded, or `FullPrefix` (via `to_full(tx_id)`)
+    /// for bounded check.
+    pub fn exists<P: ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<bool, DbError> {
+        self.storage.exists(prefix)
     }
 
-    /// Get the latest version (highest tx_id) for the given prefix.
-    pub fn get_latest<T: DbItem>(&self, prefix: &(impl VersionedPrefix + ValidPrefix<T>)) -> Result<Option<T>, DbError> {
-        let mut iter = self.storage.db.scan_rev::<T>(prefix)?;
-        match iter.next() {
-            Some(result) => Ok(Some(result?)),
-            None => Ok(None),
-        }
+    /// Get the latest version for the given prefix.
+    ///
+    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `to_full(tx_id)`)
+    /// for latest at or before a specific transaction.
+    pub fn get_latest<P: ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<Option<T>, DbError> {
+        self.storage.get_latest(prefix)
     }
 
     /// Scan latest version of each unique item within a prefix range.

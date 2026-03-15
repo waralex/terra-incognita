@@ -24,7 +24,7 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
-        if branch.exists::<EntityEntry>(&EntityKeyPrefix::new(branch.id().clone(), entity.slug.clone()))? {
+        if branch.exists::<_, EntityEntry>(&EntityKeyPrefix::new(branch.id().clone(), entity.slug.clone()))? {
             return Err(DbError::Storage(format!(
                 "entity already exists: {}", entity.slug
             )));
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(result.context.branch.as_str(), "main");
 
         // Verify entity record was written
-        let entry = branch.get_latest::<EntityEntry>(&entity_prefix(&branch, "alice")).unwrap().unwrap();
+        let entry = branch.get_latest::<_, EntityEntry>(&entity_prefix(&branch, "alice")).unwrap().unwrap();
         assert_eq!(entry.key.entity.as_str(), "alice");
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
     }
@@ -191,7 +191,7 @@ mod tests {
         let result = cmd.execute(&branch, input).unwrap();
 
         for name in ["alice", "bob"] {
-            let entry = branch.get_latest::<EntityEntry>(&entity_prefix(&branch, name)).unwrap().unwrap();
+            let entry = branch.get_latest::<_, EntityEntry>(&entity_prefix(&branch, name)).unwrap().unwrap();
             assert_eq!(entry.key.entity.as_str(), name);
             assert_eq!(entry.key.tx_id, result.context.tx_id);
         }
@@ -204,7 +204,7 @@ mod tests {
         let branch = BranchContext::main(storage);
 
         let prefix = entity_prefix(&branch, "alice");
-        assert!(!branch.exists::<EntityEntry>(&prefix).unwrap());
+        assert!(!branch.exists::<_, EntityEntry>(&prefix).unwrap());
 
         let cmd = ExecuteTransaction;
         let input = TransactionInput::new(meta("create"))
@@ -215,7 +215,7 @@ mod tests {
             ));
         cmd.execute(&branch, input).unwrap();
 
-        assert!(branch.exists::<EntityEntry>(&prefix).unwrap());
+        assert!(branch.exists::<_, EntityEntry>(&prefix).unwrap());
     }
 
     #[test]

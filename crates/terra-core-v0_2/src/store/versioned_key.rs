@@ -11,17 +11,18 @@ use crate::io::key_prefix::KeyPrefix;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
 
-/// Prefix of a versioned key — all fields except `tx_id`.
+/// Prefix of a versioned key — with or without `tx_id`.
 ///
-/// Used as a type-level marker to parameterize generic scan functions.
-/// `to_full(tx_id)` produces a full prefix (with tx_id) for bounded seeks.
-/// `with_branch(slug)` clones the prefix with a different branch (for ancestry walk).
+/// Implemented by both partial prefixes (branch + domain fields) and
+/// full prefixes (branch + domain fields + tx_id). Composable:
+/// - `with_branch(slug)` — same prefix, different branch (ancestry walk)
+/// - `with_transaction(tx_id)` — add/replace tx_id bound (bounded seek)
 pub trait VersionedPrefix: KeyPrefix {
-    /// Full prefix type — includes tx_id as upper bound for seeks.
-    type Full: KeyPrefix;
+    /// Full prefix type — includes tx_id.
+    type Full: VersionedPrefix;
 
-    /// Create a full prefix with the given tx_id upper bound.
-    fn to_full(&self, tx_id: uuid::Uuid) -> Self::Full;
+    /// Add or replace tx_id, producing a full prefix for bounded seeks.
+    fn with_transaction(&self, tx_id: uuid::Uuid) -> Self::Full;
 
     /// Clone this prefix with a different branch.
     fn with_branch(&self, branch: Slug) -> Self;
@@ -96,7 +97,7 @@ macro_rules! versioned_key {
             impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {
                 type Full = [< $name FullPrefix >];
 
-                fn to_full(&self, tx_id: uuid::Uuid) -> Self::Full {
+                fn with_transaction(&self, tx_id: uuid::Uuid) -> Self::Full {
                     [< $name FullPrefix >] {
                         branch: self.branch.clone(),
                         $( $field: self.$field.clone(), )*
@@ -138,6 +139,26 @@ macro_rules! versioned_key {
                     // tx_id
                     buf[_off.._off + 16].copy_from_slice(self.tx_id.as_bytes());
                     buf
+                }
+            }
+
+            impl $crate::store::versioned_key::VersionedPrefix for [< $name FullPrefix >] {
+                type Full = Self;
+
+                fn with_transaction(&self, tx_id: uuid::Uuid) -> Self {
+                    Self {
+                        branch: self.branch.clone(),
+                        $( $field: self.$field.clone(), )*
+                        tx_id,
+                    }
+                }
+
+                fn with_branch(&self, branch: $crate::io::slug::Slug) -> Self {
+                    Self {
+                        branch,
+                        $( $field: self.$field.clone(), )*
+                        tx_id: self.tx_id,
+                    }
                 }
             }
         }
@@ -452,7 +473,7 @@ mod tests {
             tx_id,
         };
         let prefix = SlugMiddleKeyPrefix::new(branch, entity);
-        let full = prefix.to_full(tx_id);
+        let full = prefix.with_transaction(tx_id);
 
         // FullPrefix encodes the same as key's fixed part
         assert_eq!(full.encode().len(), SlugMiddleKey::SIZE);

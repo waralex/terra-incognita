@@ -63,7 +63,7 @@ impl Storage {
 
     /// Get the latest version of a versioned record for the given prefix.
     ///
-    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `to_full(tx_id)`)
+    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `with_transaction(tx_id)`)
     /// for latest at or before a specific transaction.
     pub fn get_latest<P: ValidPrefix<T>, T: DbItem>(
         &self,

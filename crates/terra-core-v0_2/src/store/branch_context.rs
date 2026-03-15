@@ -83,7 +83,7 @@ impl BranchContext {
 
     /// Check if any record exists for the given prefix.
     ///
-    /// Pass `VersionedPrefix` for unbounded, or `FullPrefix` (via `to_full(tx_id)`)
+    /// Pass `VersionedPrefix` for unbounded, or `FullPrefix` (via `with_transaction(tx_id)`)
     /// for bounded check.
     pub fn exists<P: ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<bool, DbError> {
         self.storage.exists(prefix)
@@ -91,7 +91,7 @@ impl BranchContext {
 
     /// Get the latest version for the given prefix.
     ///
-    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `to_full(tx_id)`)
+    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `with_transaction(tx_id)`)
     /// for latest at or before a specific transaction.
     pub fn get_latest<P: ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<Option<T>, DbError> {
         self.storage.get_latest(prefix)

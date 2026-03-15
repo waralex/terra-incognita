@@ -13,6 +13,7 @@ use crate::store::entry::branch::BranchEntry;
 use crate::store::entry::entity::EntityEntry;
 use crate::store::entry::entity_change::EntityChangeEntry;
 use crate::store::entry::managed::ManagedEntry;
+use crate::store::entry::touched::TouchedEntry;
 use crate::store::entry::transaction::TransactionEntry;
 use crate::store::entry::visibility::VisibilityEntry;
 
@@ -95,6 +96,7 @@ impl Storage {
             .with::<BranchEntry>()
             .with::<EntityEntry>()
             .with::<ManagedEntry>()
+            .with::<TouchedEntry>()
             .with::<TransactionEntry>()
             .with::<VisibilityEntry>();
         if read_only {

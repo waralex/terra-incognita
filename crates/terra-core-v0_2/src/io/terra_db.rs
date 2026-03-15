@@ -290,13 +290,10 @@ mod tests {
 
         impl_prefix!(BranchEntityPrefix => EntityEntry);
 
-        fn write_entity(db: &TerraDb, branch: Slug, entity: Slug, tx_id: Uuid, slug: &str) {
+        fn write_entity(db: &TerraDb, branch: Slug, entity: Slug, tx_id: Uuid) {
             let entry = EntityEntry {
                 key: EntityKey { branch, entity, tx_id },
-                value: EntityValue {
-                    slug: slug.into(),
-                    description: None,
-                },
+                value: EntityValue { description: None },
             };
             let mut batch = db.batch();
             batch.put(&entry).unwrap();
@@ -319,9 +316,9 @@ mod tests {
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
-            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
-            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1);
+            write_entity(&db, branch.clone(), entity.clone(), tx2);
+            write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let prefix = BranchEntityPrefix { branch, entity };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
@@ -330,9 +327,9 @@ mod tests {
                 .unwrap();
 
             assert_eq!(items.len(), 3);
-            assert_eq!(items[0].value.slug, "v1");
-            assert_eq!(items[1].value.slug, "v2");
-            assert_eq!(items[2].value.slug, "v3");
+            assert_eq!(items[0].key.tx_id, tx1);
+            assert_eq!(items[1].key.tx_id, tx2);
+            assert_eq!(items[2].key.tx_id, tx3);
         }
 
         #[test]
@@ -349,9 +346,9 @@ mod tests {
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
-            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
-            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1);
+            write_entity(&db, branch.clone(), entity.clone(), tx2);
+            write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let prefix = BranchEntityPrefix { branch, entity };
             let items: Vec<EntityEntry> = db.scan_rev::<EntityEntry>(&prefix)
@@ -360,9 +357,9 @@ mod tests {
                 .unwrap();
 
             assert_eq!(items.len(), 3);
-            assert_eq!(items[0].value.slug, "v3");
-            assert_eq!(items[1].value.slug, "v2");
-            assert_eq!(items[2].value.slug, "v1");
+            assert_eq!(items[0].key.tx_id, tx3);
+            assert_eq!(items[1].key.tx_id, tx2);
+            assert_eq!(items[2].key.tx_id, tx1);
         }
 
         #[test]
@@ -378,8 +375,8 @@ mod tests {
             let e2 = s("entity.2");
             let tx = Uuid::from_u128(10);
 
-            write_entity(&db, branch.clone(), e1.clone(), tx, "entity-1");
-            write_entity(&db, branch.clone(), e2, tx, "entity-2");
+            write_entity(&db, branch.clone(), e1.clone(), tx);
+            write_entity(&db, branch.clone(), e2, tx);
 
             let prefix = BranchEntityPrefix { branch, entity: e1 };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
@@ -388,7 +385,7 @@ mod tests {
                 .unwrap();
 
             assert_eq!(items.len(), 1);
-            assert_eq!(items[0].value.slug, "entity-1");
+            assert_eq!(items[0].key.entity.as_str(), "entity.1");
         }
 
         #[test]
@@ -425,9 +422,9 @@ mod tests {
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
-            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
-            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1);
+            write_entity(&db, branch.clone(), entity.clone(), tx2);
+            write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let bound = Uuid::from_u128(25);
             let prefix = BranchEntityPrefix { branch, entity };
@@ -440,8 +437,8 @@ mod tests {
                 .collect();
 
             assert_eq!(items.len(), 2);
-            assert_eq!(items[0].value.slug, "v1");
-            assert_eq!(items[1].value.slug, "v2");
+            assert_eq!(items[0].key.tx_id, tx1);
+            assert_eq!(items[1].key.tx_id, tx2);
         }
 
         #[test]
@@ -458,9 +455,9 @@ mod tests {
             let tx2 = Uuid::from_u128(20);
             let tx3 = Uuid::from_u128(30);
 
-            write_entity(&db, branch.clone(), entity.clone(), tx1, "v1");
-            write_entity(&db, branch.clone(), entity.clone(), tx2, "v2");
-            write_entity(&db, branch.clone(), entity.clone(), tx3, "v3");
+            write_entity(&db, branch.clone(), entity.clone(), tx1);
+            write_entity(&db, branch.clone(), entity.clone(), tx2);
+            write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let bound = Uuid::from_u128(25);
             let prefix = BranchEntityPrefix { branch, entity };
@@ -470,7 +467,7 @@ mod tests {
                 .find(|e| e.key.tx_id <= bound);
 
             assert!(latest.is_some());
-            assert_eq!(latest.unwrap().value.slug, "v2");
+            assert_eq!(latest.unwrap().key.tx_id, tx2);
         }
 
         #[test]
@@ -485,8 +482,8 @@ mod tests {
             let e1 = s("entity.1");
             let e2 = s("entity.2");
 
-            write_entity(&db, branch.clone(), e1, Uuid::from_u128(10), "a");
-            write_entity(&db, branch.clone(), e2, Uuid::from_u128(20), "b");
+            write_entity(&db, branch.clone(), e1, Uuid::from_u128(10));
+            write_entity(&db, branch.clone(), e2, Uuid::from_u128(20));
 
             let prefix = BranchPrefix { branch };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)

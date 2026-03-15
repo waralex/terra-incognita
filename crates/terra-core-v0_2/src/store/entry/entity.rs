@@ -1,7 +1,7 @@
 //! Entity record entry.
 //!
 //! Key: `hash(branch)(16) | hash(entity)(16) | tx_id(16)` = 48 bytes + slug suffixes.
-//! Value: JSON with slug and description.
+//! Value: JSON with description.
 //! Versioned — each mutation writes a new record with a new tx_id.
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,6 @@ versioned_key! {
 /// Entity value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityValue {
-    pub slug: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
 }
@@ -87,7 +86,6 @@ mod tests {
                 tx_id: Uuid::now_v7(),
             },
             value: EntityValue {
-                slug: "test-entity".into(),
                 description: Some(serde_json::json!("A test")),
             },
         };
@@ -98,6 +96,6 @@ mod tests {
 
         let found = db.get::<EntityEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.entity, entry.key.entity);
-        assert_eq!(found.value.slug, "test-entity");
+        assert_eq!(found.value.description, Some(serde_json::json!("A test")));
     }
 }

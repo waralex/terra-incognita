@@ -37,7 +37,6 @@ impl ExecuteTransaction {
                 tx_id,
             },
             value: EntityValue {
-                slug: entity.slug.to_string(),
                 description: entity.description.clone(),
             },
         })?;
@@ -122,7 +121,7 @@ mod tests {
 
         // Verify entity record was written
         let entry = branch.get_latest_entity(&"alice".parse().unwrap()).unwrap().unwrap();
-        assert_eq!(entry.value.slug, "alice");
+        assert_eq!(entry.key.entity.as_str(), "alice");
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
     }
 
@@ -188,7 +187,7 @@ mod tests {
 
         for name in ["alice", "bob"] {
             let entry = branch.get_latest_entity(&name.parse().unwrap()).unwrap().unwrap();
-            assert_eq!(entry.value.slug, name);
+            assert_eq!(entry.key.entity.as_str(), name);
             assert_eq!(entry.key.tx_id, result.context.tx_id);
         }
     }

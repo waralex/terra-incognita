@@ -1,8 +1,9 @@
-//! ExecuteTransaction — validates and commits a transaction to a branch.
+//! ExecuteTransaction — validates and writes a transaction to a branch.
 
 use uuid::Uuid;
 
 use crate::command::Command;
+use crate::command::CommandState;
 use crate::command::input::transaction::TransactionInput;
 use crate::domain::entity::Entity;
 use crate::domain::transaction::Transaction;
@@ -18,7 +19,7 @@ use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, Ent
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 
-/// Validates and commits a transaction to a branch.
+/// Validates and writes a transaction to a branch.
 pub struct ExecuteTransaction {
     validator: DomainValidator,
 }
@@ -213,7 +214,7 @@ impl Command for ExecuteTransaction {
     type Input = TransactionInput;
     type Output = Transaction<TxMeta>;
 
-    fn execute(&self, branch: &BranchContext, input: Self::Input) -> Result<Self::Output, DbError> {
+    fn execute(&self, branch: &BranchContext, state: &mut CommandState, input: Self::Input) -> Result<Self::Output, DbError> {
         // Validate everything before touching storage.
         self.validator.check_transaction(&Transaction::new(input.meta.clone()))?;
         for entity in &input.create_entities {
@@ -230,22 +231,22 @@ impl Command for ExecuteTransaction {
         }
 
         let tx_id = Uuid::now_v7();
-        let mut batch = branch.storage().batch();
+        let batch = state.batch();
 
         for entity in &input.create_entities {
-            self.create_entity(branch, &mut batch, tx_id, entity)?;
+            self.create_entity(branch, batch, tx_id, entity)?;
         }
 
         for entity in &input.update_entities {
-            self.update_entity(branch, &mut batch, tx_id, entity)?;
+            self.update_entity(branch, batch, tx_id, entity)?;
         }
 
         for managed in &input.create_managed {
-            self.create_managed_item(branch, &mut batch, tx_id, managed)?;
+            self.create_managed_item(branch, batch, tx_id, managed)?;
         }
 
         for managed in &input.update_managed {
-            self.update_managed_item(branch, &mut batch, tx_id, managed)?;
+            self.update_managed_item(branch, batch, tx_id, managed)?;
         }
 
         batch.put(&TransactionEntry {
@@ -255,8 +256,6 @@ impl Command for ExecuteTransaction {
             },
             value: TransactionValue { meta: input.meta.clone() },
         })?;
-
-        batch.commit()?;
 
         Ok(Transaction {
             meta: input.meta,
@@ -339,24 +338,30 @@ mod tests {
             })
     }
 
+    /// Execute a transaction and commit immediately (test convenience).
+    fn exec(branch: &BranchContext, input: TransactionInput) -> Transaction<TxMeta> {
+        let cmd = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let result = cmd.execute(branch, &mut state, input).unwrap();
+        state.commit().unwrap();
+        result
+    }
+
     // --- Create entity ---
 
     #[test]
     fn create_single_entity() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
-        let branch = BranchContext::main(storage.clone());
+        let branch = BranchContext::main(storage);
 
-        let input = TransactionInput::new(meta("introduce alice"))
+        let result = exec(&branch, TransactionInput::new(meta("introduce alice"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            ));
-
-        let cmd = cmd();
-        let result = cmd.execute(&branch, input).unwrap();
+            )));
 
         assert_eq!(result.meta["reasoning"], "introduce alice");
         assert_eq!(result.context.branch.as_str(), "main");
@@ -372,25 +377,24 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let cmd = cmd();
-
-        let input1 = TransactionInput::new(meta("first"))
+        exec(&branch, TransactionInput::new(meta("first"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("First")),
                 vec![],
                 Map::new(),
-            ));
-        cmd.execute(&branch, input1).unwrap();
+            )));
 
-        let input2 = TransactionInput::new(meta("second"))
+        let cmd = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("second"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Duplicate")),
                 vec![],
                 Map::new(),
-            ));
-        let err = cmd.execute(&branch, input2).unwrap_err();
+            ))
+        ).unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
@@ -400,10 +404,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let cmd = cmd();
-        let input = TransactionInput::new(meta("no-op"));
-        let result = cmd.execute(&branch, input).unwrap();
-
+        let result = exec(&branch, TransactionInput::new(meta("no-op")));
         assert_eq!(result.meta["reasoning"], "no-op");
     }
 
@@ -413,7 +414,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let input = TransactionInput::new(meta("batch"))
+        let result = exec(&branch, TransactionInput::new(meta("batch"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Person A")),
@@ -425,10 +426,7 @@ mod tests {
                 Some(serde_json::json!("Person B")),
                 vec![],
                 Map::new(),
-            ));
-
-        let cmd = cmd();
-        let result = cmd.execute(&branch, input).unwrap();
+            )));
 
         for name in ["alice", "bob"] {
             let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, name)).unwrap().unwrap();
@@ -446,15 +444,13 @@ mod tests {
         let prefix = entity_bound(&branch, "alice");
         assert!(!branch.exists::<EntityEntry>(&prefix).unwrap());
 
-        let cmd = cmd();
-        let input = TransactionInput::new(meta("create"))
+        exec(&branch, TransactionInput::new(meta("create"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            ));
-        cmd.execute(&branch, input).unwrap();
+            )));
 
         assert!(branch.exists::<EntityEntry>(&prefix).unwrap());
     }
@@ -465,8 +461,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let cmd = cmd();
-        let result = cmd.execute(&branch, TransactionInput::new(meta("create with props"))
+        let result = exec(&branch, TransactionInput::new(meta("create with props"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
@@ -475,14 +470,11 @@ mod tests {
                     PropertyValue { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
                 ],
                 entity_meta("initial observation"),
-            ))
-        ).unwrap();
+            )));
 
-        // Verify entity record
         let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice")).unwrap().unwrap();
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
 
-        // Verify assertions via direct DB scan
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let alice_slug: crate::io::Slug = "alice".parse().unwrap();
         let bound = AssertionKey::bound()
@@ -495,16 +487,14 @@ mod tests {
         assert_eq!(found.key.entity_id, alice_slug.hash());
         assert_eq!(found.key.tx_id, result.context.tx_id);
 
-        // Verify entity change entry
         let change = storage_get_exact(&branch, found.key.change_id).unwrap();
         assert_eq!(change.value.meta["reasoning"], "initial observation");
         assert_eq!(change.value.entity_id, alice_slug.hash());
     }
 
-    /// Helper: get EntityChangeEntry by exact change_id.
     fn storage_get_exact(branch: &BranchContext, change_id: Uuid) -> Result<EntityChangeEntry, DbError> {
         let key = EntityChangeKey { change_id };
-        branch.storage().db.get::<EntityChangeEntry>(&key)?
+        branch.storage().get::<EntityChangeEntry>(&key)?
             .ok_or_else(|| DbError::Storage("entity change not found".into()))
     }
 
@@ -515,20 +505,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
-        // Create entity first
-        cmd.execute(&branch, TransactionInput::new(meta("create"))
+        exec(&branch, TransactionInput::new(meta("create"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            ))
-        ).unwrap();
+            )));
 
-        // Update with properties
-        let result = cmd.execute(&branch, TransactionInput::new(meta("update"))
+        let result = exec(&branch, TransactionInput::new(meta("update"))
             .update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
@@ -536,10 +522,8 @@ mod tests {
                     PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
                 ],
                 entity_meta("age observed"),
-            ))
-        ).unwrap();
+            )));
 
-        // Verify assertion written
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let bound = AssertionKey::bound()
             .with_prefix(|k| {
@@ -556,9 +540,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
-        let err = cmd.execute(&branch, TransactionInput::new(meta("update missing"))
+        let cmd = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("update missing"))
             .update_entity(Entity::new(
                 "ghost".parse().unwrap(),
                 None,
@@ -574,25 +559,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
-        cmd.execute(&branch, TransactionInput::new(meta("create"))
+        exec(&branch, TransactionInput::new(meta("create"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Original")),
                 vec![],
                 Map::new(),
-            ))
-        ).unwrap();
+            )));
 
-        cmd.execute(&branch, TransactionInput::new(meta("update desc"))
+        exec(&branch, TransactionInput::new(meta("update desc"))
             .update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Updated description")),
                 vec![],
                 Map::new(),
-            ))
-        ).unwrap();
+            )));
 
         let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice")).unwrap().unwrap();
         assert_eq!(entry.value.description, Some(serde_json::json!("Updated description")));
@@ -605,19 +587,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
 
-        cmd.execute(&branch, TransactionInput::new(meta("create task"))
+        exec(&branch, TransactionInput::new(meta("create task"))
             .create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            ))
-        ).unwrap();
+            )));
 
         let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
             .unwrap().unwrap();
@@ -631,21 +611,21 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("first"));
 
-        cmd.execute(&branch, TransactionInput::new(meta("create"))
+        exec(&branch, TransactionInput::new(meta("create"))
             .create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields.clone(),
-            ))
-        ).unwrap();
+            )));
 
-        let err = cmd.execute(&branch, TransactionInput::new(meta("duplicate"))
+        let cmd = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("duplicate"))
             .create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
@@ -663,32 +643,29 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
 
-        cmd.execute(&branch, TransactionInput::new(meta("create"))
+        exec(&branch, TransactionInput::new(meta("create"))
             .create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            ))
-        ).unwrap();
+            )));
 
         let mut updated_fields = Map::new();
         updated_fields.insert("goal".into(), serde_json::json!("explore deeply"));
         updated_fields.insert("notes".into(), serde_json::json!("found something"));
 
-        cmd.execute(&branch, TransactionInput::new(meta("update"))
+        exec(&branch, TransactionInput::new(meta("update"))
             .update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 updated_fields,
-            ))
-        ).unwrap();
+            )));
 
         let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
             .unwrap().unwrap();
@@ -701,9 +678,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
-        let err = cmd.execute(&branch, TransactionInput::new(meta("update missing"))
+        let cmd = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("update missing"))
             .update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "ghost".parse().unwrap(),
@@ -721,10 +699,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
-        // Pre-create entity and managed item
-        cmd.execute(&branch, TransactionInput::new(meta("setup"))
+        exec(&branch, TransactionInput::new(meta("setup"))
             .create_entity(Entity::new(
                 "server".parse().unwrap(),
                 Some(serde_json::json!("Production server")),
@@ -740,14 +716,12 @@ mod tests {
                     f.insert("goal".into(), serde_json::json!("monitor"));
                     f
                 },
-            ))
-        ).unwrap();
+            )));
 
-        // Mixed: create new entity + update existing entity + create managed + update managed
         let mut new_fields = Map::new();
         new_fields.insert("goal".into(), serde_json::json!("investigate"));
 
-        let result = cmd.execute(&branch, TransactionInput::new(meta("mixed"))
+        let result = exec(&branch, TransactionInput::new(meta("mixed"))
             .create_entity(Entity::new(
                 "db-node".parse().unwrap(),
                 Some(serde_json::json!("Database node")),
@@ -779,10 +753,8 @@ mod tests {
                     f.insert("goal".into(), serde_json::json!("escalate"));
                     f
                 },
-            ))
-        ).unwrap();
+            )));
 
-        // Verify all operations happened with same tx_id
         let db_node = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "db-node")).unwrap().unwrap();
         assert_eq!(db_node.key.tx_id, result.context.tx_id);
 
@@ -802,18 +774,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = cmd();
 
-        cmd.execute(&branch, TransactionInput::new(meta("create"))
+        exec(&branch, TransactionInput::new(meta("create"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            ))
-        ).unwrap();
+            )));
 
-        let result = cmd.execute(&branch, TransactionInput::new(meta("observe"))
+        let result = exec(&branch, TransactionInput::new(meta("observe"))
             .update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
@@ -822,10 +792,8 @@ mod tests {
                     PropertyValue { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
                 ],
                 entity_meta("census data"),
-            ))
-        ).unwrap();
+            )));
 
-        // Both assertions share the same change_id
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let city_slug: crate::io::Slug = "city".parse().unwrap();
 
@@ -839,7 +807,6 @@ mod tests {
 
         assert_eq!(age_entry.key.change_id, city_entry.key.change_id);
 
-        // Change entry links back to entity and tx
         let change = storage_get_exact(&branch, age_entry.key.change_id).unwrap();
         let alice_slug: crate::io::Slug = "alice".parse().unwrap();
         assert_eq!(change.value.entity_id, alice_slug.hash());

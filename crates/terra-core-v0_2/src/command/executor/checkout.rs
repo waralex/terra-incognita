@@ -4,6 +4,7 @@
 use uuid::Uuid;
 
 use crate::command::Command;
+use crate::command::CommandState;
 use crate::command::executor::transaction::ExecuteTransaction;
 use crate::command::input::checkout::CheckoutInput;
 use crate::domain::transaction::Transaction;
@@ -41,7 +42,7 @@ impl Command for ExecuteCheckout {
     type Input = CheckoutInput;
     type Output = CheckoutOutput;
 
-    fn execute(&self, parent: &BranchContext, input: Self::Input) -> Result<Self::Output, DbError> {
+    fn execute(&self, parent: &BranchContext, state: &mut CommandState, input: Self::Input) -> Result<Self::Output, DbError> {
         // 1. Validate branch meta.
         self.validator.check_branch(&input.meta)?;
 
@@ -62,7 +63,7 @@ impl Command for ExecuteCheckout {
             ));
         }
 
-        // 4. Write BranchEntry.
+        // 4. Write BranchEntry to shared batch.
         let entry = BranchEntry {
             key: BranchKey { branch: input.slug.clone() },
             value: BranchValue {
@@ -72,16 +73,14 @@ impl Command for ExecuteCheckout {
                 created_from_tx,
             },
         };
-        let mut batch = parent.storage().batch();
-        batch.put(&entry)?;
-        batch.commit()?;
+        state.batch().put(&entry)?;
 
-        // 5. Open new BranchContext.
-        let new_branch = BranchContext::open(parent.storage().clone(), input.slug.clone())?;
+        // 5. Build child BranchContext without DB read.
+        let child = parent.child(input.slug.clone(), created_from_tx)?;
 
-        // 6. Execute first transaction.
+        // 6. Execute first transaction on the child branch (same batch).
         let cmd = ExecuteTransaction::new(self.validator.clone());
-        let tx_result = cmd.execute(&new_branch, input.transaction)?;
+        let tx_result = cmd.execute(&child, state, input.transaction)?;
 
         Ok(CheckoutOutput {
             branch: input.slug,
@@ -141,7 +140,10 @@ mod tests {
 
     fn commit_tx(branch: &BranchContext, reasoning: &str) -> Transaction<TxMeta> {
         let cmd = ExecuteTransaction::new(validator());
-        cmd.execute(branch, TransactionInput::new(tx_meta(reasoning))).unwrap()
+        let mut state = CommandState::new(branch.storage());
+        let result = cmd.execute(branch, &mut state, TransactionInput::new(tx_meta(reasoning))).unwrap();
+        state.commit().unwrap();
+        result
     }
 
     fn entity_bound(branch: &BranchContext, slug: &str) -> crate::io::KeyBound<EntityKey> {
@@ -159,12 +161,14 @@ mod tests {
         commit_tx(&main, "seed");
 
         let cmd = ExecuteCheckout::new(validator());
-        let result = cmd.execute(&main, CheckoutInput::new(
+        let mut state = CommandState::new(&storage);
+        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
             "feature".parse().unwrap(),
             tx_meta("explore feature"),
             None,
             TransactionInput::new(tx_meta("first on branch")),
         )).unwrap();
+        state.commit().unwrap();
 
         assert_eq!(result.branch.as_str(), "feature");
         assert_eq!(result.transaction.context.branch.as_str(), "feature");
@@ -189,7 +193,8 @@ mod tests {
         commit_tx(&main, "seed");
 
         let cmd = ExecuteCheckout::new(validator());
-        let result = cmd.execute(&main, CheckoutInput::new(
+        let mut state = CommandState::new(&storage);
+        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
             "feature".parse().unwrap(),
             tx_meta("explore"),
             None,
@@ -201,6 +206,7 @@ mod tests {
                     Map::new(),
                 )),
         )).unwrap();
+        state.commit().unwrap();
 
         assert_eq!(result.transaction.context.branch.as_str(), "feature");
 
@@ -222,14 +228,18 @@ mod tests {
         commit_tx(&main, "seed");
 
         let cmd = ExecuteCheckout::new(validator());
-        cmd.execute(&main, CheckoutInput::new(
+
+        let mut state = CommandState::new(&storage);
+        cmd.execute(&main, &mut state, CheckoutInput::new(
             "feature".parse().unwrap(),
             tx_meta("first"),
             None,
             TransactionInput::new(tx_meta("init")),
         )).unwrap();
+        state.commit().unwrap();
 
-        let err = cmd.execute(&main, CheckoutInput::new(
+        let mut state2 = CommandState::new(&storage);
+        let err = cmd.execute(&main, &mut state2, CheckoutInput::new(
             "feature".parse().unwrap(),
             tx_meta("second"),
             None,
@@ -247,12 +257,14 @@ mod tests {
         let _tx2 = commit_tx(&main, "second");
 
         let cmd = ExecuteCheckout::new(validator());
-        let result = cmd.execute(&main, CheckoutInput::new(
+        let mut state = CommandState::new(&storage);
+        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
             "from-first".parse().unwrap(),
             tx_meta("branch from first tx"),
             Some(tx1.context.tx_id),
             TransactionInput::new(tx_meta("init")),
         )).unwrap();
+        state.commit().unwrap();
 
         assert_eq!(result.created_from_tx, tx1.context.tx_id);
     }
@@ -266,12 +278,14 @@ mod tests {
         let tx2 = commit_tx(&main, "second");
 
         let cmd = ExecuteCheckout::new(validator());
-        let result = cmd.execute(&main, CheckoutInput::new(
+        let mut state = CommandState::new(&storage);
+        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
             "from-head".parse().unwrap(),
             tx_meta("branch from head"),
             None,
             TransactionInput::new(tx_meta("init")),
         )).unwrap();
+        state.commit().unwrap();
 
         assert_eq!(result.created_from_tx, tx2.context.tx_id);
     }
@@ -284,8 +298,8 @@ mod tests {
         commit_tx(&main, "seed");
 
         let cmd = ExecuteCheckout::new(validator());
-        // Missing required "reasoning" field in branch meta.
-        let err = cmd.execute(&main, CheckoutInput::new(
+        let mut state = CommandState::new(&storage);
+        let err = cmd.execute(&main, &mut state, CheckoutInput::new(
             "bad".parse().unwrap(),
             Map::new(),
             None,
@@ -299,10 +313,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let main = storage.main_branch();
-        // No transactions committed.
 
         let cmd = ExecuteCheckout::new(validator());
-        let err = cmd.execute(&main, CheckoutInput::new(
+        let mut state = CommandState::new(&storage);
+        let err = cmd.execute(&main, &mut state, CheckoutInput::new(
             "orphan".parse().unwrap(),
             tx_meta("no parent tx"),
             None,

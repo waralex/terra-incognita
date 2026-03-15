@@ -121,6 +121,30 @@ impl BranchContext {
         Ok(None)
     }
 
+    /// Build a child branch context without reading from storage.
+    ///
+    /// The child inherits this branch's ancestry plus an entry for this branch
+    /// at the given branch point. Use this when the child's BranchEntry
+    /// hasn't been committed yet (e.g. inside a composite command).
+    pub fn child(&self, slug: Slug, branch_point_tx: Uuid) -> Result<Self, DbError> {
+        let max_depth = self.storage.config().max_branch_depth;
+        if self.ancestry.len() + 1 > max_depth {
+            return Err(DbError::Storage(format!(
+                "branch depth exceeds maximum of {}", max_depth
+            )));
+        }
+        let mut ancestry = vec![AncestryEntry {
+            branch: self.branch.clone(),
+            branch_point_tx,
+        }];
+        ancestry.extend(self.ancestry.iter().cloned());
+        Ok(Self {
+            storage: self.storage.clone(),
+            branch: slug,
+            ancestry,
+        })
+    }
+
     /// Return the tx_id of the latest transaction on this branch (not walking ancestry).
     pub fn head_tx(&self) -> Result<Option<Uuid>, DbError> {
         let bound = TransactionKey::bound()

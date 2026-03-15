@@ -188,6 +188,23 @@ impl BranchContext {
         min_similarity: f32,
         at_tx: Option<Uuid>,
     ) -> Result<Vec<(Slug, f32)>, DbError> {
+        self.similar_entities_multi(&[query_embedding.to_vec()], limit, min_similarity, at_tx)
+    }
+
+    /// Multi-vector semantic search: accepts multiple query embeddings, performs a single
+    /// scan over entity embeddings, and scores each entity by the maximum cosine similarity
+    /// across all query vectors.
+    pub fn similar_entities_multi(
+        &self,
+        query_embeddings: &[Vec<f32>],
+        limit: usize,
+        min_similarity: f32,
+        at_tx: Option<Uuid>,
+    ) -> Result<Vec<(Slug, f32)>, DbError> {
+        if query_embeddings.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let mut latest: HashMap<Slug, Vec<f32>> = HashMap::new();
 
         self.collect_embeddings(&self.branch, at_tx, &mut latest)?;
@@ -201,11 +218,17 @@ impl BranchContext {
 
         let mut scored: Vec<(Slug, f32)> = latest
             .into_iter()
-            .map(|(slug, emb)| {
-                let sim = cosine_similarity(query_embedding, &emb);
-                (slug, sim)
+            .filter_map(|(slug, emb)| {
+                let max_sim = query_embeddings
+                    .iter()
+                    .map(|q| cosine_similarity(q, &emb))
+                    .fold(f32::NEG_INFINITY, f32::max);
+                if max_sim >= min_similarity {
+                    Some((slug, max_sim))
+                } else {
+                    None
+                }
             })
-            .filter(|(_, sim)| *sim >= min_similarity)
             .collect();
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));

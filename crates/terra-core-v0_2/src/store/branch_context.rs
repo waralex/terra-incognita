@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
+use crate::io::key_prefix::KeyBound;
 use crate::io::slug::Slug;
 use crate::io::{DbError, DbItem};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
@@ -78,22 +79,19 @@ impl BranchContext {
     /// Check if any record exists, walking the ancestry chain.
     ///
     /// Checks current branch (unbounded), then ancestors with tx bounds.
-    pub fn exists<P, T>(&self, prefix: &P) -> Result<bool, DbError>
+    pub fn exists<T>(&self, bound: &KeyBound<T::Key>) -> Result<bool, DbError>
     where
-        P: VersionedPrefix<Key = T::Key>,
         T: DbItem,
-        T::Key: VersionedKey,
+        T::Key: VersionedKey + Clone,
     {
-        // Current branch — unbounded (tx_id = MAX by convention)
-        if self.storage.exists::<_, T>(prefix)? {
+        if self.storage.exists::<T>(bound)? {
             return Ok(true);
         }
-        // Ancestors — bounded by branch_point_tx
         for entry in &self.ancestry {
-            let bounded = prefix
-                .with_branch(entry.branch.clone())
-                .with_transaction(entry.branch_point_tx);
-            if self.storage.exists::<_, T>(&bounded)? {
+            let bounded = bound.clone()
+                .with_prefix(|k| k.set_branch(entry.branch.clone()))
+                .with_upper(|k| k.set_tx_id(entry.branch_point_tx));
+            if self.storage.exists::<T>(&bounded)? {
                 return Ok(true);
             }
         }

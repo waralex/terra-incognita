@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::config::ProjectConfig;
 use crate::io::{DbError, DbItem, TerraDb};
-use crate::store::versioned_key::VersionedPrefix;
 use crate::io::slug::Slug;
+use crate::store::versioned_key::VersionedPrefix;
 use crate::store::branch_context::BranchContext;
 
 use crate::store::entry::assertion::AssertionEntry;
@@ -50,13 +50,10 @@ impl Storage {
         &self.config
     }
 
-    /// Check if any versioned record exists for the given prefix.
-    ///
-    /// If `bound` is `Some(tx_id)`, only considers records with `tx_id <= bound`.
-    /// If `None`, checks for any record.
-    pub fn exists<P: VersionedPrefix<Key = T::Key>, T: DbItem>(
+    /// Check if any record exists within the given scan range.
+    pub fn exists<T: DbItem>(
         &self,
-        prefix: &P,
+        prefix: &impl crate::io::KeyPrefix<Key = T::Key>,
     ) -> Result<bool, DbError> {
         let mut iter = self.db.scan_rev::<T>(prefix)?;
         Ok(iter.next().is_some())

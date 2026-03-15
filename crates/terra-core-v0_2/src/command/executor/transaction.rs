@@ -10,7 +10,8 @@ use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::WriteBatch;
 use crate::store::branch_context::BranchContext;
-use crate::store::entry::entity::{EntityEntry, EntityKey, EntityKeyPrefix, EntityValue};
+use crate::io::storage_key::StorageKey;
+use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 
 /// Executes a validated domain transaction against a branch.
@@ -24,7 +25,9 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
-        if branch.exists::<_, EntityEntry>(&EntityKeyPrefix::new(branch.id().clone(), entity.slug.clone()))? {
+        let bound = EntityKey::bound()
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = entity.slug.clone(); });
+        if branch.exists::<EntityEntry>(&bound)? {
             return Err(DbError::Storage(format!(
                 "entity already exists: {}", entity.slug
             )));
@@ -84,6 +87,7 @@ mod tests {
     use std::sync::Arc;
     use super::*;
     use crate::config::ProjectConfig;
+    use crate::store::entry::entity::EntityKeyPrefix;
     use crate::store::storage::Storage;
     use serde_json::{Map, Value};
 
@@ -100,8 +104,9 @@ mod tests {
         m
     }
 
-    fn entity_prefix(branch: &BranchContext, slug: &str) -> EntityKeyPrefix {
-        EntityKeyPrefix::new(branch.id().clone(), slug.parse().unwrap())
+    fn entity_bound(branch: &BranchContext, slug: &str) -> crate::io::KeyBound<EntityKey> {
+        EntityKey::bound()
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = slug.parse().unwrap(); })
     }
 
     #[test]
@@ -124,7 +129,9 @@ mod tests {
         assert_eq!(result.context.branch.as_str(), "main");
 
         // Verify entity record was written
-        let entry = branch.get_latest::<_, EntityEntry>(&entity_prefix(&branch, "alice")).unwrap().unwrap();
+        let entry = branch.get_latest::<_, EntityEntry>(
+            &EntityKeyPrefix::new(branch.id().clone(), "alice".parse().unwrap()),
+        ).unwrap().unwrap();
         assert_eq!(entry.key.entity.as_str(), "alice");
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
     }
@@ -190,7 +197,9 @@ mod tests {
         let result = cmd.execute(&branch, input).unwrap();
 
         for name in ["alice", "bob"] {
-            let entry = branch.get_latest::<_, EntityEntry>(&entity_prefix(&branch, name)).unwrap().unwrap();
+            let entry = branch.get_latest::<_, EntityEntry>(
+                &EntityKeyPrefix::new(branch.id().clone(), name.parse().unwrap()),
+            ).unwrap().unwrap();
             assert_eq!(entry.key.entity.as_str(), name);
             assert_eq!(entry.key.tx_id, result.context.tx_id);
         }
@@ -202,8 +211,8 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let prefix = entity_prefix(&branch, "alice");
-        assert!(!branch.exists::<_, EntityEntry>(&prefix).unwrap());
+        let prefix = entity_bound(&branch, "alice");
+        assert!(!branch.exists::<EntityEntry>(&prefix).unwrap());
 
         let cmd = ExecuteTransaction;
         let input = TransactionInput::new(meta("create"))
@@ -214,7 +223,7 @@ mod tests {
             ));
         cmd.execute(&branch, input).unwrap();
 
-        assert!(branch.exists::<_, EntityEntry>(&prefix).unwrap());
+        assert!(branch.exists::<EntityEntry>(&prefix).unwrap());
     }
 
 }

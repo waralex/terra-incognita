@@ -42,6 +42,8 @@ pub trait VersionedKey: StorageKey {
 
     fn branch(&self) -> &Slug;
     fn tx_id(&self) -> uuid::Uuid;
+    fn set_branch(&mut self, branch: Slug);
+    fn set_tx_id(&mut self, tx_id: uuid::Uuid);
 }
 
 /// Declares a versioned storage key: `branch(Slug) | middle fields | tx_id(Uuid)`.
@@ -218,6 +220,8 @@ macro_rules! versioned_key {
                 type Prefix = [< $name Prefix >];
                 fn branch(&self) -> &$crate::io::slug::Slug { &self.branch }
                 fn tx_id(&self) -> uuid::Uuid { self.tx_id }
+                fn set_branch(&mut self, branch: $crate::io::slug::Slug) { self.branch = branch; }
+                fn set_tx_id(&mut self, tx_id: uuid::Uuid) { self.tx_id = tx_id; }
             }
         }
     };

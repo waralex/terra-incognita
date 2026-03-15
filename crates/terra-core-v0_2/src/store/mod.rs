@@ -1,5 +1,5 @@
 pub mod assertion_entry;
-pub mod branch;
+pub mod branch_context;
 pub mod entity_change_entry;
 pub mod branch_entry;
 pub mod entity_entry;

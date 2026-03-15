@@ -295,7 +295,6 @@ mod tests {
                 key: EntityKey { branch, entity, tx_id },
                 value: EntityValue {
                     slug: slug.into(),
-                    entity_type_id: Uuid::nil(),
                     description: None,
                 },
             };

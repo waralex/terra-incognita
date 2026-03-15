@@ -1,7 +1,7 @@
-//! Branch — the working context for all read/write operations.
+//! BranchContext — the working context for all read/write operations.
 //!
-//! A branch knows its identity, its ancestry chain, and holds a clone
-//! of Storage for database access. All domain operations go through a branch.
+//! A branch context knows its identity, its ancestry chain, and holds a clone
+//! of Storage for database access. All domain operations go through a branch context.
 
 use uuid::Uuid;
 
@@ -27,13 +27,13 @@ pub struct AncestryEntry {
 
 /// Working context bound to a specific branch.
 #[derive(Clone)]
-pub struct Branch {
+pub struct BranchContext {
     storage: Storage,
     branch: Slug,
     ancestry: Vec<AncestryEntry>,
 }
 
-impl Branch {
+impl BranchContext {
     /// Open the main branch.
     pub fn main(storage: Storage) -> Self {
         let main = main_branch_slug();
@@ -148,7 +148,7 @@ mod tests {
     fn main_branch() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
-        let branch = Branch::main(storage);
+        let branch = BranchContext::main(storage);
         let main = main_branch_slug();
 
         assert_eq!(branch.id(), &main);
@@ -179,7 +179,7 @@ mod tests {
         batch.put(&entry).unwrap();
         batch.commit().unwrap();
 
-        let branch = Branch::open(storage, child_slug.clone()).unwrap();
+        let branch = BranchContext::open(storage, child_slug.clone()).unwrap();
         assert_eq!(branch.id(), &child_slug);
         assert_eq!(branch.ancestry().len(), 2);
         assert_eq!(branch.ancestry()[0].branch, child_slug);
@@ -192,7 +192,7 @@ mod tests {
     fn commit_transaction() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
-        let branch = Branch::main(storage.clone());
+        let branch = BranchContext::main(storage.clone());
 
         let mut meta = serde_json::Map::new();
         meta.insert("reasoning".into(), serde_json::json!("test"));
@@ -217,7 +217,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let main = main_branch_slug();
-        let branch = Branch::open(storage, main.clone()).unwrap();
+        let branch = BranchContext::open(storage, main.clone()).unwrap();
         assert_eq!(branch.id(), &main);
         assert_eq!(branch.ancestry().len(), 1);
     }

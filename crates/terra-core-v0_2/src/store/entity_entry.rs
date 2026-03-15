@@ -1,11 +1,10 @@
 //! Entity record entry.
 //!
 //! Key: `hash(branch)(16) | hash(entity)(16) | tx_id(16)` = 48 bytes + slug suffixes.
-//! Value: JSON with slug, entity_type_id, description.
+//! Value: JSON with slug and description.
 //! Versioned — each mutation writes a new record with a new tx_id.
 
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
 use crate::io::storage_value::StorageValue;
@@ -24,7 +23,6 @@ versioned_key! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityValue {
     pub slug: String,
-    pub entity_type_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
 }
@@ -70,6 +68,7 @@ impl DbItem for EntityEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
     use crate::io::TerraDb;
     use crate::io::slug::Slug;
 
@@ -89,7 +88,6 @@ mod tests {
             },
             value: EntityValue {
                 slug: "test-entity".into(),
-                entity_type_id: Uuid::now_v7(),
                 description: Some(serde_json::json!("A test")),
             },
         };

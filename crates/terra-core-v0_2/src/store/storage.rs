@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::config::ProjectConfig;
 use crate::io::{DbError, TerraDb};
 use crate::io::slug::Slug;
-use crate::store::branch::Branch;
+use crate::store::branch_context::BranchContext;
 
 use crate::store::assertion_entry::AssertionEntry;
 use crate::store::entity_change_entry::EntityChangeEntry;
@@ -35,14 +35,14 @@ impl Storage {
         Self::open_impl(path, true, config)
     }
 
-    /// Get the main branch.
-    pub fn main_branch(&self) -> Branch {
-        Branch::main(self.clone())
+    /// Get the main branch context.
+    pub fn main_branch(&self) -> BranchContext {
+        BranchContext::main(self.clone())
     }
 
-    /// Open a branch by slug.
-    pub fn branch(&self, branch: Slug) -> Result<Branch, DbError> {
-        Branch::open(self.clone(), branch)
+    /// Open a branch context by slug.
+    pub fn branch(&self, branch: Slug) -> Result<BranchContext, DbError> {
+        BranchContext::open(self.clone(), branch)
     }
 
     /// Access the project config.
@@ -70,7 +70,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::branch::main_branch_slug;
+    use crate::store::branch_context::main_branch_slug;
 
     fn test_config() -> Arc<ProjectConfig> {
         Arc::new(ProjectConfig::builder()

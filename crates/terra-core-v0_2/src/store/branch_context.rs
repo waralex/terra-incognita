@@ -10,9 +10,8 @@ use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::store::entry::branch::{BranchEntry, BranchKey};
-use crate::store::entry::entity::EntityEntry;
+use crate::store::entry::entity::{EntityEntry, EntityKeyPrefix};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
-use crate::store::prefix::BranchEntityPrefix;
 use crate::store::storage::Storage;
 
 /// Main branch slug — always exists implicitly.
@@ -81,7 +80,7 @@ impl BranchContext {
 
     /// Check if an entity exists on this branch.
     pub fn entity_exists(&self, slug: &Slug) -> Result<bool, DbError> {
-        let prefix = BranchEntityPrefix {
+        let prefix = EntityKeyPrefix {
             branch: self.branch.clone(),
             entity: slug.clone(),
         };
@@ -91,7 +90,7 @@ impl BranchContext {
 
     /// Get the latest version of an entity on this branch.
     pub fn get_latest_entity(&self, slug: &Slug) -> Result<Option<EntityEntry>, DbError> {
-        let prefix = BranchEntityPrefix {
+        let prefix = EntityKeyPrefix {
             branch: self.branch.clone(),
             entity: slug.clone(),
         };

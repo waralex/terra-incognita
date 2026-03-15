@@ -3,22 +3,37 @@
 //! All versioned entries follow the pattern `branch(Slug) | ... | tx_id(Uuid)` —
 //! branch first (for ancestry walk), tx last (for reverse scan to latest).
 //! The middle is domain-specific addressing (Slug or Uuid fields).
+//!
+//! The macro also generates a `{Name}Prefix` struct — the same fields minus
+//! `tx_id`. This prefix is used for range scans over all versions of a record.
 
+use crate::io::key_prefix::KeyPrefix;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+
+/// Prefix of a versioned key — all fields except `tx_id`.
+///
+/// Used as a type-level marker to parameterize generic scan functions.
+pub trait VersionedPrefix: KeyPrefix {}
 
 /// Key of a versioned, branch-scoped record.
 ///
 /// Implemented by keys whose entries are created inside transactions
 /// and follow the `branch(Slug) | domain | tx_id(Uuid)` layout.
 pub trait VersionedKey: StorageKey {
+    /// The prefix type — same fields without tx_id.
+    type Prefix: VersionedPrefix;
+
     fn branch(&self) -> &Slug;
     fn tx_id(&self) -> uuid::Uuid;
 }
 
 /// Declares a versioned storage key: `branch(Slug) | middle fields | tx_id(Uuid)`.
 ///
-/// Generates the struct, `StorageKey` impl, and `VersionedKey` impl.
+/// Generates:
+/// - `$name` struct with `StorageKey` and `VersionedKey` impls
+/// - `${name}Prefix` struct with `KeyPrefix` and `VersionedPrefix` impls
+///
 /// Only the middle domain fields need to be specified.
 /// `branch: Slug` and `tx_id: Uuid` are added automatically.
 ///
@@ -28,8 +43,7 @@ pub trait VersionedKey: StorageKey {
 ///         entity: Slug,
 ///     }
 /// }
-/// // Fixed part (48 bytes): hash(branch)(16) | hash(entity)(16) | tx_id(16)
-/// // Suffix: branch slug + entity slug
+/// // Generates EntityKey (48 bytes) and EntityKeyPrefix (32 bytes)
 /// ```
 macro_rules! versioned_key {
     (
@@ -37,6 +51,36 @@ macro_rules! versioned_key {
             $( $field:ident : $ty:ident ),* $(,)?
         }
     ) => {
+        // --- Prefix struct: branch + middle fields (no tx_id) ---
+
+        ::paste::paste! {
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            $vis struct [< $name Prefix >] {
+                pub branch: $crate::io::slug::Slug,
+                $( pub $field: versioned_key!(@rust_type $ty), )*
+            }
+
+            impl $crate::io::key_prefix::KeyPrefix for [< $name Prefix >] {
+                const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )*;
+
+                fn encode(&self) -> Vec<u8> {
+                    let mut buf = vec![0u8; Self::SIZE];
+                    let mut _off: usize = 0;
+                    // branch hash
+                    let _hash = self.branch.hash();
+                    buf[_off.._off + 16].copy_from_slice(_hash.as_bytes());
+                    _off += 16;
+                    // middle fields
+                    $( versioned_key!(@encode_fixed buf, _off, self.$field, $ty); )*
+                    buf
+                }
+            }
+
+            impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {}
+        }
+
+        // --- Key struct: branch + middle fields + tx_id ---
+
         #[derive(Debug, Clone, PartialEq, Eq)]
         $vis struct $name {
             pub branch: $crate::io::slug::Slug,
@@ -105,9 +149,12 @@ macro_rules! versioned_key {
             }
         }
 
-        impl $crate::store::versioned_key::VersionedKey for $name {
-            fn branch(&self) -> &$crate::io::slug::Slug { &self.branch }
-            fn tx_id(&self) -> uuid::Uuid { self.tx_id }
+        ::paste::paste! {
+            impl $crate::store::versioned_key::VersionedKey for $name {
+                type Prefix = [< $name Prefix >];
+                fn branch(&self) -> &$crate::io::slug::Slug { &self.branch }
+                fn tx_id(&self) -> uuid::Uuid { self.tx_id }
+            }
         }
     };
 
@@ -166,6 +213,7 @@ pub(crate) use versioned_key;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::key_prefix::KeyPrefix;
     use uuid::Uuid;
 
     versioned_key! {
@@ -205,6 +253,38 @@ mod tests {
         assert_eq!(UuidMiddleKey::SIZE, 48);
         assert_eq!(MultiSlugKey::SIZE, 64);
         assert_eq!(MixedKey::SIZE, 64);
+    }
+
+    #[test]
+    fn prefix_size() {
+        assert_eq!(EmptyMiddleKeyPrefix::SIZE, 16);
+        assert_eq!(SlugMiddleKeyPrefix::SIZE, 32);
+        assert_eq!(UuidMiddleKeyPrefix::SIZE, 32);
+        assert_eq!(MultiSlugKeyPrefix::SIZE, 48);
+        assert_eq!(MixedKeyPrefix::SIZE, 48);
+    }
+
+    #[test]
+    fn prefix_encodes_without_tx() {
+        let branch: Slug = "main".parse().unwrap();
+        let entity: Slug = "my-entity".parse().unwrap();
+
+        let key = SlugMiddleKey {
+            branch: branch.clone(),
+            entity_id: entity.clone(),
+            tx_id: Uuid::from_u128(3),
+        };
+        let prefix = SlugMiddleKeyPrefix {
+            branch,
+            entity_id: entity,
+        };
+
+        let key_bytes = key.encode();
+        let prefix_bytes = prefix.encode();
+
+        // Prefix is the key's fixed part minus tx_id (last 16 bytes)
+        assert_eq!(prefix_bytes.len(), SlugMiddleKeyPrefix::SIZE);
+        assert_eq!(&key_bytes[..prefix_bytes.len()], &prefix_bytes[..]);
     }
 
     #[test]

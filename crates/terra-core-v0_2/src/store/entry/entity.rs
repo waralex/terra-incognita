@@ -17,8 +17,6 @@ versioned_key! {
         entity: Slug,
     }
 }
-// Known prefixes: BranchPrefix(16), BranchEntityPrefix(32)
-
 /// Entity value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityValue {
@@ -63,6 +61,9 @@ impl DbItem for EntityEntry {
         Self { key, value }
     }
 }
+
+use crate::io::valid_prefix::impl_prefix;
+impl_prefix!(EntityKeyPrefix => EntityEntry);
 
 #[cfg(test)]
 mod tests {

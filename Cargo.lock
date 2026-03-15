@@ -2259,6 +2259,7 @@ dependencies = [
  "chrono",
  "indexmap",
  "indoc",
+ "paste",
  "rocksdb",
  "serde",
  "serde_json",

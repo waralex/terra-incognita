@@ -276,19 +276,8 @@ mod tests {
         use uuid::Uuid;
         use crate::io::TerraDb;
         use crate::io::slug::Slug;
-        use crate::io::key_prefix::prefix_key;
-        use crate::io::valid_prefix::impl_prefix;
-        use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
+        use crate::store::entry::entity::{EntityEntry, EntityKey, EntityKeyPrefix, EntityValue};
         use crate::store::prefix::BranchPrefix;
-
-        prefix_key! {
-            pub struct BranchEntityPrefix {
-                branch: Slug,
-                entity: Slug,
-            }
-        }
-
-        impl_prefix!(BranchEntityPrefix => EntityEntry);
 
         fn write_entity(db: &TerraDb, branch: Slug, entity: Slug, tx_id: Uuid) {
             let entry = EntityEntry {
@@ -320,7 +309,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx2);
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
-            let prefix = BranchEntityPrefix { branch, entity };
+            let prefix = EntityKeyPrefix { branch, entity };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -350,7 +339,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx2);
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
-            let prefix = BranchEntityPrefix { branch, entity };
+            let prefix = EntityKeyPrefix { branch, entity };
             let items: Vec<EntityEntry> = db.scan_rev::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -378,7 +367,7 @@ mod tests {
             write_entity(&db, branch.clone(), e1.clone(), tx);
             write_entity(&db, branch.clone(), e2, tx);
 
-            let prefix = BranchEntityPrefix { branch, entity: e1 };
+            let prefix = EntityKeyPrefix { branch, entity: e1 };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -399,7 +388,7 @@ mod tests {
             let branch = s("main");
             let entity = s("nonexistent");
 
-            let prefix = BranchEntityPrefix { branch, entity };
+            let prefix = EntityKeyPrefix { branch, entity };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -427,7 +416,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let bound = Uuid::from_u128(25);
-            let prefix = BranchEntityPrefix { branch, entity };
+            let prefix = EntityKeyPrefix { branch, entity };
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .filter_map(|r| {
@@ -460,7 +449,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let bound = Uuid::from_u128(25);
-            let prefix = BranchEntityPrefix { branch, entity };
+            let prefix = EntityKeyPrefix { branch, entity };
             let latest = db.scan_rev::<EntityEntry>(&prefix)
                 .unwrap()
                 .filter_map(|r| r.ok())

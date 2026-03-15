@@ -9,9 +9,9 @@ use std::collections::HashSet;
 
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
-use crate::io::{DbError, DbItem, KeyPrefix, ValidPrefix};
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::{DbError, DbItem, KeyPrefix, ValidPrefix};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
@@ -43,11 +43,8 @@ impl BranchContext {
         let main = main_branch_slug();
         Self {
             storage,
-            branch: main.clone(),
-            ancestry: vec![AncestryEntry {
-                branch: main,
-                branch_point_tx: Uuid::max(),
-            }],
+            branch: main,
+            ancestry: vec![],
         }
     }
 
@@ -81,20 +78,69 @@ impl BranchContext {
         &self.ancestry
     }
 
-    /// Check if any record exists for the given prefix.
+    /// Check if any record exists, walking the ancestry chain.
     ///
-    /// Pass `VersionedPrefix` for unbounded, or `FullPrefix` (via `with_transaction(tx_id)`)
-    /// for bounded check.
-    pub fn exists<P: VersionedPrefix + ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<bool, DbError> {
-        self.storage.exists(prefix)
+    /// Checks current branch (unbounded), then ancestors with tx bounds.
+    pub fn exists<P, T>(&self, prefix: &P) -> Result<bool, DbError>
+    where
+        P: VersionedPrefix + ValidPrefix<T>,
+        T: DbItem,
+        T::Key: VersionedKey,
+    {
+        // Current branch — unbounded
+        if self.storage.exists(prefix)? {
+            return Ok(true);
+        }
+        // Ancestors — bounded by branch_point_tx
+        for entry in &self.ancestry {
+            let parent_prefix = prefix.with_branch(entry.branch.clone());
+            if self
+                .find_bounded::<P, T>(&parent_prefix, entry.branch_point_tx)?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
-    /// Get the latest version for the given prefix.
+    /// Get the latest version, walking the ancestry chain.
     ///
-    /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `with_transaction(tx_id)`)
-    /// for latest at or before a specific transaction.
-    pub fn get_latest<P: VersionedPrefix + ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<Option<T>, DbError> {
-        self.storage.get_latest(prefix)
+    /// Checks current branch (unbounded), then ancestors with tx bounds.
+    pub fn get_latest<P, T>(&self, prefix: &P) -> Result<Option<T>, DbError>
+    where
+        P: VersionedPrefix + ValidPrefix<T>,
+        T: DbItem,
+        T::Key: VersionedKey,
+    {
+        // Current branch — unbounded
+        if let Some(found) = self.storage.get_latest(prefix)? {
+            return Ok(Some(found));
+        }
+        // Ancestors — bounded by branch_point_tx
+        for entry in &self.ancestry {
+            let parent_prefix = prefix.with_branch(entry.branch.clone());
+            if let Some(found) = self.find_bounded::<P, T>(&parent_prefix, entry.branch_point_tx)? {
+                return Ok(Some(found));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Reverse scan with VersionedPrefix, filter by tx_id <= bound.
+    fn find_bounded<P, T>(&self, prefix: &P, tx_bound: Uuid) -> Result<Option<T>, DbError>
+    where
+        P: VersionedPrefix + ValidPrefix<T>,
+        T: DbItem,
+        T::Key: VersionedKey,
+    {
+        for item in self.storage.db.scan_rev::<T>(prefix)? {
+            let entry = item?;
+            if entry.key().tx_id() <= tx_bound {
+                return Ok(Some(entry));
+            }
+        }
+        Ok(None)
     }
 
     /// Scan latest version of each unique item within a prefix range.
@@ -103,7 +149,10 @@ impl BranchContext {
     /// e.g. `BranchPrefix` for all entities on a branch), deduplicates by
     /// domain key (prefix bytes without tx_id), and returns only the latest
     /// version of each.
-    pub fn scan_latest<T>(&self, prefix: &(impl KeyPrefix + ValidPrefix<T>)) -> Result<Vec<T>, DbError>
+    pub fn scan_latest<T>(
+        &self,
+        prefix: &(impl KeyPrefix + ValidPrefix<T>),
+    ) -> Result<Vec<T>, DbError>
     where
         T: DbItem,
         T::Key: VersionedKey,
@@ -134,7 +183,9 @@ impl BranchContext {
                 branch: self.branch.clone(),
                 tx_id,
             },
-            value: TransactionValue { meta: tx.meta.clone() },
+            value: TransactionValue {
+                meta: tx.meta.clone(),
+            },
         };
 
         let mut batch = self.storage.db.batch();
@@ -150,21 +201,26 @@ impl BranchContext {
         })
     }
 
-    fn compute_ancestry(storage: &Storage, branch: Slug, max_depth: usize) -> Result<Vec<AncestryEntry>, DbError> {
+    fn compute_ancestry(
+        storage: &Storage,
+        branch: Slug,
+        max_depth: usize,
+    ) -> Result<Vec<AncestryEntry>, DbError> {
         let main = main_branch_slug();
-        let mut chain = vec![AncestryEntry {
-            branch: branch.clone(),
-            branch_point_tx: Uuid::max(),
-        }];
-
+        let mut chain = Vec::new();
         let mut current_id = branch;
 
         for _ in 0..max_depth {
             let key = BranchKey { branch: current_id };
-            let entry = storage.db.get::<BranchEntry>(&key)?
+            let entry = storage
+                .db
+                .get::<BranchEntry>(&key)?
                 .ok_or_else(|| DbError::Storage(format!("branch not found: {}", key.branch)))?;
 
-            let parent_slug: Slug = entry.value.parent_branch_slug.parse()
+            let parent_slug: Slug = entry
+                .value
+                .parent_branch_slug
+                .parse()
                 .map_err(|e: crate::io::slug::SlugError| DbError::Storage(e.to_string()))?;
             let branch_point = entry.value.created_from_tx;
 
@@ -185,16 +241,18 @@ impl BranchContext {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use super::*;
     use crate::config::ProjectConfig;
     use crate::store::entry::branch::{BranchEntry, BranchKey, BranchValue};
+    use std::sync::Arc;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     #[test]
@@ -205,9 +263,7 @@ mod tests {
         let main = main_branch_slug();
 
         assert_eq!(branch.id(), &main);
-        assert_eq!(branch.ancestry().len(), 1);
-        assert_eq!(branch.ancestry()[0].branch, main);
-        assert_eq!(branch.ancestry()[0].branch_point_tx, Uuid::max());
+        assert!(branch.ancestry().is_empty());
     }
 
     #[test]
@@ -220,7 +276,9 @@ mod tests {
         let branch_point = Uuid::now_v7();
 
         let entry = BranchEntry {
-            key: BranchKey { branch: child_slug.clone() },
+            key: BranchKey {
+                branch: child_slug.clone(),
+            },
             value: BranchValue {
                 slug: "child".into(),
                 meta: serde_json::Map::new(),
@@ -234,11 +292,9 @@ mod tests {
 
         let branch = BranchContext::open(storage, child_slug.clone()).unwrap();
         assert_eq!(branch.id(), &child_slug);
-        assert_eq!(branch.ancestry().len(), 2);
-        assert_eq!(branch.ancestry()[0].branch, child_slug);
-        assert_eq!(branch.ancestry()[0].branch_point_tx, Uuid::max());
-        assert_eq!(branch.ancestry()[1].branch, main);
-        assert_eq!(branch.ancestry()[1].branch_point_tx, branch_point);
+        assert_eq!(branch.ancestry().len(), 1);
+        assert_eq!(branch.ancestry()[0].branch, main);
+        assert_eq!(branch.ancestry()[0].branch_point_tx, branch_point);
     }
 
     #[test]
@@ -272,6 +328,6 @@ mod tests {
         let main = main_branch_slug();
         let branch = BranchContext::open(storage, main.clone()).unwrap();
         assert_eq!(branch.id(), &main);
-        assert_eq!(branch.ancestry().len(), 1);
+        assert!(branch.ancestry().is_empty());
     }
 }

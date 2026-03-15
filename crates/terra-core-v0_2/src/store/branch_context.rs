@@ -15,7 +15,7 @@ use crate::io::storage_key::StorageKey;
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
-use crate::store::versioned_key::VersionedKey;
+use crate::store::versioned_key::{VersionedKey, VersionedPrefix};
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -85,7 +85,7 @@ impl BranchContext {
     ///
     /// Pass `VersionedPrefix` for unbounded, or `FullPrefix` (via `with_transaction(tx_id)`)
     /// for bounded check.
-    pub fn exists<P: ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<bool, DbError> {
+    pub fn exists<P: VersionedPrefix + ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<bool, DbError> {
         self.storage.exists(prefix)
     }
 
@@ -93,7 +93,7 @@ impl BranchContext {
     ///
     /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `with_transaction(tx_id)`)
     /// for latest at or before a specific transaction.
-    pub fn get_latest<P: ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<Option<T>, DbError> {
+    pub fn get_latest<P: VersionedPrefix + ValidPrefix<T>, T: DbItem>(&self, prefix: &P) -> Result<Option<T>, DbError> {
         self.storage.get_latest(prefix)
     }
 

@@ -17,6 +17,7 @@ use crate::store::entry::assertion::{AssertionEntry, AssertionKey, AssertionValu
 use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
 use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, EntityChangeValue};
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
+use crate::store::entry::touched::{TouchedEntry, TouchedKey, TouchedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 
 /// Validates and writes a transaction to a branch.
@@ -32,6 +33,27 @@ impl ExecuteTransaction {
 }
 
 impl ExecuteTransaction {
+    fn write_touched(
+        branch: &BranchContext,
+        batch: &mut WriteBatch,
+        tx_id: Uuid,
+        entity: &Entity,
+    ) -> Result<(), DbError> {
+        let reasoning = entity.meta.get("reasoning")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        batch.put(&TouchedEntry {
+            key: TouchedKey {
+                branch: branch.id().clone(),
+                tx_id,
+                entity: entity.slug.clone(),
+            },
+            value: TouchedValue { reasoning },
+        })
+    }
+
     fn write_assertions(
         &self,
         branch: &BranchContext,
@@ -98,6 +120,7 @@ impl ExecuteTransaction {
             },
         })?;
 
+        Self::write_touched(branch, batch, tx_id, entity)?;
         self.write_assertions(branch, batch, tx_id, entity)?;
 
         Ok(())
@@ -131,6 +154,7 @@ impl ExecuteTransaction {
             })?;
         }
 
+        Self::write_touched(branch, batch, tx_id, entity)?;
         self.write_assertions(branch, batch, tx_id, entity)?;
 
         Ok(())
@@ -814,5 +838,94 @@ mod tests {
         assert_eq!(change.value.entity_id, alice_slug.hash());
         assert_eq!(change.value.tx_id, result.context.tx_id);
         assert_eq!(change.value.meta["reasoning"], "census data");
+    }
+
+    // --- Touched ---
+
+    #[test]
+    fn create_entity_writes_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let result = exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![],
+                entity_meta("first sighting"),
+            )));
+
+        let key = TouchedKey {
+            branch: branch.id().clone(),
+            tx_id: result.context.tx_id,
+            entity: "alice".parse().unwrap(),
+        };
+        let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
+        assert_eq!(found.value.reasoning, "first sighting");
+    }
+
+    #[test]
+    fn update_entity_writes_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![],
+                Map::new(),
+            )));
+
+        let result = exec(&branch, TransactionInput::new(meta("update"))
+            .update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![
+                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
+                ],
+                entity_meta("observed age"),
+            )));
+
+        let key = TouchedKey {
+            branch: branch.id().clone(),
+            tx_id: result.context.tx_id,
+            entity: "alice".parse().unwrap(),
+        };
+        let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
+        assert_eq!(found.value.reasoning, "observed age");
+    }
+
+    #[test]
+    fn multiple_entities_touched_in_one_tx() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let result = exec(&branch, TransactionInput::new(meta("batch"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Person A")),
+                vec![],
+                entity_meta("introduce alice"),
+            ))
+            .create_entity(Entity::new(
+                "bob".parse().unwrap(),
+                Some(serde_json::json!("Person B")),
+                vec![],
+                entity_meta("introduce bob"),
+            )));
+
+        for (slug, expected) in [("alice", "introduce alice"), ("bob", "introduce bob")] {
+            let key = TouchedKey {
+                branch: branch.id().clone(),
+                tx_id: result.context.tx_id,
+                entity: slug.parse().unwrap(),
+            };
+            let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
+            assert_eq!(found.value.reasoning, expected);
+        }
     }
 }

@@ -9,8 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::io::{DbItem, DbError};
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
-use crate::io::valid_prefix::impl_prefix;
-use crate::store::prefix::BranchPrefix;
 
 const CF_TRANSACTIONS: &str = "transactions";
 
@@ -65,8 +63,6 @@ impl DbItem for TransactionEntry {
     }
 }
 
-// Not versioned but starts with branch_id.
-impl_prefix!(BranchPrefix => TransactionKey);
 
 #[cfg(test)]
 mod tests {

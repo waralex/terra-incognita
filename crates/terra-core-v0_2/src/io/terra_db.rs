@@ -21,9 +21,9 @@ use rocksdb::{ColumnFamilyDescriptor, Direction, IteratorMode, Options, ReadOpti
 
 use crate::io::db_item::DbItem;
 use crate::io::db_iterator::DbIterator;
+use crate::io::key_prefix::KeyPrefix;
 use crate::io::storage_key::StorageKey;
 use crate::io::storage_value::StorageValue;
-use crate::io::valid_prefix::ValidPrefix;
 use crate::io::write_batch::WriteBatch;
 
 /// Access mode for the database.
@@ -126,7 +126,7 @@ impl TerraDb {
     /// Iterate forward over items whose keys share the given prefix.
     pub fn scan<'a, T: DbItem>(
         &'a self,
-        prefix: &impl ValidPrefix<T::Key>,
+        prefix: &impl KeyPrefix<Key = T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
@@ -143,15 +143,13 @@ impl TerraDb {
     /// the prefix range — useful for finding the latest version.
     pub fn scan_rev<'a, T: DbItem>(
         &'a self,
-        prefix: &impl ValidPrefix<T::Key>,
+        prefix: &impl KeyPrefix<Key = T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
         let prefix_bytes = prefix.encode();
+        let ceiling = prefix.encode_upper_bound();
         let opts = ReadOptions::default();
-        let mut ceiling = prefix_bytes.clone();
-        let pad = T::Key::SIZE.saturating_sub(prefix_bytes.len());
-        ceiling.extend(std::iter::repeat(0xFFu8).take(pad));
         let mode = IteratorMode::From(&ceiling, Direction::Reverse);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
         Ok(DbIterator::new(inner, prefix_bytes))
@@ -277,7 +275,6 @@ mod tests {
         use crate::io::TerraDb;
         use crate::io::slug::Slug;
         use crate::store::entry::entity::{EntityEntry, EntityKey, EntityKeyPrefix, EntityValue};
-        use crate::store::prefix::BranchPrefix;
 
         fn write_entity(db: &TerraDb, branch: Slug, entity: Slug, tx_id: Uuid) {
             let entry = EntityEntry {
@@ -457,30 +454,6 @@ mod tests {
 
             assert!(latest.is_some());
             assert_eq!(latest.unwrap().key.tx_id, tx2);
-        }
-
-        #[test]
-        fn scan_broader_prefix() {
-            let dir = tempfile::tempdir().unwrap();
-            let db = TerraDb::builder(dir.path())
-                .with::<EntityEntry>()
-                .open()
-                .unwrap();
-
-            let branch = s("main");
-            let e1 = s("entity.1");
-            let e2 = s("entity.2");
-
-            write_entity(&db, branch.clone(), e1, Uuid::from_u128(10));
-            write_entity(&db, branch.clone(), e2, Uuid::from_u128(20));
-
-            let prefix = BranchPrefix { branch };
-            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
-                .unwrap()
-                .collect::<Result<_, _>>()
-                .unwrap();
-
-            assert_eq!(items.len(), 2);
         }
     }
 }

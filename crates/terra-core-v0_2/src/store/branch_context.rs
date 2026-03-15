@@ -5,13 +5,10 @@
 
 use uuid::Uuid;
 
-use std::collections::HashSet;
-
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::slug::Slug;
-use crate::io::storage_key::StorageKey;
-use crate::io::{DbError, DbItem, KeyPrefix, ValidPrefix};
+use crate::io::{DbError, DbItem};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
@@ -88,16 +85,15 @@ impl BranchContext {
         T::Key: VersionedKey,
     {
         // Current branch — unbounded
-        if self.storage.exists::<P, T>(prefix)? {
+        if self.storage.exists::<_, T>(prefix)? {
             return Ok(true);
         }
         // Ancestors — bounded by branch_point_tx
         for entry in &self.ancestry {
-            let parent_prefix = prefix.with_branch(entry.branch.clone());
-            if self
-                .find_bounded::<P, T>(&parent_prefix, entry.branch_point_tx)?
-                .is_some()
-            {
+            let prefix = prefix
+                .with_branch(entry.branch.clone())
+                .with_transaction(entry.branch_point_tx);
+            if self.storage.exists::<_, T>(&prefix)? {
                 return Ok(true);
             }
         }
@@ -141,37 +137,6 @@ impl BranchContext {
             }
         }
         Ok(None)
-    }
-
-    /// Scan latest version of each unique item within a prefix range.
-    ///
-    /// Reverse-scans by the given prefix (can be broader than a single item,
-    /// e.g. `BranchPrefix` for all entities on a branch), deduplicates by
-    /// domain key (prefix bytes without tx_id), and returns only the latest
-    /// version of each.
-    pub fn scan_latest<T>(
-        &self,
-        prefix: &impl ValidPrefix<T::Key>,
-    ) -> Result<Vec<T>, DbError>
-    where
-        T: DbItem,
-        T::Key: VersionedKey,
-    {
-        let prefix_size = <T::Key as VersionedKey>::Prefix::SIZE;
-        let mut seen = HashSet::new();
-        let mut results = Vec::new();
-
-        for item in self.storage.db.scan_rev::<T>(prefix)? {
-            let entry = item?;
-            let key_bytes = entry.key().encode();
-            let domain_prefix = key_bytes[..prefix_size].to_vec();
-
-            if seen.insert(domain_prefix) {
-                results.push(entry);
-            }
-        }
-
-        Ok(results)
     }
 
     /// Commit a transaction on this branch.

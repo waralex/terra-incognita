@@ -10,7 +10,6 @@
 use crate::io::key_prefix::KeyPrefix;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
-use crate::io::valid_prefix::ValidPrefix;
 
 /// Prefix of a versioned key — with or without `tx_id`.
 ///
@@ -19,12 +18,8 @@ use crate::io::valid_prefix::ValidPrefix;
 /// - `with_branch(slug)` — same prefix, different branch (ancestry walk)
 /// - `with_transaction(tx_id)` — add/replace tx_id bound (bounded seek)
 ///
-/// Inherits `ValidPrefix<Self::Key>` — any VersionedPrefix is automatically
-/// a valid scan prefix for its key type.
-pub trait VersionedPrefix: KeyPrefix + ValidPrefix<Self::Key> {
-    /// The key type this prefix is valid for.
-    type Key: StorageKey;
-
+/// `Key` associated type comes from `KeyPrefix`.
+pub trait VersionedPrefix: KeyPrefix {
     /// Full prefix type — includes tx_id.
     type Full: VersionedPrefix<Key = Self::Key>;
 
@@ -86,6 +81,7 @@ macro_rules! versioned_key {
             }
 
             impl $crate::io::key_prefix::KeyPrefix for [< $name Prefix >] {
+                type Key = $name;
                 const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )*;
 
                 fn encode(&self) -> Vec<u8> {
@@ -101,10 +97,7 @@ macro_rules! versioned_key {
                 }
             }
 
-            impl $crate::io::valid_prefix::ValidPrefix<$name> for [< $name Prefix >] {}
-
             impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {
-                type Key = $name;
                 type Full = [< $name FullPrefix >];
 
                 fn with_transaction(&self, tx_id: uuid::Uuid) -> Self::Full {
@@ -135,6 +128,7 @@ macro_rules! versioned_key {
             }
 
             impl $crate::io::key_prefix::KeyPrefix for [< $name FullPrefix >] {
+                type Key = $name;
                 const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )* + 16;
 
                 fn encode(&self) -> Vec<u8> {
@@ -152,10 +146,7 @@ macro_rules! versioned_key {
                 }
             }
 
-            impl $crate::io::valid_prefix::ValidPrefix<$name> for [< $name FullPrefix >] {}
-
             impl $crate::store::versioned_key::VersionedPrefix for [< $name FullPrefix >] {
-                type Key = $name;
                 type Full = Self;
 
                 fn with_transaction(&self, tx_id: uuid::Uuid) -> Self {

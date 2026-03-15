@@ -84,7 +84,6 @@ mod tests {
     use std::sync::Arc;
     use super::*;
     use crate::config::ProjectConfig;
-    use crate::store::prefix::BranchPrefix;
     use crate::store::storage::Storage;
     use serde_json::{Map, Value};
 
@@ -218,36 +217,4 @@ mod tests {
         assert!(branch.exists::<_, EntityEntry>(&prefix).unwrap());
     }
 
-    #[test]
-    fn scan_latest_returns_latest_versions() {
-        let dir = tempfile::tempdir().unwrap();
-        let storage = Storage::open(dir.path(), test_config()).unwrap();
-        let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
-
-        // Create two entities
-        let input1 = TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("v1")),
-                vec![],
-            ))
-            .create_entity(Entity::new(
-                "bob".parse().unwrap(),
-                Some(serde_json::json!("v1")),
-                vec![],
-            ));
-        cmd.execute(&branch, input1).unwrap();
-
-        // Update alice (new version via update_entity would do this,
-        // but for now simulate with a second entity record)
-        // For now just verify scan_latest deduplicates across entities
-        let prefix = BranchPrefix::new(branch.id().clone());
-        let latest = branch.scan_latest::<EntityEntry>(&prefix).unwrap();
-
-        assert_eq!(latest.len(), 2);
-        let slugs: Vec<&str> = latest.iter().map(|e| e.key.entity.as_str()).collect();
-        assert!(slugs.contains(&"alice"));
-        assert!(slugs.contains(&"bob"));
-    }
 }

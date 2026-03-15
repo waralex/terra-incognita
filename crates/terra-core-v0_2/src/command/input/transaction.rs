@@ -7,6 +7,19 @@ use serde_json::{Map, Value};
 
 use crate::domain::entity::Entity;
 use crate::domain::managed::Managed;
+use crate::io::slug::Slug;
+
+/// Explicit touch — agent declares an entity as relevant to this transaction.
+pub struct TouchItem {
+    pub(crate) entity: Slug,
+    pub(crate) reasoning: String,
+}
+
+impl TouchItem {
+    pub fn new(entity: Slug, reasoning: impl Into<String>) -> Self {
+        Self { entity, reasoning: reasoning.into() }
+    }
+}
 
 /// Atomic mutation command — all operations to execute in a single transaction.
 ///
@@ -18,12 +31,14 @@ use crate::domain::managed::Managed;
 /// 2. Update entities (assertions on existing)
 /// 3. Create managed items
 /// 4. Update managed items
+/// 5. Explicit touches (override auto-touches from create/update)
 pub struct TransactionInput {
     pub(crate) meta: Map<String, Value>,
     pub(crate) create_entities: Vec<Entity>,
     pub(crate) update_entities: Vec<Entity>,
     pub(crate) create_managed: Vec<Managed>,
     pub(crate) update_managed: Vec<Managed>,
+    pub(crate) touched: Vec<TouchItem>,
 }
 
 impl TransactionInput {
@@ -35,6 +50,7 @@ impl TransactionInput {
             update_entities: Vec::new(),
             create_managed: Vec::new(),
             update_managed: Vec::new(),
+            touched: Vec::new(),
         }
     }
 
@@ -59,6 +75,13 @@ impl TransactionInput {
     /// Add an existing managed item to update.
     pub fn update_managed(mut self, managed: Managed) -> Self {
         self.update_managed.push(managed);
+        self
+    }
+
+    /// Explicitly mark an entity as relevant to this transaction.
+    /// Overrides auto-touch reasoning from create/update if the same entity.
+    pub fn touch(mut self, item: TouchItem) -> Self {
+        self.touched.push(item);
         self
     }
 }
@@ -160,5 +183,17 @@ mod tests {
         assert_eq!(input.update_entities.len(), 1);
         assert_eq!(input.create_managed.len(), 1);
         assert!(input.update_managed.is_empty());
+    }
+
+    #[test]
+    fn with_touch() {
+        let input = TransactionInput::new(meta("observe"))
+            .touch(TouchItem::new("alice".parse().unwrap(), "key witness"))
+            .touch(TouchItem::new("server".parse().unwrap(), "infrastructure"));
+
+        assert_eq!(input.touched.len(), 2);
+        assert_eq!(input.touched[0].entity.as_str(), "alice");
+        assert_eq!(input.touched[0].reasoning, "key witness");
+        assert_eq!(input.touched[1].entity.as_str(), "server");
     }
 }

@@ -272,6 +272,18 @@ impl Command for ExecuteTransaction {
             self.update_managed_item(branch, batch, tx_id, managed)?;
         }
 
+        // Explicit touches — applied last to override auto-touches.
+        for item in &input.touched {
+            batch.put(&TouchedEntry {
+                key: TouchedKey {
+                    branch: branch.id().clone(),
+                    tx_id,
+                    entity: item.entity.clone(),
+                },
+                value: TouchedValue { reasoning: item.reasoning.clone() },
+            })?;
+        }
+
         batch.put(&TransactionEntry {
             key: TransactionKey {
                 branch: branch.id().clone(),
@@ -927,5 +939,51 @@ mod tests {
             let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
             assert_eq!(found.value.reasoning, expected);
         }
+    }
+
+    #[test]
+    fn explicit_touch_overrides_auto() {
+        use crate::command::input::transaction::TouchItem;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let result = exec(&branch, TransactionInput::new(meta("investigate"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![],
+                entity_meta("auto reasoning"),
+            ))
+            .touch(TouchItem::new("alice".parse().unwrap(), "primary suspect")));
+
+        let key = TouchedKey {
+            branch: branch.id().clone(),
+            tx_id: result.context.tx_id,
+            entity: "alice".parse().unwrap(),
+        };
+        let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
+        assert_eq!(found.value.reasoning, "primary suspect");
+    }
+
+    #[test]
+    fn explicit_touch_without_mutation() {
+        use crate::command::input::transaction::TouchItem;
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let result = exec(&branch, TransactionInput::new(meta("observe"))
+            .touch(TouchItem::new("server".parse().unwrap(), "checked health")));
+
+        let key = TouchedKey {
+            branch: branch.id().clone(),
+            tx_id: result.context.tx_id,
+            entity: "server".parse().unwrap(),
+        };
+        let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
+        assert_eq!(found.value.reasoning, "checked health");
     }
 }

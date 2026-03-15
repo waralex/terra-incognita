@@ -5,14 +5,17 @@
 
 use uuid::Uuid;
 
+use std::collections::HashSet;
+
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
-use crate::io::{DbError, DbItem, ValidPrefix};
+use crate::io::{DbError, DbItem, KeyPrefix, ValidPrefix};
 use crate::io::slug::Slug;
+use crate::io::storage_key::StorageKey;
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
-use crate::store::versioned_key::VersionedPrefix;
+use crate::store::versioned_key::{VersionedKey, VersionedPrefix};
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -91,6 +94,34 @@ impl BranchContext {
             Some(result) => Ok(Some(result?)),
             None => Ok(None),
         }
+    }
+
+    /// Scan latest version of each unique item within a prefix range.
+    ///
+    /// Reverse-scans by the given prefix (can be broader than a single item,
+    /// e.g. `BranchPrefix` for all entities on a branch), deduplicates by
+    /// domain key (prefix bytes without tx_id), and returns only the latest
+    /// version of each.
+    pub fn scan_latest<T>(&self, prefix: &(impl KeyPrefix + ValidPrefix<T>)) -> Result<Vec<T>, DbError>
+    where
+        T: DbItem,
+        T::Key: VersionedKey,
+    {
+        let prefix_size = <T::Key as VersionedKey>::Prefix::SIZE;
+        let mut seen = HashSet::new();
+        let mut results = Vec::new();
+
+        for item in self.storage.db.scan_rev::<T>(prefix)? {
+            let entry = item?;
+            let key_bytes = entry.key().encode();
+            let domain_prefix = key_bytes[..prefix_size].to_vec();
+
+            if seen.insert(domain_prefix) {
+                results.push(entry);
+            }
+        }
+
+        Ok(results)
     }
 
     /// Commit a transaction on this branch.

@@ -14,7 +14,18 @@ use crate::io::storage_key::StorageKey;
 /// Prefix of a versioned key — all fields except `tx_id`.
 ///
 /// Used as a type-level marker to parameterize generic scan functions.
-pub trait VersionedPrefix: KeyPrefix {}
+/// `to_full(tx_id)` produces a full prefix (with tx_id) for bounded seeks.
+/// `with_branch(slug)` clones the prefix with a different branch (for ancestry walk).
+pub trait VersionedPrefix: KeyPrefix {
+    /// Full prefix type — includes tx_id as upper bound for seeks.
+    type Full: KeyPrefix;
+
+    /// Create a full prefix with the given tx_id upper bound.
+    fn to_full(&self, tx_id: uuid::Uuid) -> Self::Full;
+
+    /// Clone this prefix with a different branch.
+    fn with_branch(&self, branch: Slug) -> Self;
+}
 
 /// Key of a versioned, branch-scoped record.
 ///
@@ -82,7 +93,53 @@ macro_rules! versioned_key {
                 }
             }
 
-            impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {}
+            impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {
+                type Full = [< $name FullPrefix >];
+
+                fn to_full(&self, tx_id: uuid::Uuid) -> Self::Full {
+                    [< $name FullPrefix >] {
+                        branch: self.branch.clone(),
+                        $( $field: self.$field.clone(), )*
+                        tx_id,
+                    }
+                }
+
+                fn with_branch(&self, branch: $crate::io::slug::Slug) -> Self {
+                    Self {
+                        branch,
+                        $( $field: self.$field.clone(), )*
+                    }
+                }
+            }
+        }
+
+        // --- Full prefix struct: branch + middle fields + tx_id (seek point) ---
+
+        ::paste::paste! {
+            #[derive(Debug, Clone, PartialEq, Eq)]
+            $vis struct [< $name FullPrefix >] {
+                pub branch: $crate::io::slug::Slug,
+                $( pub $field: versioned_key!(@rust_type $ty), )*
+                pub tx_id: uuid::Uuid,
+            }
+
+            impl $crate::io::key_prefix::KeyPrefix for [< $name FullPrefix >] {
+                const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )* + 16;
+
+                fn encode(&self) -> Vec<u8> {
+                    let mut buf = vec![0u8; Self::SIZE];
+                    let mut _off: usize = 0;
+                    // branch hash
+                    let _hash = self.branch.hash();
+                    buf[_off.._off + 16].copy_from_slice(_hash.as_bytes());
+                    _off += 16;
+                    // middle fields
+                    $( versioned_key!(@encode_fixed buf, _off, self.$field, $ty); )*
+                    // tx_id
+                    buf[_off.._off + 16].copy_from_slice(self.tx_id.as_bytes());
+                    buf
+                }
+            }
         }
 
         // --- Key struct: branch + middle fields + tx_id ---
@@ -381,6 +438,38 @@ mod tests {
         };
         assert_eq!(key.branch(), &branch);
         assert_eq!(key.tx_id(), Uuid::from_u128(30));
+    }
+
+    #[test]
+    fn full_prefix_equals_key_fixed_part() {
+        let branch: Slug = "main".parse().unwrap();
+        let entity: Slug = "my-entity".parse().unwrap();
+        let tx_id = Uuid::from_u128(42);
+
+        let key = SlugMiddleKey {
+            branch: branch.clone(),
+            entity_id: entity.clone(),
+            tx_id,
+        };
+        let prefix = SlugMiddleKeyPrefix::new(branch, entity);
+        let full = prefix.to_full(tx_id);
+
+        // FullPrefix encodes the same as key's fixed part
+        assert_eq!(full.encode().len(), SlugMiddleKey::SIZE);
+        assert_eq!(full.encode(), &key.encode()[..SlugMiddleKey::SIZE]);
+    }
+
+    #[test]
+    fn with_branch_changes_branch() {
+        let prefix = SlugMiddleKeyPrefix::new(
+            "main".parse().unwrap(),
+            "entity-1".parse().unwrap(),
+        );
+        let rebound = prefix.with_branch("child".parse().unwrap());
+
+        assert_eq!(rebound.branch.as_str(), "child");
+        assert_eq!(rebound.entity_id, prefix.entity_id);
+        assert_ne!(rebound.encode(), prefix.encode());
     }
 
     #[test]

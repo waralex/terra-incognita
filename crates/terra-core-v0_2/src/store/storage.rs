@@ -10,6 +10,7 @@ use crate::store::branch_context::BranchContext;
 
 use crate::store::entry::assertion::AssertionEntry;
 use crate::store::entry::branch::BranchEntry;
+use crate::store::entry::embedding::EmbeddingEntry;
 use crate::store::entry::entity::EntityEntry;
 use crate::store::entry::entity_change::EntityChangeEntry;
 use crate::store::entry::managed::ManagedEntry;
@@ -100,6 +101,7 @@ impl Storage {
     fn open_impl(path: &Path, read_only: bool, config: Arc<ProjectConfig>) -> Result<Self, DbError> {
         let mut builder = TerraDb::builder(path)
             .with::<AssertionEntry>()
+            .with::<EmbeddingEntry>()
             .with::<EntityChangeEntry>()
             .with::<BranchEntry>()
             .with::<EntityEntry>()

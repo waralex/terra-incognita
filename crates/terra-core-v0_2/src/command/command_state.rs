@@ -4,6 +4,9 @@
 //! The caller commits after all commands have executed,
 //! giving atomic multi-command operations (e.g. checkout = branch + transaction).
 
+use std::sync::Arc;
+
+use crate::embed::{Embedder, NoopEmbedder};
 use crate::io::{DbError, WriteBatch};
 use crate::store::storage::Storage;
 
@@ -14,6 +17,7 @@ use crate::store::storage::Storage;
 pub struct CommandState {
     storage: Storage,
     batch: Option<WriteBatch>,
+    embedder: Arc<dyn Embedder>,
 }
 
 impl CommandState {
@@ -22,7 +26,22 @@ impl CommandState {
         Self {
             storage: storage.clone(),
             batch: None,
+            embedder: Arc::new(NoopEmbedder),
         }
+    }
+
+    /// Create a new command state with a custom embedder.
+    pub fn with_embedder(storage: &Storage, embedder: Arc<dyn Embedder>) -> Self {
+        Self {
+            storage: storage.clone(),
+            batch: None,
+            embedder,
+        }
+    }
+
+    /// Access the embedder.
+    pub fn embedder(&self) -> &dyn Embedder {
+        &*self.embedder
     }
 
     /// Get the write batch, creating it lazily on first access.

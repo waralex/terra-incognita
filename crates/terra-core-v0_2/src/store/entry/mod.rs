@@ -1,5 +1,6 @@
 pub mod assertion;
 pub mod branch;
+pub mod embedding;
 pub mod entity;
 pub mod entity_change;
 pub mod managed;

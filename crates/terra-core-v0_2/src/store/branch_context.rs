@@ -13,8 +13,10 @@ use crate::io::key_prefix::KeyBound;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
 use crate::io::{DbError, DbItem};
+use crate::embed::cosine_similarity;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
+use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
 use crate::store::versioned_key::VersionedKey;
@@ -172,6 +174,95 @@ impl BranchContext {
         let mut entries: Vec<AssertionEntry> = result.into_values().collect();
         entries.sort_by(|a, b| a.key.prop.cmp(&b.key.prop));
         Ok(entries)
+    }
+
+    /// Find entities with embeddings similar to the query vector.
+    ///
+    /// Walks the current branch and ancestry chain, collecting the latest
+    /// embedding per entity, then ranks by cosine similarity.
+    /// Returns `(entity_slug, similarity_score)` pairs sorted by score descending.
+    pub fn similar_entities(
+        &self,
+        query_embedding: &[f32],
+        limit: usize,
+        min_similarity: f32,
+        at_tx: Option<Uuid>,
+    ) -> Result<Vec<(Slug, f32)>, DbError> {
+        let mut latest: HashMap<Slug, Vec<f32>> = HashMap::new();
+
+        self.collect_embeddings(&self.branch, at_tx, &mut latest)?;
+        for ancestor in &self.ancestry {
+            self.collect_embeddings(
+                &ancestor.branch,
+                Some(ancestor.branch_point_tx),
+                &mut latest,
+            )?;
+        }
+
+        let mut scored: Vec<(Slug, f32)> = latest
+            .into_iter()
+            .map(|(slug, emb)| {
+                let sim = cosine_similarity(query_embedding, &emb);
+                (slug, sim)
+            })
+            .filter(|(_, sim)| *sim >= min_similarity)
+            .collect();
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+        Ok(scored)
+    }
+
+    /// Collect latest embedding per entity on a single branch.
+    fn collect_embeddings(
+        &self,
+        on_branch: &Slug,
+        at_tx: Option<Uuid>,
+        result: &mut HashMap<Slug, Vec<f32>>,
+    ) -> Result<(), DbError> {
+        let entity_bound = EmbeddingKey::bound()
+            .with_prefix(|k| {
+                k.branch = on_branch.clone();
+            });
+
+        let mut iter = self.storage.scan::<EmbeddingEntry>(&entity_bound)?;
+
+        loop {
+            let entry = match iter.next() {
+                Some(Ok(e)) => e,
+                Some(Err(e)) => return Err(e),
+                None => break,
+            };
+
+            let entity = entry.key.entity.clone();
+
+            if !result.contains_key(&entity) {
+                let mut bound = EmbeddingKey::bound()
+                    .with_prefix(|k| {
+                        k.branch = on_branch.clone();
+                        k.entity = entity.clone();
+                    });
+                if let Some(tx) = at_tx {
+                    bound = bound.with_upper(|k| k.tx_id = tx);
+                }
+
+                if let Some(latest) = self.storage.get_latest::<EmbeddingEntry>(&bound)? {
+                    if !latest.value.embedding.is_empty() {
+                        result.insert(entity.clone(), latest.value.embedding);
+                    }
+                }
+            }
+
+            let skip = EmbeddingKey::bound()
+                .with_prefix(|k| {
+                    k.branch = on_branch.clone();
+                    k.entity = entity.clone();
+                    k.tx_id = Uuid::max();
+                });
+            iter.seek(&skip);
+        }
+
+        Ok(())
     }
 
     /// Discover props via forward scan, get latest per prop via reverse seek.

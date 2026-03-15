@@ -6,5 +6,6 @@
 pub mod command;
 pub mod config;
 pub mod domain;
+pub mod embed;
 pub mod io;
 pub mod store;

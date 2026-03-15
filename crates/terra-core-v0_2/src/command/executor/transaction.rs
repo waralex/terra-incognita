@@ -14,6 +14,7 @@ use crate::io::WriteBatch;
 use crate::io::storage_key::StorageKey;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey, AssertionValue};
+use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey, EmbeddingValue};
 use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
 use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, EntityChangeValue};
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
@@ -57,44 +58,123 @@ impl ExecuteTransaction {
     fn write_assertions(
         &self,
         branch: &BranchContext,
-        batch: &mut WriteBatch,
+        state: &mut CommandState,
         tx_id: Uuid,
         entity: &Entity,
+    ) -> Result<Uuid, DbError> {
+        let change_id = Uuid::now_v7();
+
+        if !entity.properties.is_empty() {
+            let reasoning = entity.meta.get("reasoning")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let batch = state.batch();
+            batch.put(&EntityChangeEntry {
+                key: EntityChangeKey { change_id },
+                value: EntityChangeValue {
+                    entity_id: entity.slug.hash(),
+                    tx_id,
+                    meta: entity.meta.clone(),
+                },
+            })?;
+
+            for pv in &entity.properties {
+                batch.put(&AssertionEntry {
+                    key: AssertionKey {
+                        branch: branch.id().clone(),
+                        entity: entity.slug.clone(),
+                        prop: pv.property.clone(),
+                        tx_id,
+                    },
+                    value: AssertionValue {
+                        change_id,
+                        value: pv.value.clone(),
+                        reasoning: reasoning.clone(),
+                    },
+                })?;
+            }
+        }
+
+        Ok(change_id)
+    }
+
+    /// Build a text representation of an entity for embedding.
+    ///
+    /// Reads committed state from storage (not the in-flight WriteBatch) so that
+    /// the embedding reflects input properties merged with previously-stored ones.
+    fn build_embed_text(
+        branch: &BranchContext,
+        entity: &Entity,
+        tx_id: Uuid,
+    ) -> Result<String, DbError> {
+        let mut lines = Vec::new();
+
+        lines.push(format!("entity: {}", entity.slug));
+
+        if let Some(desc) = &entity.description {
+            lines.push(format!("description: {}", desc));
+        } else {
+            let bound = EntityKey::bound()
+                .with_prefix(|k| {
+                    k.branch = branch.id().clone();
+                    k.entity = entity.slug.clone();
+                });
+            if let Some(entry) = branch.get_latest::<EntityEntry>(&bound)? {
+                if let Some(desc) = &entry.value.description {
+                    lines.push(format!("description: {}", desc));
+                }
+            }
+        }
+
+        let input_props: std::collections::HashSet<&crate::io::slug::Slug> =
+            entity.properties.iter().map(|pv| &pv.property).collect();
+
+        for pv in &entity.properties {
+            lines.push(format!("{}: {}", pv.property, pv.value));
+        }
+
+        let existing = branch.properties(&entity.slug, Some(tx_id))?;
+        for a in &existing {
+            if !input_props.contains(&a.key.prop) {
+                lines.push(format!("{}: {}", a.key.prop, a.value.value));
+            }
+        }
+
+        Ok(lines.join("\n"))
+    }
+
+    /// Generate and write embedding for an entity if the embedder is active.
+    fn write_embedding(
+        branch: &BranchContext,
+        state: &mut CommandState,
+        tx_id: Uuid,
+        entity: &Entity,
+        change_id: Uuid,
     ) -> Result<(), DbError> {
-        if entity.properties.is_empty() {
+        if state.embedder().dimensions() == 0 {
             return Ok(());
         }
 
-        let change_id = Uuid::now_v7();
-        let reasoning = entity.meta.get("reasoning")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let text = Self::build_embed_text(branch, entity, tx_id)?;
+        let embedding = state.embedder().embed(&text)?;
 
-        batch.put(&EntityChangeEntry {
-            key: EntityChangeKey { change_id },
-            value: EntityChangeValue {
-                entity_id: entity.slug.hash(),
+        if embedding.is_empty() {
+            return Ok(());
+        }
+
+        state.batch().put(&EmbeddingEntry {
+            key: EmbeddingKey {
+                branch: branch.id().clone(),
+                entity: entity.slug.clone(),
                 tx_id,
-                meta: entity.meta.clone(),
+            },
+            value: EmbeddingValue {
+                change_id,
+                embedding,
             },
         })?;
-
-        for pv in &entity.properties {
-            batch.put(&AssertionEntry {
-                key: AssertionKey {
-                    branch: branch.id().clone(),
-                    entity: entity.slug.clone(),
-                    prop: pv.property.clone(),
-                    tx_id,
-                },
-                value: AssertionValue {
-                    change_id,
-                    value: pv.value.clone(),
-                    reasoning: reasoning.clone(),
-                },
-            })?;
-        }
 
         Ok(())
     }
@@ -102,7 +182,7 @@ impl ExecuteTransaction {
     fn create_entity(
         &self,
         branch: &BranchContext,
-        batch: &mut WriteBatch,
+        state: &mut CommandState,
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
@@ -114,7 +194,7 @@ impl ExecuteTransaction {
             )));
         }
 
-        batch.put(&EntityEntry {
+        state.batch().put(&EntityEntry {
             key: EntityKey {
                 branch: branch.id().clone(),
                 entity: entity.slug.clone(),
@@ -125,8 +205,9 @@ impl ExecuteTransaction {
             },
         })?;
 
-        Self::write_touched(branch, batch, tx_id, entity)?;
-        self.write_assertions(branch, batch, tx_id, entity)?;
+        Self::write_touched(branch, state.batch(), tx_id, entity)?;
+        let change_id = self.write_assertions(branch, state, tx_id, entity)?;
+        Self::write_embedding(branch, state, tx_id, entity, change_id)?;
 
         Ok(())
     }
@@ -134,7 +215,7 @@ impl ExecuteTransaction {
     fn update_entity(
         &self,
         branch: &BranchContext,
-        batch: &mut WriteBatch,
+        state: &mut CommandState,
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
@@ -147,7 +228,7 @@ impl ExecuteTransaction {
         }
 
         if entity.description.is_some() {
-            batch.put(&EntityEntry {
+            state.batch().put(&EntityEntry {
                 key: EntityKey {
                     branch: branch.id().clone(),
                     entity: entity.slug.clone(),
@@ -159,8 +240,9 @@ impl ExecuteTransaction {
             })?;
         }
 
-        Self::write_touched(branch, batch, tx_id, entity)?;
-        self.write_assertions(branch, batch, tx_id, entity)?;
+        Self::write_touched(branch, state.batch(), tx_id, entity)?;
+        let change_id = self.write_assertions(branch, state, tx_id, entity)?;
+        Self::write_embedding(branch, state, tx_id, entity, change_id)?;
 
         Ok(())
     }
@@ -259,27 +341,26 @@ impl Command for ExecuteTransaction {
         }
 
         let tx_id = Uuid::now_v7();
-        let batch = state.batch();
 
         for entity in &input.create_entities {
-            self.create_entity(branch, batch, tx_id, entity)?;
+            self.create_entity(branch, state, tx_id, entity)?;
         }
 
         for entity in &input.update_entities {
-            self.update_entity(branch, batch, tx_id, entity)?;
+            self.update_entity(branch, state, tx_id, entity)?;
         }
 
         for managed in &input.create_managed {
-            self.create_managed_item(branch, batch, tx_id, managed)?;
+            self.create_managed_item(branch, state.batch(), tx_id, managed)?;
         }
 
         for managed in &input.update_managed {
-            self.update_managed_item(branch, batch, tx_id, managed)?;
+            self.update_managed_item(branch, state.batch(), tx_id, managed)?;
         }
 
         // Explicit touches — applied last to override auto-touches.
         for item in &input.touched {
-            batch.put(&TouchedEntry {
+            state.batch().put(&TouchedEntry {
                 key: TouchedKey {
                     branch: branch.id().clone(),
                     tx_id,
@@ -289,7 +370,7 @@ impl Command for ExecuteTransaction {
             })?;
         }
 
-        batch.put(&TransactionEntry {
+        state.batch().put(&TransactionEntry {
             key: TransactionKey {
                 branch: branch.id().clone(),
                 tx_id,
@@ -991,5 +1072,260 @@ mod tests {
         };
         let found = branch.storage().get::<TouchedEntry>(&key).unwrap().unwrap();
         assert_eq!(found.value.reasoning, "checked health");
+    }
+
+    // --- Embeddings ---
+
+    mod embedding_tests {
+        use super::*;
+        use std::sync::Mutex;
+        use crate::embed::Embedder;
+        use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
+        use crate::io::storage_key::StorageKey;
+
+        /// Deterministic test embedder — returns a fixed vector based on text length.
+        struct TestEmbedder {
+            calls: Mutex<Vec<String>>,
+        }
+
+        impl TestEmbedder {
+            fn new() -> Self {
+                Self { calls: Mutex::new(Vec::new()) }
+            }
+
+            fn call_count(&self) -> usize {
+                self.calls.lock().unwrap().len()
+            }
+
+            fn last_text(&self) -> String {
+                self.calls.lock().unwrap().last().cloned().unwrap_or_default()
+            }
+        }
+
+        impl Embedder for TestEmbedder {
+            fn embed(&self, text: &str) -> Result<Vec<f32>, crate::io::DbError> {
+                self.calls.lock().unwrap().push(text.to_string());
+                // Deterministic 4-dim vector based on text length.
+                let len = text.len() as f32;
+                Ok(vec![len, len * 0.5, len * 0.1, 1.0])
+            }
+
+            fn dimensions(&self) -> usize {
+                4
+            }
+        }
+
+        fn exec_with_embedder(
+            branch: &BranchContext,
+            embedder: Arc<dyn Embedder>,
+            input: TransactionInput,
+        ) -> Transaction<TxMeta> {
+            let cmd = cmd();
+            let mut state = CommandState::with_embedder(branch.storage(), embedder);
+            let result = cmd.execute(branch, &mut state, input).unwrap();
+            state.commit().unwrap();
+            result
+        }
+
+        #[test]
+        fn noop_embedder_writes_no_embedding() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+
+            exec(&branch, TransactionInput::new(meta("create"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![
+                        PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
+                    ],
+                    entity_meta("initial"),
+                )));
+
+            let bound = EmbeddingKey::bound()
+                .with_prefix(|k| {
+                    k.branch = branch.id().clone();
+                    k.entity = "alice".parse().unwrap();
+                });
+            let found = branch.storage().get_latest::<EmbeddingEntry>(&bound).unwrap();
+            assert!(found.is_none());
+        }
+
+        #[test]
+        fn create_entity_writes_embedding() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+            let embedder = Arc::new(TestEmbedder::new());
+
+            let result = exec_with_embedder(&branch, embedder.clone(),
+                TransactionInput::new(meta("create"))
+                    .create_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("A person")),
+                        vec![
+                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
+                        ],
+                        entity_meta("initial"),
+                    )));
+
+            assert!(embedder.call_count() > 0);
+
+            let bound = EmbeddingKey::bound()
+                .with_prefix(|k| {
+                    k.branch = branch.id().clone();
+                    k.entity = "alice".parse().unwrap();
+                });
+            let found = branch.storage().get_latest::<EmbeddingEntry>(&bound).unwrap().unwrap();
+            assert_eq!(found.key.tx_id, result.context.tx_id);
+            assert_eq!(found.value.embedding.len(), 4);
+        }
+
+        #[test]
+        fn update_entity_writes_new_embedding() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+            let embedder = Arc::new(TestEmbedder::new());
+
+            exec_with_embedder(&branch, embedder.clone(),
+                TransactionInput::new(meta("create"))
+                    .create_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("A person")),
+                        vec![],
+                        Map::new(),
+                    )));
+
+            let result = exec_with_embedder(&branch, embedder.clone(),
+                TransactionInput::new(meta("update"))
+                    .update_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        None,
+                        vec![
+                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                        ],
+                        entity_meta("birthday"),
+                    )));
+
+            assert!(embedder.call_count() >= 2);
+
+            let bound = EmbeddingKey::bound()
+                .with_prefix(|k| {
+                    k.branch = branch.id().clone();
+                    k.entity = "alice".parse().unwrap();
+                });
+            let found = branch.storage().get_latest::<EmbeddingEntry>(&bound).unwrap().unwrap();
+            assert_eq!(found.key.tx_id, result.context.tx_id);
+        }
+
+        #[test]
+        fn embed_text_includes_description_and_properties() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+            let embedder = Arc::new(TestEmbedder::new());
+
+            exec_with_embedder(&branch, embedder.clone(),
+                TransactionInput::new(meta("create"))
+                    .create_entity(Entity::new(
+                        "server".parse().unwrap(),
+                        Some(serde_json::json!("Production server")),
+                        vec![
+                            PropertyValue { property: "status".parse().unwrap(), value: serde_json::json!("healthy"), context: () },
+                            PropertyValue { property: "zone".parse().unwrap(), value: serde_json::json!("us-east"), context: () },
+                        ],
+                        entity_meta("initial"),
+                    )));
+
+            let text = embedder.last_text();
+            assert!(text.contains("server"));
+            assert!(text.contains("Production server"));
+            assert!(text.contains("status"));
+            assert!(text.contains("zone"));
+        }
+
+        #[test]
+        fn similar_entities_returns_results() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+            let embedder = Arc::new(TestEmbedder::new());
+
+            exec_with_embedder(&branch, embedder.clone(),
+                TransactionInput::new(meta("create"))
+                    .create_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("A person")),
+                        vec![
+                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
+                        ],
+                        entity_meta("initial"),
+                    ))
+                    .create_entity(Entity::new(
+                        "bob".parse().unwrap(),
+                        Some(serde_json::json!("Another person")),
+                        vec![
+                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                        ],
+                        entity_meta("initial"),
+                    )));
+
+            // Query with a vector similar to what TestEmbedder produces.
+            let query = vec![50.0, 25.0, 5.0, 1.0];
+            let results = branch.similar_entities(&query, 10, 0.0, None).unwrap();
+
+            assert_eq!(results.len(), 2);
+            // Both should have high similarity (vectors are in the same direction).
+            for (_, score) in &results {
+                assert!(*score > 0.9);
+            }
+        }
+
+        #[test]
+        fn similar_entities_respects_limit() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+            let embedder = Arc::new(TestEmbedder::new());
+
+            for name in ["alice", "bob", "charlie"] {
+                exec_with_embedder(&branch, embedder.clone(),
+                    TransactionInput::new(meta("create"))
+                        .create_entity(Entity::new(
+                            name.parse().unwrap(),
+                            Some(serde_json::json!("person")),
+                            vec![],
+                            Map::new(),
+                        )));
+            }
+
+            let query = vec![10.0, 5.0, 1.0, 1.0];
+            let results = branch.similar_entities(&query, 2, 0.0, None).unwrap();
+            assert_eq!(results.len(), 2);
+        }
+
+        #[test]
+        fn similar_entities_filters_by_min_similarity() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+            let embedder = Arc::new(TestEmbedder::new());
+
+            exec_with_embedder(&branch, embedder.clone(),
+                TransactionInput::new(meta("create"))
+                    .create_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("A person")),
+                        vec![],
+                        Map::new(),
+                    )));
+
+            // Orthogonal query — should have low similarity.
+            let query = vec![0.0, 0.0, 0.0, 0.0];
+            let results = branch.similar_entities(&query, 10, 0.5, None).unwrap();
+            assert!(results.is_empty());
+        }
     }
 }

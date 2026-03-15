@@ -27,6 +27,11 @@ pub struct ProjectConfig {
     #[serde(default = "default_max_branch_depth")]
     #[builder(default = 8)]
     pub max_branch_depth: usize,
+
+    /// Path to the ONNX embedding model directory (containing model.onnx + tokenizer.json).
+    #[serde(default)]
+    #[builder(default)]
+    pub model_path: Option<PathBuf>,
 }
 
 fn default_max_branch_depth() -> usize {

@@ -54,7 +54,7 @@ impl Storage {
     ///
     /// If `bound` is `Some(tx_id)`, only considers records with `tx_id <= bound`.
     /// If `None`, checks for any record.
-    pub fn exists<P: VersionedPrefix + ValidPrefix<T>, T: DbItem>(
+    pub fn exists<P: VersionedPrefix + ValidPrefix<T::Key>, T: DbItem>(
         &self,
         prefix: &P,
     ) -> Result<bool, DbError> {
@@ -66,7 +66,7 @@ impl Storage {
     ///
     /// Pass `VersionedPrefix` for absolute latest, or `FullPrefix` (via `with_transaction(tx_id)`)
     /// for latest at or before a specific transaction.
-    pub fn get_latest<P: VersionedPrefix + ValidPrefix<T>, T: DbItem>(
+    pub fn get_latest<P: VersionedPrefix + ValidPrefix<T::Key>, T: DbItem>(
         &self,
         prefix: &P,
     ) -> Result<Option<T>, DbError> {

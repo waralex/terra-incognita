@@ -63,8 +63,8 @@ impl DbItem for EntityEntry {
 }
 
 use crate::io::valid_prefix::impl_prefix;
-impl_prefix!(EntityKeyPrefix => EntityEntry);
-impl_prefix!(EntityKeyFullPrefix => EntityEntry);
+impl_prefix!(EntityKeyPrefix => EntityKey);
+impl_prefix!(EntityKeyFullPrefix => EntityKey);
 
 #[cfg(test)]
 mod tests {

@@ -126,7 +126,7 @@ impl TerraDb {
     /// Iterate forward over items whose keys share the given prefix.
     pub fn scan<'a, T: DbItem>(
         &'a self,
-        prefix: &impl ValidPrefix<T>,
+        prefix: &impl ValidPrefix<T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
@@ -143,7 +143,7 @@ impl TerraDb {
     /// the prefix range — useful for finding the latest version.
     pub fn scan_rev<'a, T: DbItem>(
         &'a self,
-        prefix: &impl ValidPrefix<T>,
+        prefix: &impl ValidPrefix<T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;

@@ -1,22 +1,22 @@
-//! Compile-time prefix–entry compatibility marker.
+//! Compile-time prefix–key compatibility marker.
 
-use crate::io::db_item::DbItem;
 use crate::io::key_prefix::KeyPrefix;
+use crate::io::storage_key::StorageKey;
 
-/// Marker trait: `P` is a valid scan prefix for entry type `T`.
+/// Marker trait: `P` is a valid scan prefix for key type `K`.
 ///
 /// Prevents passing a wrong prefix to `scan`/`scan_rev` at compile time.
 /// Implemented via [`impl_prefix!`] macro.
-pub trait ValidPrefix<T: DbItem>: KeyPrefix {}
+pub trait ValidPrefix<K: StorageKey>: KeyPrefix {}
 
-/// Declare that a prefix type is valid for one or more entry types.
+/// Declare that a prefix type is valid for one or more key types.
 ///
 /// ```ignore
-/// impl_prefix!(BranchPrefix => EntityEntry, SchemaTypeEntry, TransactionEntry);
+/// impl_prefix!(EntityKeyPrefix => EntityKey);
 /// ```
 macro_rules! impl_prefix {
-    ($prefix:ty => $( $entry:ty ),+ $(,)?) => {
-        $( impl $crate::io::valid_prefix::ValidPrefix<$entry> for $prefix {} )+
+    ($prefix:ty => $( $key:ty ),+ $(,)?) => {
+        $( impl $crate::io::valid_prefix::ValidPrefix<$key> for $prefix {} )+
     };
 }
 

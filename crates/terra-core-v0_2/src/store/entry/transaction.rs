@@ -66,7 +66,7 @@ impl DbItem for TransactionEntry {
 }
 
 // Not versioned but starts with branch_id.
-impl_prefix!(BranchPrefix => TransactionEntry);
+impl_prefix!(BranchPrefix => TransactionKey);
 
 #[cfg(test)]
 mod tests {

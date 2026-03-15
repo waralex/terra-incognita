@@ -4,7 +4,6 @@
 //! Per-entry prefixes (e.g. `EntityKeyPrefix`) are auto-generated
 //! by `versioned_key!` macro.
 
-use crate::io::DbItem;
 use crate::io::key_prefix::prefix_key;
 use crate::io::valid_prefix::ValidPrefix;
 use crate::store::versioned_key::VersionedKey;
@@ -16,6 +15,6 @@ prefix_key! {
     }
 }
 
-// BranchPrefix is valid for any entry whose key is VersionedKey
+// BranchPrefix is valid for any key that is VersionedKey
 // (starts with branch by definition).
-impl<T: DbItem> ValidPrefix<T> for BranchPrefix where T::Key: VersionedKey {}
+impl<K: VersionedKey> ValidPrefix<K> for BranchPrefix {}

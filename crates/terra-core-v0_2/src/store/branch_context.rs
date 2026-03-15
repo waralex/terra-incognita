@@ -83,12 +83,12 @@ impl BranchContext {
     /// Checks current branch (unbounded), then ancestors with tx bounds.
     pub fn exists<P, T>(&self, prefix: &P) -> Result<bool, DbError>
     where
-        P: VersionedPrefix + ValidPrefix<T>,
+        P: VersionedPrefix + ValidPrefix<T::Key>,
         T: DbItem,
         T::Key: VersionedKey,
     {
         // Current branch — unbounded
-        if self.storage.exists(prefix)? {
+        if self.storage.exists::<P, T>(prefix)? {
             return Ok(true);
         }
         // Ancestors — bounded by branch_point_tx
@@ -109,12 +109,12 @@ impl BranchContext {
     /// Checks current branch (unbounded), then ancestors with tx bounds.
     pub fn get_latest<P, T>(&self, prefix: &P) -> Result<Option<T>, DbError>
     where
-        P: VersionedPrefix + ValidPrefix<T>,
+        P: VersionedPrefix + ValidPrefix<T::Key>,
         T: DbItem,
         T::Key: VersionedKey,
     {
         // Current branch — unbounded
-        if let Some(found) = self.storage.get_latest(prefix)? {
+        if let Some(found) = self.storage.get_latest::<P, T>(prefix)? {
             return Ok(Some(found));
         }
         // Ancestors — bounded by branch_point_tx
@@ -130,7 +130,7 @@ impl BranchContext {
     /// Reverse scan with VersionedPrefix, filter by tx_id <= bound.
     fn find_bounded<P, T>(&self, prefix: &P, tx_bound: Uuid) -> Result<Option<T>, DbError>
     where
-        P: VersionedPrefix + ValidPrefix<T>,
+        P: VersionedPrefix + ValidPrefix<T::Key>,
         T: DbItem,
         T::Key: VersionedKey,
     {
@@ -151,7 +151,7 @@ impl BranchContext {
     /// version of each.
     pub fn scan_latest<T>(
         &self,
-        prefix: &(impl KeyPrefix + ValidPrefix<T>),
+        prefix: &(impl KeyPrefix + ValidPrefix<T::Key>),
     ) -> Result<Vec<T>, DbError>
     where
         T: DbItem,

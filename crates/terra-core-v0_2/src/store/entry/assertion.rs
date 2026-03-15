@@ -1,6 +1,6 @@
 //! Assertion entry — a single property value claim.
 //!
-//! Key: `branch(16) | prop_id(16) | tx_id(16) | change_id(16) | entity_id(16)` = 80 bytes.
+//! Key: `branch(16) | prop(16) | tx_id(16) | change_id(16) | entity(16)` = 80 bytes fixed + slug suffixes.
 //! Value: JSON (arbitrary property value).
 //!
 //! No fact/hypothesis distinction in v0.2 — all assertions are equal.
@@ -15,10 +15,10 @@ const CF_ASSERTIONS: &str = "assertions";
 storage_key! {
     pub struct AssertionKey {
         branch: Slug,
-        prop_id: Uuid,
+        prop: Slug,
         tx_id: Uuid,
         change_id: Uuid,
-        entity_id: Uuid,
+        entity: Slug,
     }
 }
 // Known prefixes: BranchPrefix(16), BranchPropPrefix(32)
@@ -86,10 +86,10 @@ mod tests {
         let entry = AssertionEntry {
             key: AssertionKey {
                 branch: "main".parse::<crate::io::slug::Slug>().unwrap(),
-                prop_id: Uuid::now_v7(),
+                prop: "location".parse::<crate::io::slug::Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
                 change_id: Uuid::now_v7(),
-                entity_id: Uuid::now_v7(),
+                entity: "london".parse::<crate::io::slug::Slug>().unwrap(),
             },
             value: AssertionValue {
                 value: serde_json::json!({"name": "London"}),
@@ -101,7 +101,7 @@ mod tests {
         batch.commit().unwrap();
 
         let found = db.get::<AssertionEntry>(&entry.key).unwrap().unwrap();
-        assert_eq!(found.key.entity_id, entry.key.entity_id);
+        assert_eq!(found.key.entity, entry.key.entity);
         assert_eq!(found.value.value, serde_json::json!({"name": "London"}));
     }
 }

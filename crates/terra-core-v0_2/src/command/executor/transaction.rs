@@ -44,12 +44,11 @@ impl ExecuteTransaction {
         }
 
         let change_id = Uuid::now_v7();
-        let entity_id = entity.slug.hash();
 
         batch.put(&EntityChangeEntry {
             key: EntityChangeKey { change_id },
             value: EntityChangeValue {
-                entity_id,
+                entity_id: entity.slug.hash(),
                 tx_id,
                 meta: entity.meta.clone(),
             },
@@ -59,10 +58,10 @@ impl ExecuteTransaction {
             batch.put(&AssertionEntry {
                 key: AssertionKey {
                     branch: branch.id().clone(),
-                    prop_id: pv.property.hash(),
+                    prop: pv.property.clone(),
                     tx_id,
                     change_id,
-                    entity_id,
+                    entity: entity.slug.clone(),
                 },
                 value: AssertionValue {
                     value: pv.value.clone(),
@@ -480,11 +479,11 @@ mod tests {
         let bound = AssertionKey::bound()
             .with_prefix(|k| {
                 k.branch = branch.id().clone();
-                k.prop_id = age_slug.hash();
+                k.prop = age_slug.clone();
             });
         let found = branch.storage().get_latest::<AssertionEntry>(&bound).unwrap().unwrap();
         assert_eq!(found.value.value, serde_json::json!(30));
-        assert_eq!(found.key.entity_id, alice_slug.hash());
+        assert_eq!(found.key.entity, alice_slug);
         assert_eq!(found.key.tx_id, result.context.tx_id);
 
         let change = storage_get_exact(&branch, found.key.change_id).unwrap();
@@ -528,7 +527,7 @@ mod tests {
         let bound = AssertionKey::bound()
             .with_prefix(|k| {
                 k.branch = branch.id().clone();
-                k.prop_id = age_slug.hash();
+                k.prop = age_slug.clone();
             });
         let found = branch.storage().get_latest::<AssertionEntry>(&bound).unwrap().unwrap();
         assert_eq!(found.value.value, serde_json::json!(25));
@@ -798,9 +797,9 @@ mod tests {
         let city_slug: crate::io::Slug = "city".parse().unwrap();
 
         let age_bound = AssertionKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.prop_id = age_slug.hash(); });
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.prop = age_slug.clone(); });
         let city_bound = AssertionKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.prop_id = city_slug.hash(); });
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.prop = city_slug.clone(); });
 
         let age_entry = branch.storage().get_latest::<AssertionEntry>(&age_bound).unwrap().unwrap();
         let city_entry = branch.storage().get_latest::<AssertionEntry>(&city_bound).unwrap().unwrap();

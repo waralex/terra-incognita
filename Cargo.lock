@@ -2691,6 +2691,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "terra-server-v0_2"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "indoc",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "terra-core-v0_2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

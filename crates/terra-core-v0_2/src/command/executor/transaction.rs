@@ -102,30 +102,20 @@ impl ExecuteTransaction {
 
     /// Build a text representation of an entity for embedding.
     ///
-    /// Reads committed state from storage (not the in-flight WriteBatch) so that
-    /// the embedding reflects input properties merged with previously-stored ones.
+    /// Pure function — all data is provided by the caller.
+    /// `description` is the resolved description (from input or from storage).
+    /// `existing` contains previously-stored properties not overridden by the input.
     fn build_embed_text(
-        branch: &BranchContext,
         entity: &Entity,
-        tx_id: Uuid,
-    ) -> Result<String, DbError> {
+        description: Option<&serde_json::Value>,
+        existing: &[AssertionEntry],
+    ) -> String {
         let mut lines = Vec::new();
 
         lines.push(format!("entity: {}", entity.slug));
 
-        if let Some(desc) = &entity.description {
+        if let Some(desc) = description {
             lines.push(format!("description: {}", desc));
-        } else {
-            let bound = EntityKey::bound()
-                .with_prefix(|k| {
-                    k.branch = branch.id().clone();
-                    k.entity = entity.slug.clone();
-                });
-            if let Some(entry) = branch.get_latest::<EntityEntry>(&bound)? {
-                if let Some(desc) = &entry.value.description {
-                    lines.push(format!("description: {}", desc));
-                }
-            }
         }
 
         let input_props: std::collections::HashSet<&crate::io::slug::Slug> =
@@ -135,29 +125,30 @@ impl ExecuteTransaction {
             lines.push(format!("{}: {}", pv.property, pv.value));
         }
 
-        let existing = branch.properties(&entity.slug, Some(tx_id))?;
-        for a in &existing {
+        for a in existing {
             if !input_props.contains(&a.key.prop) {
                 lines.push(format!("{}: {}", a.key.prop, a.value.value));
             }
         }
 
-        Ok(lines.join("\n"))
+        lines.join("\n")
     }
 
     /// Generate and write embedding for an entity if the embedder is active.
     fn write_embedding(
-        branch: &BranchContext,
         state: &mut CommandState,
+        branch: &BranchContext,
         tx_id: Uuid,
         entity: &Entity,
         change_id: Uuid,
+        description: Option<&serde_json::Value>,
+        existing: &[AssertionEntry],
     ) -> Result<(), DbError> {
         if state.embedder().dimensions() == 0 {
             return Ok(());
         }
 
-        let text = Self::build_embed_text(branch, entity, tx_id)?;
+        let text = Self::build_embed_text(entity, description, existing);
         let embedding = state.embedder().embed(&text)?;
 
         if embedding.is_empty() {
@@ -207,7 +198,8 @@ impl ExecuteTransaction {
 
         Self::write_touched(branch, state.batch(), tx_id, entity)?;
         let change_id = self.write_assertions(branch, state, tx_id, entity)?;
-        Self::write_embedding(branch, state, tx_id, entity, change_id)?;
+        // New entity — description from input, no existing properties.
+        Self::write_embedding(state, branch, tx_id, entity, change_id, entity.description.as_ref(), &[])?;
 
         Ok(())
     }
@@ -227,6 +219,24 @@ impl ExecuteTransaction {
             )));
         }
 
+        // Read existing state for embedding BEFORE writing to batch.
+        // Guarded: skip DB reads when embedder is inactive.
+        let stored_desc: Option<serde_json::Value>;
+        let existing: Vec<AssertionEntry>;
+        if state.embedder().dimensions() != 0 {
+            stored_desc = if entity.description.is_none() {
+                branch.get_latest::<EntityEntry>(&bound)?
+                    .and_then(|e| e.value.description)
+            } else {
+                None
+            };
+            existing = branch.properties(&entity.slug, None)?;
+        } else {
+            stored_desc = None;
+            existing = vec![];
+        }
+        let description = entity.description.as_ref().or(stored_desc.as_ref());
+
         if entity.description.is_some() {
             state.batch().put(&EntityEntry {
                 key: EntityKey {
@@ -242,7 +252,7 @@ impl ExecuteTransaction {
 
         Self::write_touched(branch, state.batch(), tx_id, entity)?;
         let change_id = self.write_assertions(branch, state, tx_id, entity)?;
-        Self::write_embedding(branch, state, tx_id, entity, change_id)?;
+        Self::write_embedding(state, branch, tx_id, entity, change_id, description, &existing)?;
 
         Ok(())
     }

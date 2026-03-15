@@ -4,5 +4,5 @@
 //! and commits via WriteBatch. Callers create domain objects through
 //! DomainFactory, handle validation errors, then pass valid objects here.
 
-pub mod execute_transaction;
+pub mod executor;
 pub mod input;

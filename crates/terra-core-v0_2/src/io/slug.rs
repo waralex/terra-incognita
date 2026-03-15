@@ -15,10 +15,10 @@ const SLUG_HASH_NAMESPACE: Uuid = Uuid::from_u128(0xA1B2C3D4_E5F6_7890_ABCD_EF12
 /// Validated, immutable slug.
 ///
 /// Internally uses an enum to support sentinel values (Min/Max) for scan bounds.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Slug(SlugInner);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum SlugInner {
     Value(String),
     Min,

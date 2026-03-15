@@ -1,43 +1,40 @@
 //! Assertion entry — a single property value claim.
 //!
-//! Key: `branch(16) | prop(16) | tx_id(16) | change_id(16) | entity(16)` = 80 bytes fixed + slug suffixes.
-//! Value: JSON (arbitrary property value).
+//! Key: `branch(16) | entity(16) | prop(16) | tx_id(16)` = 64 bytes fixed + slug suffixes.
+//! Value: JSON with change_id and the property value.
 //!
 //! No fact/hypothesis distinction in v0.2 — all assertions are equal.
 
-use crate::io::{DbItem, DbError};
-use crate::io::storage_key::storage_key;
-use crate::io::storage_value::StorageValue;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
+use crate::io::{DbItem, DbError};
+use crate::io::storage_value::StorageValue;
+use crate::store::versioned_key::versioned_key;
 
 const CF_ASSERTIONS: &str = "assertions";
 
-storage_key! {
+versioned_key! {
     pub struct AssertionKey {
-        branch: Slug,
-        prop: Slug,
-        tx_id: Uuid,
-        change_id: Uuid,
         entity: Slug,
+        prop: Slug,
     }
 }
-// Known prefixes: BranchPrefix(16), BranchPropPrefix(32)
 
-/// Assertion value.
-#[derive(Debug, Clone)]
+/// Assertion value — property value + provenance link.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssertionValue {
+    pub change_id: Uuid,
     pub value: serde_json::Value,
 }
 
 impl StorageValue for AssertionValue {
     fn encode(&self) -> Result<Vec<u8>, DbError> {
-        serde_json::to_vec(&self.value).map_err(|e| DbError::Storage(e.to_string()))
+        serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))
     }
 
     fn decode(bytes: &[u8]) -> Result<Self, DbError> {
-        let value: serde_json::Value =
-            serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))?;
-        Ok(Self { value })
+        serde_json::from_slice(bytes).map_err(|e| DbError::Storage(e.to_string()))
     }
 }
 
@@ -72,8 +69,8 @@ impl DbItem for AssertionEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::io::TerraDb;
+    use crate::io::slug::Slug;
 
     #[test]
     fn roundtrip() {
@@ -85,13 +82,13 @@ mod tests {
 
         let entry = AssertionEntry {
             key: AssertionKey {
-                branch: "main".parse::<crate::io::slug::Slug>().unwrap(),
-                prop: "location".parse::<crate::io::slug::Slug>().unwrap(),
+                branch: "main".parse::<Slug>().unwrap(),
+                entity: "london".parse::<Slug>().unwrap(),
+                prop: "location".parse::<Slug>().unwrap(),
                 tx_id: Uuid::now_v7(),
-                change_id: Uuid::now_v7(),
-                entity: "london".parse::<crate::io::slug::Slug>().unwrap(),
             },
             value: AssertionValue {
+                change_id: Uuid::now_v7(),
                 value: serde_json::json!({"name": "London"}),
             },
         };
@@ -102,6 +99,8 @@ mod tests {
 
         let found = db.get::<AssertionEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.entity, entry.key.entity);
+        assert_eq!(found.key.prop, entry.key.prop);
+        assert_eq!(found.value.change_id, entry.value.change_id);
         assert_eq!(found.value.value, serde_json::json!({"name": "London"}));
     }
 }

@@ -58,12 +58,12 @@ impl ExecuteTransaction {
             batch.put(&AssertionEntry {
                 key: AssertionKey {
                     branch: branch.id().clone(),
+                    entity: entity.slug.clone(),
                     prop: pv.property.clone(),
                     tx_id,
-                    change_id,
-                    entity: entity.slug.clone(),
                 },
                 value: AssertionValue {
+                    change_id,
                     value: pv.value.clone(),
                 },
             })?;
@@ -479,6 +479,7 @@ mod tests {
         let bound = AssertionKey::bound()
             .with_prefix(|k| {
                 k.branch = branch.id().clone();
+                k.entity = alice_slug.clone();
                 k.prop = age_slug.clone();
             });
         let found = branch.storage().get_latest::<AssertionEntry>(&bound).unwrap().unwrap();
@@ -486,7 +487,7 @@ mod tests {
         assert_eq!(found.key.entity, alice_slug);
         assert_eq!(found.key.tx_id, result.context.tx_id);
 
-        let change = storage_get_exact(&branch, found.key.change_id).unwrap();
+        let change = storage_get_exact(&branch, found.value.change_id).unwrap();
         assert_eq!(change.value.meta["reasoning"], "initial observation");
         assert_eq!(change.value.entity_id, alice_slug.hash());
     }
@@ -524,9 +525,11 @@ mod tests {
             )));
 
         let age_slug: crate::io::Slug = "age".parse().unwrap();
+        let alice_slug: crate::io::Slug = "alice".parse().unwrap();
         let bound = AssertionKey::bound()
             .with_prefix(|k| {
                 k.branch = branch.id().clone();
+                k.entity = alice_slug.clone();
                 k.prop = age_slug.clone();
             });
         let found = branch.storage().get_latest::<AssertionEntry>(&bound).unwrap().unwrap();
@@ -793,21 +796,21 @@ mod tests {
                 entity_meta("census data"),
             )));
 
+        let alice_slug: crate::io::Slug = "alice".parse().unwrap();
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let city_slug: crate::io::Slug = "city".parse().unwrap();
 
         let age_bound = AssertionKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.prop = age_slug.clone(); });
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = alice_slug.clone(); k.prop = age_slug.clone(); });
         let city_bound = AssertionKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.prop = city_slug.clone(); });
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = alice_slug.clone(); k.prop = city_slug.clone(); });
 
         let age_entry = branch.storage().get_latest::<AssertionEntry>(&age_bound).unwrap().unwrap();
         let city_entry = branch.storage().get_latest::<AssertionEntry>(&city_bound).unwrap().unwrap();
 
-        assert_eq!(age_entry.key.change_id, city_entry.key.change_id);
+        assert_eq!(age_entry.value.change_id, city_entry.value.change_id);
 
-        let change = storage_get_exact(&branch, age_entry.key.change_id).unwrap();
-        let alice_slug: crate::io::Slug = "alice".parse().unwrap();
+        let change = storage_get_exact(&branch, age_entry.value.change_id).unwrap();
         assert_eq!(change.value.entity_id, alice_slug.hash());
         assert_eq!(change.value.tx_id, result.context.tx_id);
         assert_eq!(change.value.meta["reasoning"], "census data");

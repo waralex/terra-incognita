@@ -13,8 +13,17 @@ use uuid::Uuid;
 const SLUG_HASH_NAMESPACE: Uuid = Uuid::from_u128(0xA1B2C3D4_E5F6_7890_ABCD_EF1234567890);
 
 /// Validated, immutable slug.
+///
+/// Internally uses an enum to support sentinel values (Min/Max) for scan bounds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Slug(String);
+pub struct Slug(SlugInner);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum SlugInner {
+    Value(String),
+    Min,
+    Max,
+}
 
 /// Slug validation error.
 #[derive(Debug, thiserror::Error)]
@@ -32,22 +41,42 @@ pub enum SlugError {
 impl Slug {
     /// Trusted constructor for hardcoded slugs. No validation.
     pub(crate) fn new_unchecked(s: &str) -> Self {
-        Self(s.to_string())
+        Self(SlugInner::Value(s.to_string()))
+    }
+
+    /// Sentinel: sorts before all real slugs (hash = `[0x00; 16]`).
+    pub(crate) fn min() -> Self {
+        Self(SlugInner::Min)
+    }
+
+    /// Sentinel: sorts after all real slugs (hash = `[0xFF; 16]`).
+    pub(crate) fn max() -> Self {
+        Self(SlugInner::Max)
     }
 
     /// Deterministic hash for use in storage keys.
     pub fn hash(&self) -> Uuid {
-        Uuid::new_v5(&SLUG_HASH_NAMESPACE, self.0.as_bytes())
+        match &self.0 {
+            SlugInner::Value(s) => Uuid::new_v5(&SLUG_HASH_NAMESPACE, s.as_bytes()),
+            SlugInner::Min => Uuid::from_bytes([0x00; 16]),
+            SlugInner::Max => Uuid::from_bytes([0xFF; 16]),
+        }
     }
 
     /// The original string.
     pub fn as_str(&self) -> &str {
-        &self.0
+        match &self.0 {
+            SlugInner::Value(s) => s,
+            SlugInner::Min | SlugInner::Max => "",
+        }
     }
 
     /// Byte length of the original string.
     pub fn len(&self) -> usize {
-        self.0.len()
+        match &self.0 {
+            SlugInner::Value(s) => s.len(),
+            SlugInner::Min | SlugInner::Max => 0,
+        }
     }
 }
 
@@ -69,13 +98,13 @@ impl FromStr for Slug {
                 return Err(SlugError::InvalidChar(c));
             }
         }
-        Ok(Slug(s.to_string()))
+        Ok(Slug(SlugInner::Value(s.to_string())))
     }
 }
 
 impl fmt::Display for Slug {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.as_str())
     }
 }
 
@@ -147,5 +176,21 @@ mod tests {
     fn max_length_ok() {
         let s = "a".repeat(255);
         assert!(s.parse::<Slug>().is_ok());
+    }
+
+    #[test]
+    fn min_hash_is_all_zeros() {
+        let slug = Slug::min();
+        assert_eq!(slug.hash().as_bytes(), &[0x00; 16]);
+        assert_eq!(slug.as_str(), "");
+        assert_eq!(slug.len(), 0);
+    }
+
+    #[test]
+    fn max_hash_is_all_ones() {
+        let slug = Slug::max();
+        assert_eq!(slug.hash().as_bytes(), &[0xFF; 16]);
+        assert_eq!(slug.as_str(), "");
+        assert_eq!(slug.len(), 0);
     }
 }

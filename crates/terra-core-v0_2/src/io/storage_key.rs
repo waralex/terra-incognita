@@ -35,6 +35,21 @@ pub trait StorageKey: Sized {
 
     fn encode(&self) -> Vec<u8>;
     fn decode(bytes: &[u8]) -> Result<Self, KeyError>;
+
+    /// Encode only the fixed-size part (hashes for Slug fields, raw bytes for others).
+    /// No slug suffixes.
+    fn encode_fixed(&self) -> Vec<u8>;
+
+    /// All-minimum sentinel: every field at its lowest possible value.
+    fn nil() -> Self;
+
+    /// All-maximum sentinel: every field at its highest possible value.
+    fn max() -> Self;
+
+    /// Full-range `KeyBound` for this key type (`nil..=max`).
+    fn bound() -> crate::io::key_prefix::KeyBound<Self> {
+        crate::io::key_prefix::KeyBound::new()
+    }
 }
 
 /// Declares a storage key struct with automatic encode/decode.
@@ -56,14 +71,18 @@ macro_rules! storage_key {
         impl $crate::io::storage_key::StorageKey for $name {
             const SIZE: usize = 0 $( + storage_key!(@field_size $ty) )+;
 
+            fn encode_fixed(&self) -> Vec<u8> {
+                let mut buf = vec![0u8; Self::SIZE];
+                let mut _off: usize = 0;
+                $( storage_key!(@encode_fixed buf, _off, self.$field, $ty); )+
+                buf
+            }
+
             fn encode(&self) -> Vec<u8> {
                 let _suffix_size: usize = 0 $( + storage_key!(@suffix_size self.$field, $ty) )+;
-                let mut buf = Vec::with_capacity(Self::SIZE + _suffix_size);
-                buf.resize(Self::SIZE, 0u8);
-                let mut _off: usize = 0;
-                // Pass 1: fixed part
-                $( storage_key!(@encode_fixed buf, _off, self.$field, $ty); )+
-                // Pass 2: slug suffixes
+                let mut buf = self.encode_fixed();
+                buf.reserve(_suffix_size);
+                // slug suffixes
                 $( storage_key!(@encode_suffix buf, self.$field, $ty); )+
                 buf
             }
@@ -78,6 +97,14 @@ macro_rules! storage_key {
                 let mut _suf: usize = Self::SIZE;
                 $( let $field = storage_key!(@decode bytes, _off, _suf, $ty)?; )+
                 Ok(Self { $( $field ),+ })
+            }
+
+            fn nil() -> Self {
+                Self { $( $field: storage_key!(@nil_value $ty) ),+ }
+            }
+
+            fn max() -> Self {
+                Self { $( $field: storage_key!(@max_value $ty) ),+ }
             }
         }
     };
@@ -159,6 +186,18 @@ macro_rules! storage_key {
             .map_err(|e: $crate::io::slug::SlugError| $crate::io::storage_key::KeyError(e.to_string()));
         val
     }};
+
+    // --- Nil (minimum) values ---
+    (@nil_value Uuid) => { uuid::Uuid::nil() };
+    (@nil_value Slug) => { $crate::io::slug::Slug::min() };
+    (@nil_value u8)   => { 0u8 };
+    (@nil_value i64)  => { i64::MIN };
+
+    // --- Max values ---
+    (@max_value Uuid) => { uuid::Uuid::max() };
+    (@max_value Slug) => { $crate::io::slug::Slug::max() };
+    (@max_value u8)   => { 0xFFu8 };
+    (@max_value i64)  => { i64::MAX };
 }
 
 pub(crate) use storage_key;
@@ -324,5 +363,68 @@ mod tests {
         // Hash should be at offset 16..32
         let hash_bytes = &encoded[16..32];
         assert_eq!(hash_bytes, slug.hash().as_bytes());
+    }
+
+    #[test]
+    fn encode_fixed_excludes_suffix() {
+        let slug: Slug = "my-entity".parse().unwrap();
+        let key = SlugKey {
+            branch_id: Uuid::from_u128(1),
+            name: slug,
+        };
+        let fixed = key.encode_fixed();
+        assert_eq!(fixed.len(), SlugKey::SIZE);
+        // Full encode has suffix, fixed does not
+        assert!(key.encode().len() > fixed.len());
+    }
+
+    #[test]
+    fn encode_fixed_matches_encode_prefix() {
+        let key = TestKey {
+            branch_id: Uuid::from_u128(1),
+            entity_id: Uuid::from_u128(2),
+            timestamp_us: 42,
+        };
+        let fixed = key.encode_fixed();
+        let full = key.encode();
+        // No slug fields → fixed == full
+        assert_eq!(fixed, full);
+    }
+
+    #[test]
+    fn nil_all_zeros() {
+        let key = TestKey::nil();
+        assert_eq!(key.branch_id, Uuid::nil());
+        assert_eq!(key.entity_id, Uuid::nil());
+        assert_eq!(key.timestamp_us, i64::MIN);
+    }
+
+    #[test]
+    fn max_all_max() {
+        let key = TestKey::max();
+        assert_eq!(key.branch_id, Uuid::max());
+        assert_eq!(key.entity_id, Uuid::max());
+        assert_eq!(key.timestamp_us, i64::MAX);
+    }
+
+    #[test]
+    fn nil_sorts_before_max() {
+        let nil = TestKey::nil().encode();
+        let max = TestKey::max().encode();
+        assert!(nil < max);
+    }
+
+    #[test]
+    fn nil_slug_key() {
+        let key = SlugKey::nil();
+        assert_eq!(key.branch_id, Uuid::nil());
+        assert_eq!(key.name.hash().as_bytes(), &[0x00; 16]);
+    }
+
+    #[test]
+    fn max_slug_key() {
+        let key = SlugKey::max();
+        assert_eq!(key.branch_id, Uuid::max());
+        assert_eq!(key.name.hash().as_bytes(), &[0xFF; 16]);
     }
 }

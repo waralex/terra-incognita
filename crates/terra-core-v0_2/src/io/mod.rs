@@ -9,7 +9,7 @@ pub mod storage_value;
 
 pub use db_item::DbItem;
 pub use db_iterator::DbIterator;
-pub use key_prefix::KeyPrefix;
+pub use key_prefix::{KeyBound, KeyPrefix};
 pub use slug::Slug;
 pub use terra_db::*;
 pub use write_batch::WriteBatch;

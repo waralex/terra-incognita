@@ -139,14 +139,9 @@ macro_rules! versioned_key {
             // Fixed: branch hash(16) + middle fields + tx(16)
             const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )* + 16;
 
-            fn encode(&self) -> Vec<u8> {
-                let _suffix_size: usize = 1 + self.branch.len()
-                    $( + versioned_key!(@suffix_size self.$field, $ty) )*;
-                let mut buf = Vec::with_capacity(Self::SIZE + _suffix_size);
-                buf.resize(Self::SIZE, 0u8);
+            fn encode_fixed(&self) -> Vec<u8> {
+                let mut buf = vec![0u8; Self::SIZE];
                 let mut _off: usize = 0;
-
-                // Pass 1: fixed part
                 // branch hash
                 let _hash = self.branch.hash();
                 buf[_off.._off + 16].copy_from_slice(_hash.as_bytes());
@@ -155,15 +150,37 @@ macro_rules! versioned_key {
                 $( versioned_key!(@encode_fixed buf, _off, self.$field, $ty); )*
                 // tx_id
                 buf[_off.._off + 16].copy_from_slice(self.tx_id.as_bytes());
+                buf
+            }
 
-                // Pass 2: slug suffixes
+            fn encode(&self) -> Vec<u8> {
+                let _suffix_size: usize = 1 + self.branch.len()
+                    $( + versioned_key!(@suffix_size self.$field, $ty) )*;
+                let mut buf = self.encode_fixed();
+                buf.reserve(_suffix_size);
+                // slug suffixes
                 // branch slug
                 buf.push(self.branch.len() as u8);
                 buf.extend_from_slice(self.branch.as_str().as_bytes());
                 // middle slug fields
                 $( versioned_key!(@encode_suffix buf, self.$field, $ty); )*
-
                 buf
+            }
+
+            fn nil() -> Self {
+                Self {
+                    branch: $crate::io::slug::Slug::min(),
+                    $( $field: versioned_key!(@nil_value $ty), )*
+                    tx_id: uuid::Uuid::nil(),
+                }
+            }
+
+            fn max() -> Self {
+                Self {
+                    branch: $crate::io::slug::Slug::max(),
+                    $( $field: versioned_key!(@max_value $ty), )*
+                    tx_id: uuid::Uuid::max(),
+                }
             }
 
             fn decode(bytes: &[u8]) -> Result<Self, $crate::io::storage_key::KeyError> {
@@ -253,6 +270,14 @@ macro_rules! versioned_key {
             .map_err(|e: $crate::io::slug::SlugError| $crate::io::storage_key::KeyError(e.to_string()));
         val
     }};
+
+    // --- Nil (minimum) values ---
+    (@nil_value Uuid) => { uuid::Uuid::nil() };
+    (@nil_value Slug) => { $crate::io::slug::Slug::min() };
+
+    // --- Max values ---
+    (@max_value Uuid) => { uuid::Uuid::max() };
+    (@max_value Slug) => { $crate::io::slug::Slug::max() };
 }
 
 pub(crate) use versioned_key;

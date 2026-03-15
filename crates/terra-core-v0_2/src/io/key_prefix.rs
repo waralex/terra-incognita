@@ -115,6 +115,59 @@ macro_rules! prefix_key {
 
 pub(crate) use prefix_key;
 
+/// Generic scan bounds: a (lower, upper) key pair that implements `KeyPrefix`.
+///
+/// Starts as full range (`K::nil()..=K::max()`). Narrow with `with_prefix`,
+/// `with_lower`, `with_upper`.
+#[derive(Debug, Clone)]
+pub struct KeyBound<K: StorageKey> {
+    pub lower: K,
+    pub upper: K,
+}
+
+impl<K: StorageKey> KeyBound<K> {
+    /// Full range: all keys from nil to max.
+    pub fn new() -> Self {
+        Self { lower: K::nil(), upper: K::max() }
+    }
+
+    /// Apply `f` to both lower and upper (set a shared prefix field).
+    pub fn with_prefix(mut self, mut f: impl FnMut(&mut K)) -> Self {
+        f(&mut self.lower);
+        f(&mut self.upper);
+        self
+    }
+
+    /// Apply `f` to the lower bound only.
+    pub fn with_lower(mut self, mut f: impl FnMut(&mut K)) -> Self {
+        f(&mut self.lower);
+        self
+    }
+
+    /// Apply `f` to the upper bound only.
+    pub fn with_upper(mut self, mut f: impl FnMut(&mut K)) -> Self {
+        f(&mut self.upper);
+        self
+    }
+}
+
+impl<K: StorageKey> KeyPrefix for KeyBound<K> {
+    type Key = K;
+    const SIZE: usize = K::SIZE;
+
+    fn encode(&self) -> Vec<u8> {
+        self.lower.encode_fixed()
+    }
+
+    fn encode_lower_bound(&self) -> Vec<u8> {
+        self.lower.encode_fixed()
+    }
+
+    fn encode_upper_bound(&self) -> Vec<u8> {
+        self.upper.encode_fixed()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,7 +179,10 @@ mod tests {
     impl StorageKey for TestKey48 {
         const SIZE: usize = 48;
         fn encode(&self) -> Vec<u8> { vec![0; 48] }
+        fn encode_fixed(&self) -> Vec<u8> { vec![0; 48] }
         fn decode(_: &[u8]) -> Result<Self, KeyError> { Ok(Self) }
+        fn nil() -> Self { Self }
+        fn max() -> Self { Self }
     }
 
     prefix_key! {
@@ -198,5 +254,63 @@ mod tests {
         assert_eq!(upper.len(), 48);
         assert_eq!(&upper[..32], &prefix.encode()[..]);
         assert!(upper[32..].iter().all(|&b| b == 0xFF));
+    }
+
+    // --- KeyBound tests ---
+
+    use crate::io::storage_key::storage_key;
+
+    storage_key! {
+        pub struct BoundTestKey {
+            branch_id: Uuid,
+            entity_id: Uuid,
+            tx_id: Uuid,
+        }
+    }
+
+    #[test]
+    fn key_bound_full_range() {
+        let bound = KeyBound::<BoundTestKey>::new();
+        let lower = bound.encode_lower_bound();
+        let upper = bound.encode_upper_bound();
+        assert_eq!(lower.len(), BoundTestKey::SIZE);
+        assert_eq!(upper.len(), BoundTestKey::SIZE);
+        assert!(lower.iter().all(|&b| b == 0x00));
+        assert!(upper.iter().all(|&b| b == 0xFF));
+    }
+
+    #[test]
+    fn key_bound_with_prefix() {
+        let branch = uuid::Uuid::from_u128(42);
+        let bound = KeyBound::<BoundTestKey>::new()
+            .with_prefix(|k| k.branch_id = branch);
+        let lower = bound.encode_lower_bound();
+        let upper = bound.encode_upper_bound();
+        // Both share the same branch prefix
+        assert_eq!(&lower[..16], branch.as_bytes());
+        assert_eq!(&upper[..16], branch.as_bytes());
+        // Lower has zeros for remaining fields
+        assert!(lower[16..].iter().all(|&b| b == 0x00));
+        // Upper has 0xFF for remaining fields
+        assert!(upper[16..].iter().all(|&b| b == 0xFF));
+    }
+
+    #[test]
+    fn key_bound_with_lower_upper() {
+        let bound = KeyBound::<BoundTestKey>::new()
+            .with_lower(|k| k.entity_id = uuid::Uuid::from_u128(10))
+            .with_upper(|k| k.entity_id = uuid::Uuid::from_u128(20));
+        let lower = bound.encode_lower_bound();
+        let upper = bound.encode_upper_bound();
+        assert_eq!(&lower[16..32], uuid::Uuid::from_u128(10).as_bytes());
+        assert_eq!(&upper[16..32], uuid::Uuid::from_u128(20).as_bytes());
+    }
+
+    #[test]
+    fn key_bound_size_matches_key() {
+        assert_eq!(
+            <KeyBound<BoundTestKey> as KeyPrefix>::SIZE,
+            BoundTestKey::SIZE
+        );
     }
 }

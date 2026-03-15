@@ -206,7 +206,10 @@ mod tests {
     impl StorageKey for TestKey {
         const SIZE: usize = 0;
         fn encode(&self) -> Vec<u8> { vec![] }
+        fn encode_fixed(&self) -> Vec<u8> { vec![] }
         fn decode(_bytes: &[u8]) -> Result<Self, KeyError> { Ok(TestKey) }
+        fn nil() -> Self { TestKey }
+        fn max() -> Self { TestKey }
     }
 
     #[derive(Debug, Clone)]

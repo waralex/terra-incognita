@@ -22,21 +22,23 @@ pub trait KeyPrefix {
 
     /// Encode the lower bound of the scan range.
     ///
-    /// Default: pads `encode()` with `0x00` up to `Key::SIZE`.
+    /// Default: pads `encode()` with `0x00` up to `Key::SIZE`, then appends separator.
     fn encode_lower_bound(&self) -> Vec<u8> {
         let mut bytes = self.encode();
         let pad = Self::Key::SIZE.saturating_sub(bytes.len());
         bytes.extend(std::iter::repeat(0x00u8).take(pad));
+        bytes.push(crate::io::storage_key::SUFFIX_SEPARATOR);
         bytes
     }
 
     /// Encode the upper bound of the scan range.
     ///
-    /// Default: pads `encode()` with `0xFF` up to `Key::SIZE`.
+    /// Default: pads `encode()` with `0xFF` up to `Key::SIZE`, then appends upper sentinel.
     fn encode_upper_bound(&self) -> Vec<u8> {
         let mut bytes = self.encode();
         let pad = Self::Key::SIZE.saturating_sub(bytes.len());
         bytes.extend(std::iter::repeat(0xFFu8).take(pad));
+        bytes.push(crate::io::storage_key::SUFFIX_SEPARATOR_UPPER);
         bytes
     }
 }
@@ -160,11 +162,15 @@ impl<K: StorageKey> KeyPrefix for KeyBound<K> {
     }
 
     fn encode_lower_bound(&self) -> Vec<u8> {
-        self.lower.encode_fixed()
+        let mut bytes = self.lower.encode_fixed();
+        bytes.push(crate::io::storage_key::SUFFIX_SEPARATOR);
+        bytes
     }
 
     fn encode_upper_bound(&self) -> Vec<u8> {
-        self.upper.encode_fixed()
+        let mut bytes = self.upper.encode_fixed();
+        bytes.push(crate::io::storage_key::SUFFIX_SEPARATOR_UPPER);
+        bytes
     }
 }
 
@@ -227,7 +233,7 @@ mod tests {
             branch: "main".parse().unwrap(),
         };
         let lower = prefix.encode_lower_bound();
-        assert_eq!(lower.len(), 48);
+        assert_eq!(lower.len(), 49); // 48 + separator
         assert_eq!(&lower[..16], &prefix.encode()[..]);
         assert!(lower[16..].iter().all(|&b| b == 0x00));
     }
@@ -238,9 +244,10 @@ mod tests {
             branch: "main".parse().unwrap(),
         };
         let upper = prefix.encode_upper_bound();
-        assert_eq!(upper.len(), 48);
+        assert_eq!(upper.len(), 49); // 48 + separator_upper
         assert_eq!(&upper[..16], &prefix.encode()[..]);
-        assert!(upper[16..].iter().all(|&b| b == 0xFF));
+        assert!(upper[16..48].iter().all(|&b| b == 0xFF));
+        assert_eq!(upper[48], 0x01); // SUFFIX_SEPARATOR_UPPER
     }
 
     #[test]
@@ -251,9 +258,10 @@ mod tests {
         };
         // SIZE(32) < Key::SIZE(48), so there's still padding
         let upper = prefix.encode_upper_bound();
-        assert_eq!(upper.len(), 48);
+        assert_eq!(upper.len(), 49); // 48 + separator_upper
         assert_eq!(&upper[..32], &prefix.encode()[..]);
-        assert!(upper[32..].iter().all(|&b| b == 0xFF));
+        assert!(upper[32..48].iter().all(|&b| b == 0xFF));
+        assert_eq!(upper[48], 0x01); // SUFFIX_SEPARATOR_UPPER
     }
 
     // --- KeyBound tests ---
@@ -273,10 +281,11 @@ mod tests {
         let bound = KeyBound::<BoundTestKey>::new();
         let lower = bound.encode_lower_bound();
         let upper = bound.encode_upper_bound();
-        assert_eq!(lower.len(), BoundTestKey::SIZE);
-        assert_eq!(upper.len(), BoundTestKey::SIZE);
+        assert_eq!(lower.len(), BoundTestKey::SIZE + 1);
+        assert_eq!(upper.len(), BoundTestKey::SIZE + 1);
         assert!(lower.iter().all(|&b| b == 0x00));
-        assert!(upper.iter().all(|&b| b == 0xFF));
+        assert!(upper[..BoundTestKey::SIZE].iter().all(|&b| b == 0xFF));
+        assert_eq!(upper[BoundTestKey::SIZE], 0x01); // SUFFIX_SEPARATOR_UPPER
     }
 
     #[test]
@@ -289,10 +298,11 @@ mod tests {
         // Both share the same branch prefix
         assert_eq!(&lower[..16], branch.as_bytes());
         assert_eq!(&upper[..16], branch.as_bytes());
-        // Lower has zeros for remaining fields
+        // Lower has zeros for remaining fields + separator
         assert!(lower[16..].iter().all(|&b| b == 0x00));
-        // Upper has 0xFF for remaining fields
-        assert!(upper[16..].iter().all(|&b| b == 0xFF));
+        // Upper has 0xFF for remaining fixed fields, then SUFFIX_SEPARATOR_UPPER
+        assert!(upper[16..BoundTestKey::SIZE].iter().all(|&b| b == 0xFF));
+        assert_eq!(upper[BoundTestKey::SIZE], 0x01);
     }
 
     #[test]

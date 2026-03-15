@@ -26,10 +26,19 @@
 #[error("key decode error: {0}")]
 pub struct KeyError(pub String);
 
+/// Separator byte between fixed part and slug suffix.
+///
+/// Encoded keys: `fixed | 0x00 | suffix`. Upper bounds for reverse seek
+/// use `fixed | 0x01` to land past any real key with the same fixed prefix.
+pub const SUFFIX_SEPARATOR: u8 = 0x00;
+
+/// Upper-bound sentinel — always greater than `SUFFIX_SEPARATOR | any suffix`.
+pub const SUFFIX_SEPARATOR_UPPER: u8 = 0x01;
+
 /// Trait for storage keys with a fixed-size prefix and optional variable suffix.
 ///
-/// `SIZE` is the fixed part size. Encoded bytes may be longer when Slug
-/// fields are present (slug strings appended as length-prefixed suffix).
+/// `SIZE` is the fixed part size. Encoded keys are always
+/// `fixed | SUFFIX_SEPARATOR | slug_suffixes`.
 pub trait StorageKey: Sized {
     const SIZE: usize;
 
@@ -37,7 +46,7 @@ pub trait StorageKey: Sized {
     fn decode(bytes: &[u8]) -> Result<Self, KeyError>;
 
     /// Encode only the fixed-size part (hashes for Slug fields, raw bytes for others).
-    /// No slug suffixes.
+    /// No separator, no slug suffixes.
     fn encode_fixed(&self) -> Vec<u8>;
 
     /// All-minimum sentinel: every field at its lowest possible value.
@@ -81,20 +90,20 @@ macro_rules! storage_key {
             fn encode(&self) -> Vec<u8> {
                 let _suffix_size: usize = 0 $( + storage_key!(@suffix_size self.$field, $ty) )+;
                 let mut buf = self.encode_fixed();
-                buf.reserve(_suffix_size);
-                // slug suffixes
+                buf.reserve(1 + _suffix_size);
+                buf.push($crate::io::storage_key::SUFFIX_SEPARATOR);
                 $( storage_key!(@encode_suffix buf, self.$field, $ty); )+
                 buf
             }
 
             fn decode(bytes: &[u8]) -> Result<Self, $crate::io::storage_key::KeyError> {
-                if bytes.len() < Self::SIZE {
+                if bytes.len() < Self::SIZE + 1 {
                     return Err($crate::io::storage_key::KeyError(
-                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), Self::SIZE)
+                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), Self::SIZE + 1)
                     ));
                 }
                 let mut _off: usize = 0;
-                let mut _suf: usize = Self::SIZE;
+                let mut _suf: usize = Self::SIZE + 1; // skip separator
                 $( let $field = storage_key!(@decode bytes, _off, _suf, $ty)?; )+
                 Ok(Self { $( $field ),+ })
             }
@@ -229,7 +238,7 @@ mod tests {
             timestamp_us: 1_700_000_000_000_000,
         };
         let encoded = key.encode();
-        assert_eq!(encoded.len(), 40);
+        assert_eq!(encoded.len(), 41); // 40 fixed + 1 separator
 
         let decoded = TestKey::decode(&encoded).unwrap();
         assert_eq!(decoded, key);
@@ -256,7 +265,7 @@ mod tests {
             item_id: Uuid::from_u128(7),
         };
         let encoded = key.encode();
-        assert_eq!(encoded.len(), 33);
+        assert_eq!(encoded.len(), 34); // 33 fixed + 1 separator
         assert_eq!(encoded[16], 42);
 
         let decoded = TestKeyWithU8::decode(&encoded).unwrap();
@@ -306,8 +315,8 @@ mod tests {
             name: slug.clone(),
         };
         let encoded = key.encode();
-        // Fixed(32) + len(1) + "my-entity"(9) = 42
-        assert_eq!(encoded.len(), 42);
+        // Fixed(32) + separator(1) + len(1) + "my-entity"(9) = 43
+        assert_eq!(encoded.len(), 43);
 
         let decoded = SlugKey::decode(&encoded).unwrap();
         assert_eq!(decoded.branch_id, key.branch_id);
@@ -332,8 +341,8 @@ mod tests {
             prop_name: p.clone(),
         };
         let encoded = key.encode();
-        // Fixed: 16 + 16 + 16 = 48. Suffix: (1+6) + (1+3) = 11. Total = 59.
-        assert_eq!(encoded.len(), 59);
+        // Fixed: 16 + 16 + 16 = 48. Separator: 1. Suffix: (1+6) + (1+3) = 11. Total = 60.
+        assert_eq!(encoded.len(), 60);
 
         let decoded = MultiSlugKey::decode(&encoded).unwrap();
         assert_eq!(decoded.type_name, t);
@@ -387,8 +396,10 @@ mod tests {
         };
         let fixed = key.encode_fixed();
         let full = key.encode();
-        // No slug fields → fixed == full
-        assert_eq!(fixed, full);
+        // No slug fields → full has fixed + separator byte
+        assert_eq!(full.len(), fixed.len() + 1);
+        assert_eq!(&full[..fixed.len()], &fixed[..]);
+        assert_eq!(full[fixed.len()], 0x00); // SUFFIX_SEPARATOR
     }
 
     #[test]

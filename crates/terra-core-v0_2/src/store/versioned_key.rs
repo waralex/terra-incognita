@@ -80,6 +80,7 @@ macro_rules! versioned_key {
                 fn encode_upper_bound(&self) -> Vec<u8> {
                     let mut buf = self.encode();
                     buf.extend_from_slice(self.tx_id.as_bytes());
+                    buf.push($crate::io::storage_key::SUFFIX_SEPARATOR_UPPER);
                     buf
                 }
             }
@@ -117,8 +118,8 @@ macro_rules! versioned_key {
                 let _suffix_size: usize = 1 + self.branch.len()
                     $( + versioned_key!(@suffix_size self.$field, $ty) )*;
                 let mut buf = self.encode_fixed();
-                buf.reserve(_suffix_size);
-                // slug suffixes
+                buf.reserve(1 + _suffix_size);
+                buf.push($crate::io::storage_key::SUFFIX_SEPARATOR);
                 // branch slug
                 buf.push(self.branch.len() as u8);
                 buf.extend_from_slice(self.branch.as_str().as_bytes());
@@ -144,13 +145,13 @@ macro_rules! versioned_key {
             }
 
             fn decode(bytes: &[u8]) -> Result<Self, $crate::io::storage_key::KeyError> {
-                if bytes.len() < Self::SIZE {
+                if bytes.len() < Self::SIZE + 1 {
                     return Err($crate::io::storage_key::KeyError(
-                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), Self::SIZE)
+                        format!("{} key too short: {} < {}", stringify!($name), bytes.len(), Self::SIZE + 1)
                     ));
                 }
                 let mut _off: usize = 0;
-                let mut _suf: usize = Self::SIZE;
+                let mut _suf: usize = Self::SIZE + 1; // skip separator
 
                 // branch: skip hash, read from suffix
                 _off += 16;
@@ -322,16 +323,18 @@ mod tests {
             "entity".parse().unwrap(),
         );
         let upper = prefix.encode_upper_bound();
-        // encode() = 32 bytes, upper_bound = 32 + 16 = 48
-        assert_eq!(upper.len(), SlugMiddleKey::SIZE);
-        // Default tx_id = MAX → last 16 bytes are 0xFF
-        assert!(upper[32..].iter().all(|&b| b == 0xFF));
+        // encode() = 32 bytes, upper_bound = 32 + 16 + 1 separator = 49
+        assert_eq!(upper.len(), SlugMiddleKey::SIZE + 1);
+        // Default tx_id = MAX → bytes 32..48 are 0xFF, byte 48 is SUFFIX_SEPARATOR_UPPER
+        assert!(upper[32..48].iter().all(|&b| b == 0xFF));
+        assert_eq!(upper[48], 0x01); // SUFFIX_SEPARATOR_UPPER
 
         // With specific tx_id
         let mut bounded = prefix.clone();
         bounded.tx_id = Uuid::from_u128(42);
         let upper = bounded.encode_upper_bound();
-        assert_eq!(&upper[32..], Uuid::from_u128(42).as_bytes());
+        assert_eq!(&upper[32..48], Uuid::from_u128(42).as_bytes());
+        assert_eq!(upper[48], 0x01); // SUFFIX_SEPARATOR_UPPER
     }
 
     #[test]

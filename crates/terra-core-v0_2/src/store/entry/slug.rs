@@ -36,6 +36,17 @@ pub fn hash_slug(slug: &str) -> Uuid {
     Uuid::new_v5(&SLUG_HASH_NAMESPACE, slug.as_bytes())
 }
 
+/// Slug kind for entities.
+pub const KIND_ENTITY: Uuid = Uuid::from_u128(0);
+
+/// Slug kind for branches.
+pub const KIND_BRANCH: Uuid = Uuid::from_u128(1);
+
+/// Slug kind for managed types — offset by type name hash.
+pub fn kind_managed(type_name: &str) -> Uuid {
+    Uuid::new_v5(&SLUG_HASH_NAMESPACE, format!("managed:{type_name}").as_bytes())
+}
+
 /// Slug value: uuid + original slug for collision check.
 #[derive(Debug, Clone)]
 pub struct SlugValue {

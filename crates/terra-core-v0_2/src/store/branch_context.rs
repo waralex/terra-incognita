@@ -10,7 +10,9 @@ use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::store::entry::branch::{BranchEntry, BranchKey};
+use crate::store::entry::entity::EntityEntry;
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
+use crate::store::prefix::BranchEntityPrefix;
 use crate::store::storage::Storage;
 
 /// Main branch slug — always exists implicitly.
@@ -67,9 +69,37 @@ impl BranchContext {
         &self.branch
     }
 
+    /// Access the underlying storage (crate-internal).
+    pub(crate) fn storage(&self) -> &Storage {
+        &self.storage
+    }
+
     /// Precomputed ancestry chain.
     pub fn ancestry(&self) -> &[AncestryEntry] {
         &self.ancestry
+    }
+
+    /// Check if an entity exists on this branch.
+    pub fn entity_exists(&self, slug: &Slug) -> Result<bool, DbError> {
+        let prefix = BranchEntityPrefix {
+            branch: self.branch.clone(),
+            entity: slug.clone(),
+        };
+        let mut iter = self.storage.db.scan::<EntityEntry>(&prefix)?;
+        Ok(iter.next().is_some())
+    }
+
+    /// Get the latest version of an entity on this branch.
+    pub fn get_latest_entity(&self, slug: &Slug) -> Result<Option<EntityEntry>, DbError> {
+        let prefix = BranchEntityPrefix {
+            branch: self.branch.clone(),
+            entity: slug.clone(),
+        };
+        let mut iter = self.storage.db.scan_rev::<EntityEntry>(&prefix)?;
+        match iter.next() {
+            Some(result) => Ok(Some(result?)),
+            None => Ok(None),
+        }
     }
 
     /// Commit a transaction on this branch.

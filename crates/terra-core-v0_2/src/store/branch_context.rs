@@ -13,7 +13,7 @@ use crate::io::{DbError, DbItem};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
-use crate::store::versioned_key::{VersionedKey, VersionedPrefix};
+use crate::store::versioned_key::VersionedKey;
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -101,22 +101,19 @@ impl BranchContext {
     /// Get the latest version, walking the ancestry chain.
     ///
     /// Checks current branch (unbounded), then ancestors with tx bounds.
-    pub fn get_latest<P, T>(&self, prefix: &P) -> Result<Option<T>, DbError>
+    pub fn get_latest<T>(&self, bound: &KeyBound<T::Key>) -> Result<Option<T>, DbError>
     where
-        P: VersionedPrefix<Key = T::Key>,
         T: DbItem,
-        T::Key: VersionedKey,
+        T::Key: VersionedKey + Clone,
     {
-        // Current branch — unbounded (tx_id = MAX by convention)
-        if let Some(found) = self.storage.get_latest::<P, T>(prefix)? {
+        if let Some(found) = self.storage.get_latest::<T>(bound)? {
             return Ok(Some(found));
         }
-        // Ancestors — bounded by branch_point_tx
         for entry in &self.ancestry {
-            let bounded = prefix
-                .with_branch(entry.branch.clone())
-                .with_transaction(entry.branch_point_tx);
-            if let Some(found) = self.storage.get_latest::<P, T>(&bounded)? {
+            let bounded = bound.clone()
+                .with_prefix(|k| k.set_branch(entry.branch.clone()))
+                .with_upper(|k| k.set_tx_id(entry.branch_point_tx));
+            if let Some(found) = self.storage.get_latest::<T>(&bounded)? {
                 return Ok(Some(found));
             }
         }

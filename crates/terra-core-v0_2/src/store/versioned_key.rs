@@ -4,42 +4,17 @@
 //! branch first (for ancestry walk), tx last (for reverse scan to latest).
 //! The middle is domain-specific addressing (Slug or Uuid fields).
 //!
-//! The macro generates a `{Name}Prefix` struct with the same layout as the key.
-//! `tx_id` defaults to `Uuid::max()` (unbounded scan); use `with_transaction()`
-//! to set an upper bound.
+//! The macro generates a `{Name}Prefix` struct implementing `KeyPrefix`.
+//! Use `KeyBound` for ancestry walks and custom scan ranges.
 
-use crate::io::key_prefix::KeyPrefix;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
-
-/// Prefix of a versioned key.
-///
-/// Always encodes `branch + domain fields + tx_id`. When `tx_id` is `Uuid::max()`
-/// (the default), a reverse scan starts from the very end of the prefix range —
-/// equivalent to "give me the latest". When `tx_id` is a specific value, the
-/// reverse scan starts from that exact point.
-///
-/// Composable:
-/// - `with_branch(slug)` — same prefix, different branch (ancestry walk)
-/// - `with_transaction(tx_id)` — set tx_id bound (bounded seek)
-///
-/// `Key` associated type comes from `KeyPrefix`.
-pub trait VersionedPrefix: KeyPrefix {
-    /// Replace tx_id, producing a bounded prefix for seeks.
-    fn with_transaction(&self, tx_id: uuid::Uuid) -> Self;
-
-    /// Clone this prefix with a different branch.
-    fn with_branch(&self, branch: Slug) -> Self;
-}
 
 /// Key of a versioned, branch-scoped record.
 ///
 /// Implemented by keys whose entries are created inside transactions
 /// and follow the `branch(Slug) | domain | tx_id(Uuid)` layout.
 pub trait VersionedKey: StorageKey {
-    /// The prefix type — same fields, tx_id defaults to MAX.
-    type Prefix: VersionedPrefix;
-
     fn branch(&self) -> &Slug;
     fn tx_id(&self) -> uuid::Uuid;
     fn set_branch(&mut self, branch: Slug);
@@ -50,7 +25,7 @@ pub trait VersionedKey: StorageKey {
 ///
 /// Generates:
 /// - `$name` struct with `StorageKey` and `VersionedKey` impls
-/// - `${name}Prefix` struct with `KeyPrefix` and `VersionedPrefix` impls
+/// - `${name}Prefix` struct with `KeyPrefix` impl
 ///
 /// Only the middle domain fields need to be specified.
 /// `branch: Slug` and `tx_id: Uuid` are added automatically.
@@ -109,23 +84,6 @@ macro_rules! versioned_key {
                 }
             }
 
-            impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {
-                fn with_transaction(&self, tx_id: uuid::Uuid) -> Self {
-                    Self {
-                        branch: self.branch.clone(),
-                        $( $field: self.$field.clone(), )*
-                        tx_id,
-                    }
-                }
-
-                fn with_branch(&self, branch: $crate::io::slug::Slug) -> Self {
-                    Self {
-                        branch,
-                        $( $field: self.$field.clone(), )*
-                        tx_id: self.tx_id,
-                    }
-                }
-            }
         }
 
         // --- Key struct: branch + middle fields + tx_id ---
@@ -215,14 +173,11 @@ macro_rules! versioned_key {
             }
         }
 
-        ::paste::paste! {
-            impl $crate::store::versioned_key::VersionedKey for $name {
-                type Prefix = [< $name Prefix >];
-                fn branch(&self) -> &$crate::io::slug::Slug { &self.branch }
-                fn tx_id(&self) -> uuid::Uuid { self.tx_id }
-                fn set_branch(&mut self, branch: $crate::io::slug::Slug) { self.branch = branch; }
-                fn set_tx_id(&mut self, tx_id: uuid::Uuid) { self.tx_id = tx_id; }
-            }
+        impl $crate::store::versioned_key::VersionedKey for $name {
+            fn branch(&self) -> &$crate::io::slug::Slug { &self.branch }
+            fn tx_id(&self) -> uuid::Uuid { self.tx_id }
+            fn set_branch(&mut self, branch: $crate::io::slug::Slug) { self.branch = branch; }
+            fn set_tx_id(&mut self, tx_id: uuid::Uuid) { self.tx_id = tx_id; }
         }
     };
 
@@ -373,7 +328,8 @@ mod tests {
         assert!(upper[32..].iter().all(|&b| b == 0xFF));
 
         // With specific tx_id
-        let bounded = prefix.with_transaction(Uuid::from_u128(42));
+        let mut bounded = prefix.clone();
+        bounded.tx_id = Uuid::from_u128(42);
         let upper = bounded.encode_upper_bound();
         assert_eq!(&upper[32..], Uuid::from_u128(42).as_bytes());
     }
@@ -478,31 +434,28 @@ mod tests {
     }
 
     #[test]
-    fn with_transaction_replaces_tx_id() {
-        let prefix = SlugMiddleKeyPrefix::new(
+    fn prefix_tx_id_mutation() {
+        let mut prefix = SlugMiddleKeyPrefix::new(
             "main".parse().unwrap(),
             "my-entity".parse().unwrap(),
         );
         let tx_id = Uuid::from_u128(42);
-        let bounded = prefix.with_transaction(tx_id);
+        prefix.tx_id = tx_id;
 
-        assert_eq!(bounded.tx_id, tx_id);
-        assert_eq!(bounded.branch, prefix.branch);
-        assert_eq!(bounded.entity_id, prefix.entity_id);
+        assert_eq!(prefix.tx_id, tx_id);
     }
 
     #[test]
-    fn with_branch_changes_branch() {
-        let prefix = SlugMiddleKeyPrefix::new(
+    fn prefix_branch_mutation() {
+        let mut prefix = SlugMiddleKeyPrefix::new(
             "main".parse().unwrap(),
             "entity-1".parse().unwrap(),
         );
-        let rebound = prefix.with_branch("child".parse().unwrap());
+        let original_encode = prefix.encode();
+        prefix.branch = "child".parse().unwrap();
 
-        assert_eq!(rebound.branch.as_str(), "child");
-        assert_eq!(rebound.entity_id, prefix.entity_id);
-        assert_eq!(rebound.tx_id, prefix.tx_id);
-        assert_ne!(rebound.encode(), prefix.encode());
+        assert_eq!(prefix.branch.as_str(), "child");
+        assert_ne!(prefix.encode(), original_encode);
     }
 
     #[test]

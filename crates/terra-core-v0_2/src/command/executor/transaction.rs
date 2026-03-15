@@ -87,7 +87,6 @@ mod tests {
     use std::sync::Arc;
     use super::*;
     use crate::config::ProjectConfig;
-    use crate::store::entry::entity::EntityKeyPrefix;
     use crate::store::storage::Storage;
     use serde_json::{Map, Value};
 
@@ -129,9 +128,7 @@ mod tests {
         assert_eq!(result.context.branch.as_str(), "main");
 
         // Verify entity record was written
-        let entry = branch.get_latest::<_, EntityEntry>(
-            &EntityKeyPrefix::new(branch.id().clone(), "alice".parse().unwrap()),
-        ).unwrap().unwrap();
+        let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice")).unwrap().unwrap();
         assert_eq!(entry.key.entity.as_str(), "alice");
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
     }
@@ -197,9 +194,7 @@ mod tests {
         let result = cmd.execute(&branch, input).unwrap();
 
         for name in ["alice", "bob"] {
-            let entry = branch.get_latest::<_, EntityEntry>(
-                &EntityKeyPrefix::new(branch.id().clone(), name.parse().unwrap()),
-            ).unwrap().unwrap();
+            let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, name)).unwrap().unwrap();
             assert_eq!(entry.key.entity.as_str(), name);
             assert_eq!(entry.key.tx_id, result.context.tx_id);
         }

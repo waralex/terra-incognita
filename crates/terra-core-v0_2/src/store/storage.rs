@@ -6,7 +6,6 @@ use std::sync::Arc;
 use crate::config::ProjectConfig;
 use crate::io::{DbError, DbItem, TerraDb};
 use crate::io::slug::Slug;
-use crate::store::versioned_key::VersionedPrefix;
 use crate::store::branch_context::BranchContext;
 
 use crate::store::entry::assertion::AssertionEntry;
@@ -59,13 +58,10 @@ impl Storage {
         Ok(iter.next().is_some())
     }
 
-    /// Get the latest version of a versioned record for the given prefix.
-    ///
-    /// Default prefix (`tx_id = MAX`) gives absolute latest.
-    /// Use `with_transaction(tx_id)` for latest at or before a specific transaction.
-    pub fn get_latest<P: VersionedPrefix<Key = T::Key>, T: DbItem>(
+    /// Get the latest version of a record within the given scan range.
+    pub fn get_latest<T: DbItem>(
         &self,
-        prefix: &P,
+        prefix: &impl crate::io::KeyPrefix<Key = T::Key>,
     ) -> Result<Option<T>, DbError> {
         let mut iter = self.db.scan_rev::<T>(prefix)?;
         match iter.next() {

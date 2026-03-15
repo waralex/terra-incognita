@@ -1,5 +1,6 @@
 pub mod branch;
 pub mod entity;
+pub mod factory;
 pub mod managed;
 pub mod property;
 pub mod transaction;

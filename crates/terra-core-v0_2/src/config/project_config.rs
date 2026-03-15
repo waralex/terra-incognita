@@ -85,16 +85,16 @@ impl ProjectConfig {
 
 #[cfg(test)]
 mod tests {
+    use indoc::indoc;
     use super::*;
     use std::fs;
 
     #[test]
     fn parse_project_config() {
-        let yaml = r#"
-data_dir: ./data
-schema_path: ./schema.yaml
-"#;
-        let config = ProjectConfig::from_yaml(yaml).unwrap();
+        let config = ProjectConfig::from_yaml(indoc! {"
+            data_dir: ./data
+            schema_path: ./schema.yaml
+        "}).unwrap();
         assert_eq!(config.data_dir, PathBuf::from("./data"));
         assert_eq!(config.schema_path, PathBuf::from("./schema.yaml"));
         assert_eq!(config.max_branch_depth, 8);
@@ -124,15 +124,14 @@ schema_path: ./schema.yaml
     fn load_project_from_files() {
         let dir = tempfile::tempdir().unwrap();
 
-        let schema_yaml = r#"
-transaction_meta:
-  reasoning:
-    type: text
-    required: true
-managed_types: {}
-"#;
         let schema_path = dir.path().join("schema.yaml");
-        fs::write(&schema_path, schema_yaml).unwrap();
+        fs::write(&schema_path, indoc! {"
+            transaction_meta:
+              reasoning:
+                type: text
+                required: true
+            managed_types: {}
+        "}).unwrap();
 
         let config_yaml = format!(
             "data_dir: ./data\nschema_path: {}",

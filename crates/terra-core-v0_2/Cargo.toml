@@ -16,4 +16,5 @@ indexmap = { version = "2.13.0", features = ["serde"] }
 typed-builder = "0.23.2"
 
 [dev-dependencies]
+indoc = "2"
 tempfile = "3"

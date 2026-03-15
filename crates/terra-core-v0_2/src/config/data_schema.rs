@@ -169,33 +169,33 @@ impl DataSchema {
 
 #[cfg(test)]
 mod tests {
+    use indoc::indoc;
     use super::*;
 
     #[test]
     fn parse_full_config() {
-        let yaml = r#"
-transaction_meta:
-  reasoning:
-    type: text
-    required: true
-  question:
-    type: text
-  answer:
-    type: text
+        let config = DataSchema::from_yaml(indoc! {"
+            transaction_meta:
+              reasoning:
+                type: text
+                required: true
+              question:
+                type: text
+              answer:
+                type: text
 
-managed_types:
-  task:
-    fields:
-      goal: { type: json, required: true }
-      reasoning: { type: text, required: true }
-      context: { type: json }
-      notes: { type: json }
-      resolution: { type: json }
-    lifecycle:
-      initial: open
-      visible: [open]
-"#;
-        let config = DataSchema::from_yaml(yaml).unwrap();
+            managed_types:
+              task:
+                fields:
+                  goal: { type: json, required: true }
+                  reasoning: { type: text, required: true }
+                  context: { type: json }
+                  notes: { type: json }
+                  resolution: { type: json }
+                lifecycle:
+                  initial: open
+                  visible: [open]
+        "}).unwrap();
 
         assert_eq!(config.transaction_meta.len(), 3);
         assert!(config.transaction_meta["reasoning"].required);
@@ -214,22 +214,20 @@ managed_types:
 
     #[test]
     fn empty_config_is_valid() {
-        let yaml = "{}";
-        let config = DataSchema::from_yaml(yaml).unwrap();
+        let config = DataSchema::from_yaml("{}").unwrap();
         assert!(config.transaction_meta.is_empty());
         assert!(config.managed_types.is_empty());
     }
 
     #[test]
     fn managed_type_without_lifecycle() {
-        let yaml = r#"
-managed_types:
-  note:
-    fields:
-      content: { type: text, required: true }
-      tags: { type: json }
-"#;
-        let config = DataSchema::from_yaml(yaml).unwrap();
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              note:
+                fields:
+                  content: { type: text, required: true }
+                  tags: { type: json }
+        "}).unwrap();
         let note = &config.managed_types["note"];
         assert!(note.lifecycle.is_none());
         assert_eq!(note.fields.len(), 2);
@@ -237,16 +235,15 @@ managed_types:
 
     #[test]
     fn multi_visible_lifecycle() {
-        let yaml = r#"
-managed_types:
-  review:
-    fields:
-      summary: { type: text, required: true }
-    lifecycle:
-      initial: draft
-      visible: [draft, in_review]
-"#;
-        let config = DataSchema::from_yaml(yaml).unwrap();
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              review:
+                fields:
+                  summary: { type: text, required: true }
+                lifecycle:
+                  initial: draft
+                  visible: [draft, in_review]
+        "}).unwrap();
         let lc = config.managed_types["review"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.initial, "draft");
         assert_eq!(lc.visible, vec!["draft", "in_review"]);
@@ -254,15 +251,14 @@ managed_types:
 
     #[test]
     fn lifecycle_no_visible_filter() {
-        let yaml = r#"
-managed_types:
-  process:
-    fields:
-      data: { type: json }
-    lifecycle:
-      initial: new
-"#;
-        let config = DataSchema::from_yaml(yaml).unwrap();
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              process:
+                fields:
+                  data: { type: json }
+                lifecycle:
+                  initial: new
+        "}).unwrap();
         let lc = config.managed_types["process"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.initial, "new");
         assert!(lc.visible.is_empty());
@@ -270,52 +266,48 @@ managed_types:
 
     #[test]
     fn empty_initial_state() {
-        let yaml = r#"
-managed_types:
-  bad:
-    fields:
-      x: { type: text }
-    lifecycle:
-      initial: ""
-"#;
-        let err = DataSchema::from_yaml(yaml).unwrap_err();
+        let err = DataSchema::from_yaml(indoc! {r#"
+            managed_types:
+              bad:
+                fields:
+                  x: { type: text }
+                lifecycle:
+                  initial: ""
+        "#}).unwrap_err();
         assert!(err.to_string().contains("initial state is empty"));
     }
 
     #[test]
     fn reserved_field_state_with_lifecycle() {
-        let yaml = r#"
-managed_types:
-  bad:
-    fields:
-      state: { type: text }
-    lifecycle:
-      initial: open
-"#;
-        let err = DataSchema::from_yaml(yaml).unwrap_err();
+        let err = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              bad:
+                fields:
+                  state: { type: text }
+                lifecycle:
+                  initial: open
+        "}).unwrap_err();
         assert!(err.to_string().contains("reserved lifecycle field"));
     }
 
     #[test]
     fn field_state_ok_without_lifecycle() {
-        let yaml = r#"
-managed_types:
-  ok:
-    fields:
-      state: { type: text }
-"#;
-        let config = DataSchema::from_yaml(yaml).unwrap();
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              ok:
+                fields:
+                  state: { type: text }
+        "}).unwrap();
         assert!(config.managed_types["ok"].fields.contains_key("state"));
     }
 
     #[test]
     fn default_field_type_is_json() {
-        let yaml = r#"
-transaction_meta:
-  data:
-    required: true
-"#;
-        let config = DataSchema::from_yaml(yaml).unwrap();
+        let config = DataSchema::from_yaml(indoc! {"
+            transaction_meta:
+              data:
+                required: true
+        "}).unwrap();
         assert_eq!(config.transaction_meta["data"].field_type, FieldType::Json);
     }
 }

@@ -1,4 +1,4 @@
-//! ExecuteTransaction — commits a validated transaction to a branch.
+//! ExecuteTransaction — validates and commits a transaction to a branch.
 
 use uuid::Uuid;
 
@@ -7,6 +7,7 @@ use crate::command::input::transaction::TransactionInput;
 use crate::domain::entity::Entity;
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
+use crate::domain::validator::DomainValidator;
 use crate::io::DbError;
 use crate::io::WriteBatch;
 use crate::io::storage_key::StorageKey;
@@ -16,8 +17,18 @@ use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
 use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, EntityChangeValue};
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
-/// Executes a validated domain transaction against a branch.
-pub struct ExecuteTransaction;
+
+/// Validates and commits a transaction to a branch.
+pub struct ExecuteTransaction {
+    validator: DomainValidator,
+}
+
+impl ExecuteTransaction {
+    /// Create an executor with the given validator.
+    pub fn new(validator: DomainValidator) -> Self {
+        Self { validator }
+    }
+}
 
 impl ExecuteTransaction {
     fn write_assertions(
@@ -203,6 +214,21 @@ impl Command for ExecuteTransaction {
     type Output = Transaction<TxMeta>;
 
     fn execute(&self, branch: &BranchContext, input: Self::Input) -> Result<Self::Output, DbError> {
+        // Validate everything before touching storage.
+        self.validator.check_transaction(&Transaction::new(input.meta.clone()))?;
+        for entity in &input.create_entities {
+            self.validator.check_entity_create(entity)?;
+        }
+        for entity in &input.update_entities {
+            self.validator.check_entity_update(entity)?;
+        }
+        for managed in &input.create_managed {
+            self.validator.check_managed_create(managed)?;
+        }
+        for managed in &input.update_managed {
+            self.validator.check_managed_update(managed)?;
+        }
+
         let tx_id = Uuid::now_v7();
         let mut batch = branch.storage().db.batch();
 
@@ -252,11 +278,39 @@ mod tests {
     use crate::store::storage::Storage;
     use serde_json::{Map, Value};
 
+    use indoc::indoc;
+    use crate::config::DataSchema;
+
     fn test_config() -> Arc<ProjectConfig> {
         Arc::new(ProjectConfig::builder()
             .data_dir("./data".into())
             .schema_path("./schema.yaml".into())
             .build())
+    }
+
+    fn test_schema() -> Arc<DataSchema> {
+        Arc::new(DataSchema::from_yaml(indoc! {"
+            transaction_meta:
+              reasoning:
+                type: text
+                required: true
+            entity_change_meta:
+              reasoning:
+                type: text
+                required: true
+            managed_types:
+              task:
+                fields:
+                  goal: { type: json, required: true }
+                  notes: { type: json }
+                lifecycle:
+                  initial: open
+                  visible: [open]
+        "}).unwrap())
+    }
+
+    fn cmd() -> ExecuteTransaction {
+        ExecuteTransaction::new(DomainValidator::new(test_schema()))
     }
 
     fn meta(reasoning: &str) -> Map<String, Value> {
@@ -301,7 +355,7 @@ mod tests {
                 Map::new(),
             ));
 
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
         let result = cmd.execute(&branch, input).unwrap();
 
         assert_eq!(result.meta["reasoning"], "introduce alice");
@@ -318,7 +372,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         let input1 = TransactionInput::new(meta("first"))
             .create_entity(Entity::new(
@@ -346,7 +400,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
         let input = TransactionInput::new(meta("no-op"));
         let result = cmd.execute(&branch, input).unwrap();
 
@@ -373,7 +427,7 @@ mod tests {
                 Map::new(),
             ));
 
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
         let result = cmd.execute(&branch, input).unwrap();
 
         for name in ["alice", "bob"] {
@@ -392,7 +446,7 @@ mod tests {
         let prefix = entity_bound(&branch, "alice");
         assert!(!branch.exists::<EntityEntry>(&prefix).unwrap());
 
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
         let input = TransactionInput::new(meta("create"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
@@ -411,7 +465,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
         let result = cmd.execute(&branch, TransactionInput::new(meta("create with props"))
             .create_entity(Entity::new(
                 "alice".parse().unwrap(),
@@ -461,7 +515,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         // Create entity first
         cmd.execute(&branch, TransactionInput::new(meta("create"))
@@ -502,7 +556,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         let err = cmd.execute(&branch, TransactionInput::new(meta("update missing"))
             .update_entity(Entity::new(
@@ -520,7 +574,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         cmd.execute(&branch, TransactionInput::new(meta("create"))
             .create_entity(Entity::new(
@@ -551,7 +605,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
@@ -577,7 +631,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("first"));
@@ -609,7 +663,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
@@ -647,7 +701,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         let err = cmd.execute(&branch, TransactionInput::new(meta("update missing"))
             .update_managed(Managed::new(
@@ -667,7 +721,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         // Pre-create entity and managed item
         cmd.execute(&branch, TransactionInput::new(meta("setup"))
@@ -748,7 +802,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
-        let cmd = ExecuteTransaction;
+        let cmd = cmd();
 
         cmd.execute(&branch, TransactionInput::new(meta("create"))
             .create_entity(Entity::new(

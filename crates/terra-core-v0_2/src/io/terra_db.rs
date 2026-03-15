@@ -40,6 +40,9 @@ pub enum AccessMode {
 pub enum DbError {
     #[error("storage error: {0}")]
     Storage(String),
+
+    #[error("validation error: {0}")]
+    Validation(#[from] crate::domain::validator::ValidationError),
 }
 
 impl From<rocksdb::Error> for DbError {

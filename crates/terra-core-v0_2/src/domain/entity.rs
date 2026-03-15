@@ -2,7 +2,7 @@
 //!
 //! `Entity<()>` for write input, `Entity<TxMeta>` for read output.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::io::Slug;
 
@@ -25,16 +25,24 @@ pub struct Entity<M = ()> {
     pub slug: Slug,
     pub description: Option<Value>,
     pub properties: Vec<PropertyValue<M>>,
+    /// Entity change metadata — validated against `DataSchema.entity_change_meta`.
+    pub meta: Map<String, Value>,
     pub context: M,
 }
 
 impl Entity<()> {
     /// Create a new entity input (before persisting).
-    pub fn new(slug: Slug, description: Option<Value>, properties: Vec<PropertyValue>) -> Self {
+    pub fn new(
+        slug: Slug,
+        description: Option<Value>,
+        properties: Vec<PropertyValue>,
+        meta: Map<String, Value>,
+    ) -> Self {
         Self {
             slug,
             description,
             properties,
+            meta,
             context: (),
         }
     }

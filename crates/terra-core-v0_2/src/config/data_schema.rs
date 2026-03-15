@@ -41,6 +41,10 @@ pub struct DataSchema {
     #[serde(default)]
     pub transaction_meta: IndexMap<String, FieldDef>,
 
+    /// Fields that accompany each entity change (batch of assertions).
+    #[serde(default)]
+    pub entity_change_meta: IndexMap<String, FieldDef>,
+
     /// Managed types — versioned record types with optional lifecycle.
     #[serde(default)]
     pub managed_types: IndexMap<String, ManagedTypeDef>,
@@ -213,9 +217,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_entity_change_meta() {
+        let config = DataSchema::from_yaml(indoc! {"
+            entity_change_meta:
+              reasoning:
+                type: text
+                required: true
+              confidence:
+                type: json
+        "}).unwrap();
+
+        assert_eq!(config.entity_change_meta.len(), 2);
+        assert!(config.entity_change_meta["reasoning"].required);
+        assert_eq!(config.entity_change_meta["reasoning"].field_type, FieldType::Text);
+        assert!(!config.entity_change_meta["confidence"].required);
+    }
+
+    #[test]
     fn empty_config_is_valid() {
         let config = DataSchema::from_yaml("{}").unwrap();
         assert!(config.transaction_meta.is_empty());
+        assert!(config.entity_change_meta.is_empty());
         assert!(config.managed_types.is_empty());
     }
 

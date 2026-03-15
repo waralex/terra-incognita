@@ -91,11 +91,13 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
+                Map::new(),
             ))
             .update_entity(Entity::new(
                 "bob".parse().unwrap(),
                 None,
                 vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+                Map::new(),
             ));
 
         assert_eq!(input.create_entities.len(), 1);
@@ -139,11 +141,13 @@ mod tests {
                 "server".parse().unwrap(),
                 Some(serde_json::json!("Production server")),
                 vec![],
+                Map::new(),
             ))
             .update_entity(Entity::new(
                 "server".parse().unwrap(),
                 None,
                 vec![PropertyValue { property: "status".parse().unwrap(), value: serde_json::json!("down"), context: () }],
+                Map::new(),
             ))
             .create_managed(Managed::new(
                 "task".parse().unwrap(),

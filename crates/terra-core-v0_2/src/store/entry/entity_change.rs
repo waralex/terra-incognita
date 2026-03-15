@@ -22,12 +22,12 @@ storage_key! {
     }
 }
 
-/// Entity change value — reasoning for a batch of property assertions.
+/// Entity change value — metadata for a batch of property assertions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityChangeValue {
     pub entity_id: Uuid,
     pub tx_id: Uuid,
-    pub reasoning: serde_json::Value,
+    pub meta: serde_json::Map<String, serde_json::Value>,
 }
 
 impl StorageValue for EntityChangeValue {
@@ -81,6 +81,9 @@ mod tests {
             .open()
             .unwrap();
 
+        let mut meta = serde_json::Map::new();
+        meta.insert("reasoning".into(), serde_json::json!("census data"));
+
         let entry = EntityChangeEntry {
             key: EntityChangeKey {
                 change_id: Uuid::now_v7(),
@@ -88,7 +91,7 @@ mod tests {
             value: EntityChangeValue {
                 entity_id: Uuid::now_v7(),
                 tx_id: Uuid::now_v7(),
-                reasoning: serde_json::json!("census data"),
+                meta,
             },
         };
 
@@ -98,6 +101,6 @@ mod tests {
 
         let found = db.get::<EntityChangeEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.change_id, entry.key.change_id);
-        assert_eq!(found.value.reasoning, serde_json::json!("census data"));
+        assert_eq!(found.value.meta["reasoning"], serde_json::json!("census data"));
     }
 }

@@ -66,12 +66,23 @@ impl DomainValidator {
                 slug: entity.slug.to_string(),
             });
         }
+        if !entity.properties.is_empty() {
+            self.check_entity_change_meta(&entity.meta)?;
+        }
         Ok(())
     }
 
     /// Validate an entity for update (all fields optional).
-    pub fn check_entity_update(&self, _entity: &Entity) -> Result<(), ValidationError> {
+    pub fn check_entity_update(&self, entity: &Entity) -> Result<(), ValidationError> {
+        if !entity.properties.is_empty() {
+            self.check_entity_change_meta(&entity.meta)?;
+        }
         Ok(())
+    }
+
+    /// Validate entity change metadata against `DataSchema.entity_change_meta`.
+    pub fn check_entity_change_meta(&self, meta: &Map<String, Value>) -> Result<(), ValidationError> {
+        validate_fields(meta, &self.schema.entity_change_meta, true)
     }
 
     /// Validate a managed item for creation (required fields checked).
@@ -247,14 +258,14 @@ mod tests {
     #[test]
     fn entity_create_with_description() {
         let v = DomainValidator::new(schema_with_tx_meta());
-        let e = Entity::new("person".parse().unwrap(), Some(serde_json::json!("A person")), vec![]);
+        let e = Entity::new("person".parse().unwrap(), Some(serde_json::json!("A person")), vec![], Map::new());
         v.check_entity_create(&e).unwrap();
     }
 
     #[test]
     fn entity_create_missing_description() {
         let v = DomainValidator::new(schema_with_tx_meta());
-        let e = Entity::new("person".parse().unwrap(), None, vec![]);
+        let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
 
         let err = v.check_entity_create(&e).unwrap_err();
         assert!(matches!(err, ValidationError::MissingDescription { slug } if slug == "person"));
@@ -263,7 +274,7 @@ mod tests {
     #[test]
     fn entity_update_without_description() {
         let v = DomainValidator::new(schema_with_tx_meta());
-        let e = Entity::new("person".parse().unwrap(), None, vec![]);
+        let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
         v.check_entity_update(&e).unwrap();
     }
 
@@ -361,5 +372,84 @@ mod tests {
         let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("open".into()), fields);
         let err = v.check_managed_update(&m).unwrap_err();
         assert!(matches!(err, ValidationError::UnexpectedField { field } if field == "bogus"));
+    }
+
+    // --- Entity change meta ---
+
+    fn schema_with_entity_change_meta() -> Arc<DataSchema> {
+        Arc::new(DataSchema::from_yaml(indoc! {"
+            entity_change_meta:
+              reasoning:
+                type: text
+                required: true
+              confidence:
+                type: json
+        "}).unwrap())
+    }
+
+    #[test]
+    fn entity_create_with_properties_validates_change_meta() {
+        let v = DomainValidator::new(schema_with_entity_change_meta());
+        use crate::domain::entity::PropertyValue;
+
+        let mut meta = Map::new();
+        meta.insert("reasoning".into(), Value::String("observed".into()));
+
+        let e = Entity::new(
+            "person".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+            meta,
+        );
+        v.check_entity_create(&e).unwrap();
+    }
+
+    #[test]
+    fn entity_create_with_properties_missing_required_meta() {
+        let v = DomainValidator::new(schema_with_entity_change_meta());
+        use crate::domain::entity::PropertyValue;
+
+        let e = Entity::new(
+            "person".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+            Map::new(),
+        );
+        let err = v.check_entity_create(&e).unwrap_err();
+        assert!(matches!(err, ValidationError::MissingField { field } if field == "reasoning"));
+    }
+
+    #[test]
+    fn entity_create_without_properties_skips_change_meta() {
+        let v = DomainValidator::new(schema_with_entity_change_meta());
+        let e = Entity::new(
+            "person".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![],
+            Map::new(),
+        );
+        v.check_entity_create(&e).unwrap();
+    }
+
+    #[test]
+    fn entity_update_with_properties_validates_change_meta() {
+        let v = DomainValidator::new(schema_with_entity_change_meta());
+        use crate::domain::entity::PropertyValue;
+
+        let e = Entity::new(
+            "person".parse().unwrap(),
+            None,
+            vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(31), context: () }],
+            Map::new(),
+        );
+        let err = v.check_entity_update(&e).unwrap_err();
+        assert!(matches!(err, ValidationError::MissingField { field } if field == "reasoning"));
+    }
+
+    #[test]
+    fn entity_update_without_properties_skips_change_meta() {
+        let v = DomainValidator::new(schema_with_entity_change_meta());
+        let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
+        v.check_entity_update(&e).unwrap();
     }
 }

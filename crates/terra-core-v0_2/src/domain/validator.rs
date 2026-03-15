@@ -59,6 +59,11 @@ impl DomainValidator {
         validate_fields(&tx.meta, &self.schema.transaction_meta, true)
     }
 
+    /// Validate branch metadata.
+    pub fn check_branch(&self, meta: &Map<String, Value>) -> Result<(), ValidationError> {
+        validate_fields(meta, &self.schema.branch_meta, true)
+    }
+
     /// Validate an entity for creation (description required).
     pub fn check_entity_create(&self, entity: &Entity) -> Result<(), ValidationError> {
         if entity.description.is_none() {

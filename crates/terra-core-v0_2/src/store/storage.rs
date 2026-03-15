@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::config::ProjectConfig;
-use crate::io::{DbError, DbItem, TerraDb};
+use crate::io::{DbError, DbItem, TerraDb, WriteBatch};
 use crate::io::slug::Slug;
 use crate::store::branch_context::BranchContext;
 
@@ -68,6 +68,16 @@ impl Storage {
             Some(result) => Ok(Some(result?)),
             None => Ok(None),
         }
+    }
+
+    /// Get an item by its exact typed key.
+    pub fn get<T: DbItem>(&self, key: &T::Key) -> Result<Option<T>, DbError> {
+        self.db.get::<T>(key)
+    }
+
+    /// Create a new write batch bound to this database.
+    pub fn batch(&self) -> WriteBatch {
+        self.db.batch()
     }
 
     fn open_impl(path: &Path, read_only: bool, config: Arc<ProjectConfig>) -> Result<Self, DbError> {

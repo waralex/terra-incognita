@@ -230,7 +230,7 @@ impl Command for ExecuteTransaction {
         }
 
         let tx_id = Uuid::now_v7();
-        let mut batch = branch.storage().db.batch();
+        let mut batch = branch.storage().batch();
 
         for entity in &input.create_entities {
             self.create_entity(branch, &mut batch, tx_id, entity)?;

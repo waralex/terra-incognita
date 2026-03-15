@@ -9,6 +9,7 @@ use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::key_prefix::KeyBound;
 use crate::io::slug::Slug;
+use crate::io::storage_key::StorageKey;
 use crate::io::{DbError, DbItem};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
@@ -120,6 +121,14 @@ impl BranchContext {
         Ok(None)
     }
 
+    /// Return the tx_id of the latest transaction on this branch (not walking ancestry).
+    pub fn head_tx(&self) -> Result<Option<Uuid>, DbError> {
+        let bound = TransactionKey::bound()
+            .with_prefix(|k| k.branch = self.branch.clone());
+        let entry = self.storage.get_latest::<TransactionEntry>(&bound)?;
+        Ok(entry.map(|e| e.key.tx_id))
+    }
+
     /// Commit a transaction on this branch.
     pub fn commit(&self, tx: Transaction) -> Result<Transaction<TxMeta>, DbError> {
         let tx_id = Uuid::now_v7();
@@ -134,7 +143,7 @@ impl BranchContext {
             },
         };
 
-        let mut batch = self.storage.db.batch();
+        let mut batch = self.storage.batch();
         batch.put(&entry)?;
         batch.commit()?;
 
@@ -159,7 +168,6 @@ impl BranchContext {
         for _ in 0..max_depth {
             let key = BranchKey { branch: current_id };
             let entry = storage
-                .db
                 .get::<BranchEntry>(&key)?
                 .ok_or_else(|| DbError::Storage(format!("branch not found: {}", key.branch)))?;
 
@@ -265,6 +273,34 @@ mod tests {
         };
         let found = storage.db.get::<TransactionEntry>(&key).unwrap().unwrap();
         assert_eq!(found.value.meta["reasoning"], "test");
+    }
+
+    #[test]
+    fn head_tx_returns_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let mut meta = serde_json::Map::new();
+        meta.insert("reasoning".into(), serde_json::json!("first"));
+        let tx1 = branch.commit(Transaction::new(meta)).unwrap();
+
+        let mut meta2 = serde_json::Map::new();
+        meta2.insert("reasoning".into(), serde_json::json!("second"));
+        let tx2 = branch.commit(Transaction::new(meta2)).unwrap();
+
+        let head = branch.head_tx().unwrap().unwrap();
+        assert_eq!(head, tx2.context.tx_id);
+        assert_ne!(head, tx1.context.tx_id);
+    }
+
+    #[test]
+    fn head_tx_empty_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        assert!(branch.head_tx().unwrap().is_none());
     }
 
     #[test]

@@ -45,6 +45,10 @@ pub struct DataSchema {
     #[serde(default)]
     pub entity_change_meta: IndexMap<String, FieldDef>,
 
+    /// Fields that describe a branch (e.g. reasoning, purpose).
+    #[serde(default)]
+    pub branch_meta: IndexMap<String, FieldDef>,
+
     /// Managed types — versioned record types with optional lifecycle.
     #[serde(default)]
     pub managed_types: IndexMap<String, ManagedTypeDef>,
@@ -238,7 +242,25 @@ mod tests {
         let config = DataSchema::from_yaml("{}").unwrap();
         assert!(config.transaction_meta.is_empty());
         assert!(config.entity_change_meta.is_empty());
+        assert!(config.branch_meta.is_empty());
         assert!(config.managed_types.is_empty());
+    }
+
+    #[test]
+    fn parse_branch_meta() {
+        let config = DataSchema::from_yaml(indoc! {"
+            branch_meta:
+              reasoning:
+                type: text
+                required: true
+              purpose:
+                type: text
+        "}).unwrap();
+
+        assert_eq!(config.branch_meta.len(), 2);
+        assert!(config.branch_meta["reasoning"].required);
+        assert!(!config.branch_meta["purpose"].required);
+        assert_eq!(config.branch_meta["reasoning"].field_type, FieldType::Text);
     }
 
     #[test]

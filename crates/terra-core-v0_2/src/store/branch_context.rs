@@ -9,9 +9,9 @@ use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::slug::Slug;
-use crate::store::branch_entry::{BranchEntry, BranchKey};
+use crate::store::entry::branch::{BranchEntry, BranchKey};
+use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
-use crate::store::transaction_entry::{TransactionEntry, TransactionKey, TransactionValue};
 
 /// Main branch slug — always exists implicitly.
 pub fn main_branch_slug() -> Slug {
@@ -135,7 +135,7 @@ mod tests {
     use std::sync::Arc;
     use super::*;
     use crate::config::ProjectConfig;
-    use crate::store::branch_entry::{BranchEntry, BranchKey, BranchValue};
+    use crate::store::entry::branch::{BranchEntry, BranchKey, BranchValue};
 
     fn test_config() -> Arc<ProjectConfig> {
         Arc::new(ProjectConfig::builder()

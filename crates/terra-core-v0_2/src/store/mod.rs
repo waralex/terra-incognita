@@ -1,12 +1,5 @@
-pub mod assertion_entry;
 pub mod branch_context;
-pub mod entity_change_entry;
-pub mod branch_entry;
-pub mod entity_entry;
-pub mod managed_entry;
+pub mod entry;
 pub mod prefix;
-pub mod slug_entry;
 pub mod storage;
-pub mod transaction_entry;
 pub mod versioned_key;
-pub mod visibility_entry;

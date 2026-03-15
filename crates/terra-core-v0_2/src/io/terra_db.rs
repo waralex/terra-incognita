@@ -278,7 +278,7 @@ mod tests {
         use crate::io::slug::Slug;
         use crate::io::key_prefix::prefix_key;
         use crate::io::valid_prefix::impl_prefix;
-        use crate::store::entity_entry::{EntityEntry, EntityKey, EntityValue};
+        use crate::store::entry::entity::{EntityEntry, EntityKey, EntityValue};
         use crate::store::prefix::BranchPrefix;
 
         prefix_key! {

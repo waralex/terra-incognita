@@ -8,14 +8,14 @@ use crate::io::{DbError, TerraDb};
 use crate::io::slug::Slug;
 use crate::store::branch_context::BranchContext;
 
-use crate::store::assertion_entry::AssertionEntry;
-use crate::store::entity_change_entry::EntityChangeEntry;
-use crate::store::branch_entry::BranchEntry;
-use crate::store::entity_entry::EntityEntry;
-use crate::store::managed_entry::ManagedEntry;
-use crate::store::slug_entry::SlugEntry;
-use crate::store::transaction_entry::TransactionEntry;
-use crate::store::visibility_entry::VisibilityEntry;
+use crate::store::entry::assertion::AssertionEntry;
+use crate::store::entry::branch::BranchEntry;
+use crate::store::entry::entity::EntityEntry;
+use crate::store::entry::entity_change::EntityChangeEntry;
+use crate::store::entry::managed::ManagedEntry;
+use crate::store::entry::slug::SlugEntry;
+use crate::store::entry::transaction::TransactionEntry;
+use crate::store::entry::visibility::VisibilityEntry;
 
 /// Top-level storage. Owns the database and project config.
 #[derive(Clone)]

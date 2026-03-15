@@ -66,6 +66,10 @@ impl ExecuteTransaction {
         }
 
         let change_id = Uuid::now_v7();
+        let reasoning = entity.meta.get("reasoning")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         batch.put(&EntityChangeEntry {
             key: EntityChangeKey { change_id },
@@ -87,6 +91,7 @@ impl ExecuteTransaction {
                 value: AssertionValue {
                     change_id,
                     value: pv.value.clone(),
+                    reasoning: reasoning.clone(),
                 },
             })?;
         }
@@ -297,6 +302,7 @@ impl Command for ExecuteTransaction {
             context: TxMeta {
                 tx_id,
                 branch: branch.id().clone(),
+                reasoning: None,
             },
         })
     }

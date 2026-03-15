@@ -26,6 +26,7 @@ versioned_key! {
 pub struct AssertionValue {
     pub change_id: Uuid,
     pub value: serde_json::Value,
+    pub reasoning: String,
 }
 
 impl StorageValue for AssertionValue {
@@ -90,6 +91,7 @@ mod tests {
             value: AssertionValue {
                 change_id: Uuid::now_v7(),
                 value: serde_json::json!({"name": "London"}),
+                reasoning: "geographic data".into(),
             },
         };
 

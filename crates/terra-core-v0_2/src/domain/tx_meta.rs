@@ -12,4 +12,5 @@ use crate::io::Slug;
 pub struct TxMeta {
     pub tx_id: Uuid,
     pub branch: Slug,
+    pub reasoning: Option<String>,
 }

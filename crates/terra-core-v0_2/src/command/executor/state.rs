@@ -91,6 +91,7 @@ impl CollectState {
                 context: TxMeta {
                     tx_id: Uuid::nil(),
                     branch: main_branch_slug(),
+                    reasoning: None,
                 },
             });
         }
@@ -109,6 +110,7 @@ impl CollectState {
             context: TxMeta {
                 tx_id: entry.value.created_from_tx,
                 branch: main_branch_slug(),
+                reasoning: None,
             },
         })
     }
@@ -197,10 +199,11 @@ impl CollectState {
                 .into_iter()
                 .map(|a| PropertyValue {
                     property: a.key.prop,
-                    value: a.value.value,
+                    value: a.value.value.clone(),
                     context: TxMeta {
                         tx_id: a.key.tx_id,
                         branch: a.key.branch,
+                        reasoning: Some(a.value.reasoning),
                     },
                 })
                 .collect();
@@ -213,6 +216,7 @@ impl CollectState {
                 context: TxMeta {
                     tx_id: entity_tx,
                     branch: branch.id().clone(),
+                    reasoning: None,
                 },
             });
         }
@@ -296,6 +300,7 @@ impl CollectState {
                     context: TxMeta {
                         tx_id: latest.key.tx_id,
                         branch: latest.key.branch,
+                        reasoning: None,
                     },
                 });
             }
@@ -361,6 +366,7 @@ impl CollectState {
                         context: TxMeta {
                             tx_id: latest.key.tx_id,
                             branch: latest.key.branch,
+                            reasoning: None,
                         },
                     });
                 }
@@ -394,6 +400,7 @@ impl CollectState {
                 context: TxMeta {
                     tx_id: entry.key.tx_id,
                     branch: entry.key.branch,
+                    reasoning: None,
                 },
             });
         }
@@ -418,6 +425,7 @@ impl CollectState {
                     context: TxMeta {
                         tx_id: entry.key.tx_id,
                         branch: entry.key.branch,
+                        reasoning: None,
                     },
                 });
             }
@@ -646,5 +654,29 @@ mod tests {
         assert_eq!(output.entities.len(), 1);
         assert_eq!(output.entities[0].slug.as_str(), "alice");
         assert_eq!(output.entities[0].properties[0].value, serde_json::json!(25));
+    }
+
+    #[test]
+    fn property_reasoning_from_assertion() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+
+        exec_tx(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![
+                    PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                    PV { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                ],
+                meta("census data"),
+            )));
+
+        let output = collect(&branch, 10, 10);
+        assert_eq!(output.entities[0].properties.len(), 2);
+        for prop in &output.entities[0].properties {
+            assert_eq!(prop.context.reasoning.as_deref(), Some("census data"));
+        }
     }
 }

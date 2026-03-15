@@ -259,6 +259,7 @@ impl BranchContext {
             context: TxMeta {
                 tx_id,
                 branch: self.branch.clone(),
+                reasoning: None,
             },
         })
     }

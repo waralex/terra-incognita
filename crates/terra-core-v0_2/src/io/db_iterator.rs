@@ -2,9 +2,10 @@
 
 use std::marker::PhantomData;
 
-use rocksdb::{DBIteratorWithThreadMode, DB};
+use rocksdb::{DBIteratorWithThreadMode, DB, Direction, IteratorMode};
 
 use crate::io::db_item::DbItem;
+use crate::io::key_prefix::KeyPrefix;
 use crate::io::storage_key::StorageKey;
 use crate::io::storage_value::StorageValue;
 use crate::io::terra_db::DbError;
@@ -17,6 +18,7 @@ pub struct DbIterator<'a, T: DbItem> {
     inner: DBIteratorWithThreadMode<'a, DB>,
     lower: Vec<u8>,
     upper: Vec<u8>,
+    direction: Direction,
     _marker: PhantomData<T>,
 }
 
@@ -25,13 +27,27 @@ impl<'a, T: DbItem> DbIterator<'a, T> {
         inner: DBIteratorWithThreadMode<'a, DB>,
         lower: Vec<u8>,
         upper: Vec<u8>,
+        direction: Direction,
     ) -> Self {
         Self {
             inner,
             lower,
             upper,
+            direction,
             _marker: PhantomData,
         }
+    }
+
+    /// Reposition the iterator to the given prefix.
+    ///
+    /// Uses `encode_lower_bound` for forward iterators and
+    /// `encode_upper_bound` for reverse iterators.
+    pub fn seek(&mut self, prefix: &impl KeyPrefix<Key = T::Key>) {
+        let point = match self.direction {
+            Direction::Forward => prefix.encode_lower_bound(),
+            Direction::Reverse => prefix.encode_upper_bound(),
+        };
+        self.inner.set_mode(IteratorMode::From(&point, self.direction));
     }
 }
 

@@ -137,7 +137,7 @@ impl TerraDb {
         let opts = ReadOptions::default();
         let mode = IteratorMode::From(&lower, Direction::Forward);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, lower, upper))
+        Ok(DbIterator::new(inner, lower, upper, Direction::Forward))
     }
 
     /// Iterate in reverse over items within the prefix range.
@@ -155,7 +155,7 @@ impl TerraDb {
         let opts = ReadOptions::default();
         let mode = IteratorMode::From(&upper, Direction::Reverse);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, lower, upper))
+        Ok(DbIterator::new(inner, lower, upper, Direction::Reverse))
     }
 
     /// Create a new write batch bound to this database.

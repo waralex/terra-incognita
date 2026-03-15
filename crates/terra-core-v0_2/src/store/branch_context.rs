@@ -84,16 +84,16 @@ impl BranchContext {
         T: DbItem,
         T::Key: VersionedKey,
     {
-        // Current branch — unbounded
+        // Current branch — unbounded (tx_id = MAX by convention)
         if self.storage.exists::<_, T>(prefix)? {
             return Ok(true);
         }
         // Ancestors — bounded by branch_point_tx
         for entry in &self.ancestry {
-            let prefix = prefix
+            let bounded = prefix
                 .with_branch(entry.branch.clone())
                 .with_transaction(entry.branch_point_tx);
-            if self.storage.exists::<_, T>(&prefix)? {
+            if self.storage.exists::<_, T>(&bounded)? {
                 return Ok(true);
             }
         }
@@ -109,31 +109,17 @@ impl BranchContext {
         T: DbItem,
         T::Key: VersionedKey,
     {
-        // Current branch — unbounded
+        // Current branch — unbounded (tx_id = MAX by convention)
         if let Some(found) = self.storage.get_latest::<P, T>(prefix)? {
             return Ok(Some(found));
         }
         // Ancestors — bounded by branch_point_tx
         for entry in &self.ancestry {
-            let parent_prefix = prefix.with_branch(entry.branch.clone());
-            if let Some(found) = self.find_bounded::<P, T>(&parent_prefix, entry.branch_point_tx)? {
+            let bounded = prefix
+                .with_branch(entry.branch.clone())
+                .with_transaction(entry.branch_point_tx);
+            if let Some(found) = self.storage.get_latest::<P, T>(&bounded)? {
                 return Ok(Some(found));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Reverse scan with VersionedPrefix, filter by tx_id <= bound.
-    fn find_bounded<P, T>(&self, prefix: &P, tx_bound: Uuid) -> Result<Option<T>, DbError>
-    where
-        P: VersionedPrefix<Key = T::Key>,
-        T: DbItem,
-        T::Key: VersionedKey,
-    {
-        for item in self.storage.db.scan_rev::<T>(prefix)? {
-            let entry = item?;
-            if entry.key().tx_id() <= tx_bound {
-                return Ok(Some(entry));
             }
         }
         Ok(None)

@@ -20,10 +20,19 @@ pub trait KeyPrefix {
     /// Encode the prefix as fixed-size bytes.
     fn encode(&self) -> Vec<u8>;
 
-    /// Encode the upper bound for reverse scans.
+    /// Encode the lower bound of the scan range.
+    ///
+    /// Default: pads `encode()` with `0x00` up to `Key::SIZE`.
+    fn encode_lower_bound(&self) -> Vec<u8> {
+        let mut bytes = self.encode();
+        let pad = Self::Key::SIZE.saturating_sub(bytes.len());
+        bytes.extend(std::iter::repeat(0x00u8).take(pad));
+        bytes
+    }
+
+    /// Encode the upper bound of the scan range.
     ///
     /// Default: pads `encode()` with `0xFF` up to `Key::SIZE`.
-    /// Full prefixes (where `SIZE == Key::SIZE`) return `encode()` unchanged.
     fn encode_upper_bound(&self) -> Vec<u8> {
         let mut bytes = self.encode();
         let pad = Self::Key::SIZE.saturating_sub(bytes.len());
@@ -154,6 +163,17 @@ mod tests {
         let p1 = TestBranchPrefix { branch: slug.clone() };
         let p2 = TestBranchPrefix { branch: slug };
         assert_eq!(p1.encode(), p2.encode());
+    }
+
+    #[test]
+    fn lower_bound_pads_with_zeros() {
+        let prefix = TestBranchPrefix {
+            branch: "main".parse().unwrap(),
+        };
+        let lower = prefix.encode_lower_bound();
+        assert_eq!(lower.len(), 48);
+        assert_eq!(&lower[..16], &prefix.encode()[..]);
+        assert!(lower[16..].iter().all(|&b| b == 0x00));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Typed iterator over database entries matching a key prefix.
+//! Typed iterator over database entries within a key range.
 
 use std::marker::PhantomData;
 
@@ -9,24 +9,27 @@ use crate::io::storage_key::StorageKey;
 use crate::io::storage_value::StorageValue;
 use crate::io::terra_db::DbError;
 
-/// Typed iterator over [`DbItem`] entries sharing a common key prefix.
+/// Typed iterator over [`DbItem`] entries within `lower..=upper` key range.
 ///
 /// Decodes key + value on each step. Stops when the underlying key
-/// no longer starts with the prefix used to create the iterator.
+/// falls outside the `[lower, upper]` bounds.
 pub struct DbIterator<'a, T: DbItem> {
     inner: DBIteratorWithThreadMode<'a, DB>,
-    prefix: Vec<u8>,
+    lower: Vec<u8>,
+    upper: Vec<u8>,
     _marker: PhantomData<T>,
 }
 
 impl<'a, T: DbItem> DbIterator<'a, T> {
     pub(super) fn new(
         inner: DBIteratorWithThreadMode<'a, DB>,
-        prefix: Vec<u8>,
+        lower: Vec<u8>,
+        upper: Vec<u8>,
     ) -> Self {
         Self {
             inner,
-            prefix,
+            lower,
+            upper,
             _marker: PhantomData,
         }
     }
@@ -40,7 +43,9 @@ impl<T: DbItem> Iterator for DbIterator<'_, T> {
             Ok(kv) => kv,
             Err(e) => return Some(Err(DbError::Storage(e.to_string()))),
         };
-        if !key_bytes.starts_with(&self.prefix) {
+        if key_bytes.as_ref() < self.lower.as_slice()
+            || key_bytes.as_ref() > self.upper.as_slice()
+        {
             return None;
         }
         let key = match T::Key::decode(&key_bytes) {

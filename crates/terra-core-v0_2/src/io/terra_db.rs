@@ -123,36 +123,39 @@ impl TerraDb {
         }
     }
 
-    /// Iterate forward over items whose keys share the given prefix.
+    /// Iterate forward over items within the prefix range.
+    ///
+    /// Seeks to `lower_bound`, iterates forward, stops after `upper_bound`.
     pub fn scan<'a, T: DbItem>(
         &'a self,
         prefix: &impl KeyPrefix<Key = T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let prefix_bytes = prefix.encode();
+        let lower = prefix.encode_lower_bound();
+        let upper = prefix.encode_upper_bound();
         let opts = ReadOptions::default();
-        let mode = IteratorMode::From(&prefix_bytes, Direction::Forward);
+        let mode = IteratorMode::From(&lower, Direction::Forward);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, prefix_bytes))
+        Ok(DbIterator::new(inner, lower, upper))
     }
 
-    /// Iterate in reverse over items whose keys share the given prefix.
+    /// Iterate in reverse over items within the prefix range.
     ///
-    /// Yields entries from the largest key down to the smallest within
-    /// the prefix range — useful for finding the latest version.
+    /// Seeks to `upper_bound`, iterates backward, stops before `lower_bound`.
+    /// Useful for finding the latest version.
     pub fn scan_rev<'a, T: DbItem>(
         &'a self,
         prefix: &impl KeyPrefix<Key = T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
         let cf = self.db.cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
-        let prefix_bytes = prefix.encode();
-        let ceiling = prefix.encode_upper_bound();
+        let lower = prefix.encode_lower_bound();
+        let upper = prefix.encode_upper_bound();
         let opts = ReadOptions::default();
-        let mode = IteratorMode::From(&ceiling, Direction::Reverse);
+        let mode = IteratorMode::From(&upper, Direction::Reverse);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
-        Ok(DbIterator::new(inner, prefix_bytes))
+        Ok(DbIterator::new(inner, lower, upper))
     }
 
     /// Create a new write batch bound to this database.
@@ -306,7 +309,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx2);
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
-            let prefix = EntityKeyPrefix { branch, entity };
+            let prefix = EntityKeyPrefix::new(branch, entity);
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -336,7 +339,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx2);
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
-            let prefix = EntityKeyPrefix { branch, entity };
+            let prefix = EntityKeyPrefix::new(branch, entity);
             let items: Vec<EntityEntry> = db.scan_rev::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -364,7 +367,7 @@ mod tests {
             write_entity(&db, branch.clone(), e1.clone(), tx);
             write_entity(&db, branch.clone(), e2, tx);
 
-            let prefix = EntityKeyPrefix { branch, entity: e1 };
+            let prefix = EntityKeyPrefix::new(branch, e1);
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -385,7 +388,7 @@ mod tests {
             let branch = s("main");
             let entity = s("nonexistent");
 
-            let prefix = EntityKeyPrefix { branch, entity };
+            let prefix = EntityKeyPrefix::new(branch, entity);
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
@@ -413,7 +416,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let bound = Uuid::from_u128(25);
-            let prefix = EntityKeyPrefix { branch, entity };
+            let prefix = EntityKeyPrefix::new(branch, entity);
             let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .filter_map(|r| {
@@ -446,7 +449,7 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let bound = Uuid::from_u128(25);
-            let prefix = EntityKeyPrefix { branch, entity };
+            let prefix = EntityKeyPrefix::new(branch, entity);
             let latest = db.scan_rev::<EntityEntry>(&prefix)
                 .unwrap()
                 .filter_map(|r| r.ok())

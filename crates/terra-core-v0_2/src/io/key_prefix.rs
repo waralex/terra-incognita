@@ -40,6 +40,12 @@ macro_rules! prefix_key {
             $( pub $field: prefix_key!(@rust_type $ty) ),+
         }
 
+        impl $name {
+            pub fn new($( $field: prefix_key!(@rust_type $ty) ),+) -> Self {
+                Self { $( $field ),+ }
+            }
+        }
+
         impl $crate::io::key_prefix::KeyPrefix for $name {
             const SIZE: usize = 0 $( + prefix_key!(@field_size $ty) )+;
 

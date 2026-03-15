@@ -24,11 +24,7 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
-        let prefix = EntityKeyPrefix {
-            branch: branch.id().clone(),
-            entity: entity.slug.clone(),
-        };
-        if branch.exists::<EntityEntry>(&prefix)? {
+        if branch.exists::<EntityEntry>(&EntityKeyPrefix::new(branch.id().clone(), entity.slug.clone()))? {
             return Err(DbError::Storage(format!(
                 "entity already exists: {}", entity.slug
             )));
@@ -105,10 +101,7 @@ mod tests {
     }
 
     fn entity_prefix(branch: &BranchContext, slug: &str) -> EntityKeyPrefix {
-        EntityKeyPrefix {
-            branch: branch.id().clone(),
-            entity: slug.parse().unwrap(),
-        }
+        EntityKeyPrefix::new(branch.id().clone(), slug.parse().unwrap())
     }
 
     #[test]

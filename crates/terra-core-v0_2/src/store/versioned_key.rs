@@ -60,6 +60,12 @@ macro_rules! versioned_key {
                 $( pub $field: versioned_key!(@rust_type $ty), )*
             }
 
+            impl [< $name Prefix >] {
+                pub fn new(branch: $crate::io::slug::Slug, $( $field: versioned_key!(@rust_type $ty), )*) -> Self {
+                    Self { branch, $( $field, )* }
+                }
+            }
+
             impl $crate::io::key_prefix::KeyPrefix for [< $name Prefix >] {
                 const SIZE: usize = 16 $( + versioned_key!(@field_size $ty) )*;
 

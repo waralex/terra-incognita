@@ -83,7 +83,7 @@ impl BranchContext {
     /// Checks current branch (unbounded), then ancestors with tx bounds.
     pub fn exists<P, T>(&self, prefix: &P) -> Result<bool, DbError>
     where
-        P: VersionedPrefix + ValidPrefix<T::Key>,
+        P: VersionedPrefix<Key = T::Key>,
         T: DbItem,
         T::Key: VersionedKey,
     {
@@ -109,7 +109,7 @@ impl BranchContext {
     /// Checks current branch (unbounded), then ancestors with tx bounds.
     pub fn get_latest<P, T>(&self, prefix: &P) -> Result<Option<T>, DbError>
     where
-        P: VersionedPrefix + ValidPrefix<T::Key>,
+        P: VersionedPrefix<Key = T::Key>,
         T: DbItem,
         T::Key: VersionedKey,
     {
@@ -130,7 +130,7 @@ impl BranchContext {
     /// Reverse scan with VersionedPrefix, filter by tx_id <= bound.
     fn find_bounded<P, T>(&self, prefix: &P, tx_bound: Uuid) -> Result<Option<T>, DbError>
     where
-        P: VersionedPrefix + ValidPrefix<T::Key>,
+        P: VersionedPrefix<Key = T::Key>,
         T: DbItem,
         T::Key: VersionedKey,
     {
@@ -151,7 +151,7 @@ impl BranchContext {
     /// version of each.
     pub fn scan_latest<T>(
         &self,
-        prefix: &(impl KeyPrefix + ValidPrefix<T::Key>),
+        prefix: &impl ValidPrefix<T::Key>,
     ) -> Result<Vec<T>, DbError>
     where
         T: DbItem,

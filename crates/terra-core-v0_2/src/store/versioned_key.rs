@@ -10,6 +10,7 @@
 use crate::io::key_prefix::KeyPrefix;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::valid_prefix::ValidPrefix;
 
 /// Prefix of a versioned key — with or without `tx_id`.
 ///
@@ -17,9 +18,15 @@ use crate::io::storage_key::StorageKey;
 /// full prefixes (branch + domain fields + tx_id). Composable:
 /// - `with_branch(slug)` — same prefix, different branch (ancestry walk)
 /// - `with_transaction(tx_id)` — add/replace tx_id bound (bounded seek)
-pub trait VersionedPrefix: KeyPrefix {
+///
+/// Inherits `ValidPrefix<Self::Key>` — any VersionedPrefix is automatically
+/// a valid scan prefix for its key type.
+pub trait VersionedPrefix: KeyPrefix + ValidPrefix<Self::Key> {
+    /// The key type this prefix is valid for.
+    type Key: StorageKey;
+
     /// Full prefix type — includes tx_id.
-    type Full: VersionedPrefix;
+    type Full: VersionedPrefix<Key = Self::Key>;
 
     /// Add or replace tx_id, producing a full prefix for bounded seeks.
     fn with_transaction(&self, tx_id: uuid::Uuid) -> Self::Full;
@@ -94,7 +101,10 @@ macro_rules! versioned_key {
                 }
             }
 
+            impl $crate::io::valid_prefix::ValidPrefix<$name> for [< $name Prefix >] {}
+
             impl $crate::store::versioned_key::VersionedPrefix for [< $name Prefix >] {
+                type Key = $name;
                 type Full = [< $name FullPrefix >];
 
                 fn with_transaction(&self, tx_id: uuid::Uuid) -> Self::Full {
@@ -142,7 +152,10 @@ macro_rules! versioned_key {
                 }
             }
 
+            impl $crate::io::valid_prefix::ValidPrefix<$name> for [< $name FullPrefix >] {}
+
             impl $crate::store::versioned_key::VersionedPrefix for [< $name FullPrefix >] {
+                type Key = $name;
                 type Full = Self;
 
                 fn with_transaction(&self, tx_id: uuid::Uuid) -> Self {

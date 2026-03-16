@@ -29,6 +29,12 @@ pub struct AssertionValue {
     pub reasoning: String,
 }
 
+impl AssertionValue {
+    pub fn is_deleted(&self) -> bool {
+        self.value.is_null()
+    }
+}
+
 impl StorageValue for AssertionValue {
     fn encode(&self) -> Result<Vec<u8>, DbError> {
         serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))

@@ -325,7 +325,9 @@ impl BranchContext {
                 }
 
                 if let Some(latest) = self.storage.get_latest::<AssertionEntry>(&prop_bound)? {
-                    result.insert(prop.clone(), latest);
+                    if !latest.value.is_deleted() {
+                        result.insert(prop.clone(), latest);
+                    }
                 }
             }
 
@@ -607,6 +609,39 @@ mod tests {
             assert_eq!(props[0].value.value, serde_json::json!(26));
             assert_eq!(props[1].key.prop.as_str(), "city");
             assert_eq!(props[1].value.value, serde_json::json!("London"));
+        }
+
+        #[test]
+        fn deleted_property_excluded() {
+            let dir = tempfile::tempdir().unwrap();
+            let storage = Storage::open(dir.path(), test_config()).unwrap();
+            let branch = BranchContext::main(storage);
+
+            exec(&branch, TransactionInput::new(meta("create"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![
+                        PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                        PV { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                    ],
+                    meta("initial"),
+                )));
+
+            exec(&branch, TransactionInput::new(meta("delete age"))
+                .update_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    None,
+                    vec![
+                        PV { property: "age".parse().unwrap(), value: serde_json::Value::Null, context: () },
+                    ],
+                    meta("age retracted"),
+                )));
+
+            let props = branch.properties(&"alice".parse().unwrap(), None).unwrap();
+            assert_eq!(props.len(), 1);
+            assert_eq!(props[0].key.prop.as_str(), "city");
+            assert_eq!(props[0].value.value, serde_json::json!("London"));
         }
 
         #[test]

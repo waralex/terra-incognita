@@ -7,7 +7,7 @@ use crate::command::CommandState;
 use crate::command::input::transaction::TransactionInput;
 use crate::domain::entity::Entity;
 use crate::domain::transaction::Transaction;
-use crate::domain::tx_meta::TxMeta;
+use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::domain::validator::DomainValidator;
 use crate::io::DbError;
 use crate::io::WriteBatch;
@@ -394,6 +394,7 @@ impl Command for ExecuteTransaction {
                 tx_id,
                 branch: branch.id().clone(),
                 reasoning: None,
+                time: time_from_uuid(tx_id),
             },
         })
     }

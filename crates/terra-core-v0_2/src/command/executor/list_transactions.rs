@@ -6,7 +6,7 @@ use crate::command::Command;
 use crate::command::CommandState;
 use crate::command::input::list_transactions::ListTransactionsQuery;
 use crate::domain::transaction::Transaction;
-use crate::domain::tx_meta::TxMeta;
+use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::io::DbError;
 use crate::io::storage_key::StorageKey;
 use crate::store::branch_context::BranchContext;
@@ -48,6 +48,7 @@ impl Command for ListTransactions {
                     tx_id: entry.key.tx_id,
                     branch: entry.key.branch,
                     reasoning: None,
+                    time: time_from_uuid(entry.key.tx_id),
                 },
             });
         }
@@ -73,6 +74,7 @@ impl Command for ListTransactions {
                         tx_id: entry.key.tx_id,
                         branch: entry.key.branch,
                         reasoning: None,
+                        time: time_from_uuid(entry.key.tx_id),
                     },
                 });
             }

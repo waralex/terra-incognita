@@ -80,6 +80,7 @@ fn tx_meta_to_res(meta: TxMeta) -> TxMetaRes {
         tx_id: meta.tx_id,
         branch: meta.branch.to_string(),
         reasoning: meta.reasoning,
+        time: meta.time,
     }
 }
 

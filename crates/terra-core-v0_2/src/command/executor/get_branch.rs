@@ -6,7 +6,7 @@ use crate::command::Command;
 use crate::command::CommandState;
 use crate::command::input::get_branch::GetBranchQuery;
 use crate::domain::branch::Branch;
-use crate::domain::tx_meta::TxMeta;
+use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::io::DbError;
 use crate::store::branch_context::{BranchContext, main_branch_slug};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
@@ -35,6 +35,7 @@ impl Command for GetBranch {
                     tx_id: Uuid::nil(),
                     branch: main_branch_slug(),
                     reasoning: None,
+                    time: None,
                 },
             });
         }
@@ -54,6 +55,7 @@ impl Command for GetBranch {
                 tx_id: entry.value.created_from_tx,
                 branch: main_branch_slug(),
                 reasoning: None,
+                time: time_from_uuid(entry.value.created_from_tx),
             },
         })
     }

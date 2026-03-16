@@ -8,7 +8,7 @@ use crate::command::Command;
 use crate::command::CommandState;
 use crate::command::input::touched_entities::TouchedEntitiesQuery;
 use crate::domain::entity::{Entity, PropertyValue};
-use crate::domain::tx_meta::TxMeta;
+use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
@@ -127,6 +127,7 @@ impl ListTouchedEntities {
                         tx_id: a.key.tx_id,
                         branch: a.key.branch,
                         reasoning: Some(a.value.reasoning),
+                        time: time_from_uuid(a.key.tx_id),
                     },
                 })
                 .collect();
@@ -140,6 +141,7 @@ impl ListTouchedEntities {
                     tx_id: entity_tx,
                     branch: branch_id.clone(),
                     reasoning: None,
+                    time: time_from_uuid(entity_tx),
                 },
             });
         }

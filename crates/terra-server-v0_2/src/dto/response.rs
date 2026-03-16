@@ -1,5 +1,6 @@
 //! Response DTOs — serialized to YAML/JSON response bodies.
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use uuid::Uuid;
@@ -11,6 +12,8 @@ pub struct TxMetaRes {
     pub branch: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time: Option<DateTime<Utc>>,
 }
 
 /// Transaction result.

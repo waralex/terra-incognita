@@ -10,7 +10,7 @@ use crate::command::CommandState;
 use crate::command::input::list_managed::ListManagedQuery;
 use crate::config::{DataSchema, ManagedTypeDef};
 use crate::domain::managed::Managed;
-use crate::domain::tx_meta::TxMeta;
+use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
@@ -127,6 +127,7 @@ impl Command for ListManaged {
                         tx_id: latest.key.tx_id,
                         branch: latest.key.branch,
                         reasoning: None,
+                        time: time_from_uuid(latest.key.tx_id),
                     },
                 });
             }
@@ -193,6 +194,7 @@ impl Command for ListManaged {
                             tx_id: latest.key.tx_id,
                             branch: latest.key.branch,
                             reasoning: None,
+                            time: time_from_uuid(latest.key.tx_id),
                         },
                     });
                 }

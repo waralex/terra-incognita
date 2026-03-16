@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::domain::transaction::Transaction;
-use crate::domain::tx_meta::TxMeta;
+use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::io::key_prefix::KeyBound;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
@@ -374,6 +374,7 @@ impl BranchContext {
                 tx_id,
                 branch: self.branch.clone(),
                 reasoning: None,
+                time: time_from_uuid(tx_id),
             },
         })
     }

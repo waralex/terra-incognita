@@ -53,6 +53,7 @@ impl ServerConfig {
 fn config_candidates() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     paths.push(PathBuf::from(CONFIG_FILENAME));
+    paths.push(PathBuf::from(".terra-incognita").join(CONFIG_FILENAME));
     if let Ok(env_path) = std::env::var(CONFIG_ENV) {
         paths.push(PathBuf::from(env_path));
     }

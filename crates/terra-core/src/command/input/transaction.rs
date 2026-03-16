@@ -21,6 +21,18 @@ impl TouchItem {
     }
 }
 
+/// Soft-delete an entity — marks it as deleted with reasoning.
+pub struct DeleteItem {
+    pub(crate) entity: Slug,
+    pub(crate) reasoning: Value,
+}
+
+impl DeleteItem {
+    pub fn new(entity: Slug, reasoning: Value) -> Self {
+        Self { entity, reasoning }
+    }
+}
+
 /// Atomic mutation command — all operations to execute in a single transaction.
 ///
 /// Created via `TransactionInput::new(meta)`, then populated with
@@ -31,13 +43,15 @@ impl TouchItem {
 /// 2. Update entities (assertions on existing)
 /// 3. Create managed items
 /// 4. Update managed items
-/// 5. Explicit touches (override auto-touches from create/update)
+/// 5. Delete entities (soft-delete with reasoning)
+/// 6. Explicit touches (override auto-touches from create/update)
 pub struct TransactionInput {
     pub(crate) meta: Map<String, Value>,
     pub(crate) create_entities: Vec<Entity>,
     pub(crate) update_entities: Vec<Entity>,
     pub(crate) create_managed: Vec<Managed>,
     pub(crate) update_managed: Vec<Managed>,
+    pub(crate) delete_entities: Vec<DeleteItem>,
     pub(crate) touched: Vec<TouchItem>,
 }
 
@@ -50,6 +64,7 @@ impl TransactionInput {
             update_entities: Vec::new(),
             create_managed: Vec::new(),
             update_managed: Vec::new(),
+            delete_entities: Vec::new(),
             touched: Vec::new(),
         }
     }
@@ -75,6 +90,12 @@ impl TransactionInput {
     /// Add an existing managed item to update.
     pub fn update_managed(mut self, managed: Managed) -> Self {
         self.update_managed.push(managed);
+        self
+    }
+
+    /// Soft-delete an entity.
+    pub fn delete_entity(mut self, item: DeleteItem) -> Self {
+        self.delete_entities.push(item);
         self
     }
 

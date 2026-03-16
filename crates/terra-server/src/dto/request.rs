@@ -35,6 +35,8 @@ pub struct TransactionReq {
     #[serde(default)]
     pub update_managed: Vec<ManagedReq>,
     #[serde(default)]
+    pub delete: Vec<DeleteReq>,
+    #[serde(default)]
     pub touch: Vec<TouchReq>,
 }
 
@@ -58,6 +60,12 @@ pub struct PropertyValueReq {
 pub struct TouchReq {
     pub entity: String,
     pub reasoning: String,
+}
+
+#[derive(Deserialize)]
+pub struct DeleteReq {
+    pub entity: String,
+    pub reasoning: Value,
 }
 
 #[derive(Deserialize)]

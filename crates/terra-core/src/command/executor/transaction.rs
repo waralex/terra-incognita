@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::transaction::TransactionInput;
+use crate::command::input::transaction::{DeleteItem, TransactionInput};
 use crate::domain::entity::Entity;
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::{TxMeta, time_from_uuid};
@@ -330,6 +330,56 @@ impl ExecuteTransaction {
 
         Ok(())
     }
+
+    fn delete_entity(
+        &self,
+        branch: &BranchContext,
+        state: &mut CommandState,
+        tx_id: Uuid,
+        item: &DeleteItem,
+    ) -> Result<(), DbError> {
+        let bound = EntityKey::bound()
+            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = item.entity.clone(); });
+        if !branch.exists::<EntityEntry>(&bound)? {
+            return Err(DbError::Storage(format!(
+                "entity not found: {}", item.entity
+            )));
+        }
+
+        state.batch().put(&EntityEntry {
+            key: EntityKey {
+                branch: branch.id().clone(),
+                entity: item.entity.clone(),
+                tx_id,
+            },
+            value: EntityValue {
+                deleted: Some(item.reasoning.clone()),
+                ..Default::default()
+            },
+        })?;
+
+        // Deactivate embedding.
+        state.batch().put(&EmbeddingEntry {
+            key: EmbeddingKey {
+                branch: branch.id().clone(),
+                entity: item.entity.clone(),
+                tx_id,
+            },
+            value: EmbeddingValue {
+                change_id: Uuid::nil(),
+                embedding: vec![],
+            },
+        })?;
+
+        Self::write_touched(branch, state.batch(), tx_id, &Entity::new(
+            item.entity.clone(),
+            None,
+            vec![],
+            serde_json::Map::new(),
+        ))?;
+
+        Ok(())
+    }
 }
 
 impl Command for ExecuteTransaction {
@@ -360,6 +410,10 @@ impl Command for ExecuteTransaction {
 
         for entity in &input.update_entities {
             self.update_entity(branch, state, tx_id, entity)?;
+        }
+
+        for item in &input.delete_entities {
+            self.delete_entity(branch, state, tx_id, item)?;
         }
 
         for managed in &input.create_managed {

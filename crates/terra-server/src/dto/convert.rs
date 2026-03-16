@@ -2,7 +2,7 @@
 
 use terra_core::command::executor::checkout::CheckoutOutput;
 use terra_core::command::input::checkout::CheckoutInput;
-use terra_core::command::input::transaction::{TouchItem, TransactionInput};
+use terra_core::command::input::transaction::{DeleteItem, TouchItem, TransactionInput};
 use terra_core::domain::branch::Branch;
 use terra_core::domain::entity::Entity;
 use terra_core::domain::entity::PropertyValue;
@@ -38,6 +38,9 @@ pub fn transaction_req_to_input(req: TransactionReq) -> Result<TransactionInput,
     }
     for m in req.update_managed {
         input = input.update_managed(managed_req_to_domain(m)?);
+    }
+    for d in req.delete {
+        input = input.delete_entity(DeleteItem::new(parse_slug(&d.entity)?, d.reasoning));
     }
     for t in req.touch {
         input = input.touch(TouchItem::new(parse_slug(&t.entity)?, t.reasoning));
@@ -173,6 +176,7 @@ mod tests {
             update: vec![],
             create_managed: vec![],
             update_managed: vec![],
+            delete: vec![],
             touch: vec![],
         };
         transaction_req_to_input(req).unwrap();
@@ -191,6 +195,7 @@ mod tests {
             update: vec![],
             create_managed: vec![],
             update_managed: vec![],
+            delete: vec![],
             touch: vec![],
         };
         assert!(transaction_req_to_input(req).is_err());
@@ -216,6 +221,7 @@ mod tests {
                 update: vec![],
                 create_managed: vec![],
                 update_managed: vec![],
+                delete: vec![],
                 touch: vec![],
             },
         };

@@ -8,6 +8,7 @@ export interface TxContext {
   tx_id: string;
   branch: string;
   reasoning?: string;
+  time?: string;
 }
 
 export interface EntityRes {
@@ -62,10 +63,16 @@ export interface TouchReq {
   reasoning: string;
 }
 
+export interface DeleteReq {
+  entity: string;
+  reasoning: unknown;
+}
+
 export interface TransactionReq {
   meta: Record<string, unknown>;
   create?: EntityReq[];
   update?: EntityReq[];
+  delete?: DeleteReq[];
   create_managed?: ManagedReq[];
   update_managed?: ManagedReq[];
   touch?: TouchReq[];

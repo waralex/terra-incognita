@@ -10,6 +10,7 @@ export async function buildContext(terra: TerraClient, config: Config): Promise<
   const parts: string[] = [];
 
   parts.push(`# Branch: ${config.branch}`);
+  parts.push(`# Current time: ${formatTime(new Date().toISOString())}`);
 
   if (entities.length > 0) {
     parts.push("");
@@ -21,8 +22,8 @@ export async function buildContext(terra: TerraClient, config: Config): Promise<
 
   if (transactions.length > 0) {
     parts.push("");
-    parts.push("# Recent transactions");
-    for (const tx of transactions) {
+    parts.push("# Transaction history (oldest first)");
+    for (const tx of transactions.reverse()) {
       parts.push(formatTransaction(tx));
     }
   }
@@ -45,9 +46,22 @@ function formatEntity(e: EntityRes): string {
   return lines.join("\n");
 }
 
+function formatTime(iso?: string): string {
+  if (!iso) return "unknown";
+  const d = new Date(iso);
+  return d.toLocaleString("en-GB", {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+    timeZoneName: "short",
+  });
+}
+
 function formatTransaction(tx: TransactionRes): string {
   const meta = tx.meta;
-  const parts: string[] = [`- tx ${tx.context.tx_id.slice(0, 8)}`];
+  const time = formatTime(tx.context.time);
+  const parts: string[] = [`- [${time}]`];
   if (meta.question) parts.push(`question=${JSON.stringify(meta.question)}`);
   if (meta.answer) parts.push(`answer=${JSON.stringify(meta.answer)}`);
   if (meta.reasoning) parts.push(`reasoning=${JSON.stringify(meta.reasoning)}`);

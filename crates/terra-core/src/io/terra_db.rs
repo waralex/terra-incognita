@@ -288,7 +288,7 @@ mod tests {
         fn write_entity(db: &TerraDb, branch: Slug, entity: Slug, tx_id: Uuid) {
             let entry = EntityEntry {
                 key: EntityKey { branch, entity, tx_id },
-                value: EntityValue { description: None },
+                value: EntityValue::default(),
             };
             let mut batch = db.batch();
             batch.put(&entry).unwrap();

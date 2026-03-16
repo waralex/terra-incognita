@@ -114,6 +114,9 @@ impl ListTouchedEntities {
                 .with_upper(|k| k.tx_id = at_tx);
 
             let entry = branch.get_latest::<EntityEntry>(&bound)?;
+            if entry.as_ref().is_some_and(|e| e.value.is_deleted()) {
+                continue;
+            }
             let entity_tx = entry.as_ref().map(|e| e.key.tx_id).unwrap_or(Uuid::nil());
             let description = entry.and_then(|e| e.value.description);
 

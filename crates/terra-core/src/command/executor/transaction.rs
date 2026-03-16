@@ -193,6 +193,7 @@ impl ExecuteTransaction {
             },
             value: EntityValue {
                 description: entity.description.clone(),
+                ..Default::default()
             },
         })?;
 
@@ -246,6 +247,7 @@ impl ExecuteTransaction {
                 },
                 value: EntityValue {
                     description: entity.description.clone(),
+                    ..Default::default()
                 },
             })?;
         }

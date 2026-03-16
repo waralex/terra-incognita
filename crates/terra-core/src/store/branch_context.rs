@@ -16,6 +16,7 @@ use crate::io::{DbError, DbItem};
 use crate::embed::cosine_similarity;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey};
 use crate::store::entry::branch::{BranchEntry, BranchKey};
+use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::storage::Storage;
@@ -230,6 +231,19 @@ impl BranchContext {
                 }
             })
             .collect();
+
+        // FIXME: extra DB lookup per candidate — filter during collect_embeddings instead.
+        scored.retain(|(slug, _)| {
+            let bound = EntityKey::bound()
+                .with_prefix(|k| {
+                    k.branch = self.branch.clone();
+                    k.entity = slug.clone();
+                });
+            match self.get_latest::<EntityEntry>(&bound) {
+                Ok(Some(e)) => !e.value.is_deleted(),
+                _ => true,
+            }
+        });
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(limit);

@@ -18,10 +18,18 @@ versioned_key! {
     }
 }
 /// Entity value.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntityValue {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<serde_json::Value>,
+}
+
+impl EntityValue {
+    pub fn is_deleted(&self) -> bool {
+        self.deleted.is_some()
+    }
 }
 
 impl StorageValue for EntityValue {
@@ -85,6 +93,7 @@ mod tests {
             },
             value: EntityValue {
                 description: Some(serde_json::json!("A test")),
+                ..Default::default()
             },
         };
 

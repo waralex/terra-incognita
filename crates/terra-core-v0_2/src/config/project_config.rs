@@ -72,18 +72,10 @@ impl ProjectConfig {
     }
 
     /// Load project config and resolve the data schema.
-    /// Schema path is resolved relative to the config file's directory.
+    /// Relative paths resolve from CWD, not from the config file location.
     pub fn load(config_path: &Path) -> Result<Project, ProjectError> {
         let config = Self::from_file(config_path)?;
-
-        let base_dir = config_path.parent().unwrap_or(Path::new("."));
-        let schema_path = if config.schema_path.is_relative() {
-            base_dir.join(&config.schema_path)
-        } else {
-            config.schema_path.clone()
-        };
-
-        let schema = DataSchema::from_file(&schema_path)?;
+        let schema = DataSchema::from_file(&config.schema_path)?;
         Ok(Project { config, schema })
     }
 }
@@ -138,9 +130,10 @@ mod tests {
             managed_types: {}
         "}).unwrap();
 
+        // schema_path is absolute — resolves as-is regardless of CWD
         let config_yaml = format!(
             "data_dir: ./data\nschema_path: {}",
-            schema_path.file_name().unwrap().to_str().unwrap()
+            schema_path.display()
         );
         let config_path = dir.path().join("terra.yaml");
         fs::write(&config_path, config_yaml).unwrap();

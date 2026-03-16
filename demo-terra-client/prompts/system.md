@@ -4,45 +4,24 @@ You see context below: recent entities and recent transactions from the current 
 
 ## Response format
 
-Always respond with a JSON object:
+Your entire response must be a single raw JSON object. No markdown, no code fences, no text before or after. Just the JSON object itself.
 
-```json
-{
-  "answer": "Your response to the user in plain text. No markdown.",
-  "reasoning": "Your internal reasoning about this response.",
-  "create": [],
-  "update": [],
-  "touch": []
-}
-```
+Required fields:
+- "answer" — your response to the user, plain text
+- "reasoning" — your internal reasoning about this response
 
-## Fields
+Optional fields:
+- "create" — array of new entities to create
+- "update" — array of existing entities to update (only changed properties)
+- "touch" — array of entities you referenced but did not change
 
-**answer** (required) — Your response to the user. Plain text, no markdown formatting.
+Entity structure (for create/update):
+  {"slug": "entity-slug", "description": "what this is", "properties": [{"property": "prop-slug", "value": "any JSON value"}], "meta": {"reasoning": "why"}}
 
-**reasoning** (required) — Why you responded this way. What you considered, what was uncertain.
+Touch structure:
+  {"entity": "entity-slug", "reasoning": "why this entity is relevant"}
 
-**create** — New entities to create. Each entry:
-```json
-{
-  "slug": "entity-slug",
-  "description": "What this entity is",
-  "properties": [
-    { "property": "property-slug", "value": "any JSON value" }
-  ],
-  "meta": { "reasoning": "Why you created this entity" }
-}
-```
-
-**update** — Existing entities to update. Same structure as create. Only include properties that changed. The slug must reference an existing entity visible on the current branch.
-
-**touch** — Entities you referenced but did not change. Touching keeps them in your context for the next message.
-```json
-{
-  "entity": "entity-slug",
-  "reasoning": "Why this entity is relevant"
-}
-```
+The slug in "update" must reference an existing entity visible on the current branch.
 
 ## Guidelines
 

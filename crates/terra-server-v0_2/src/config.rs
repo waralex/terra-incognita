@@ -31,7 +31,14 @@ impl ServerConfig {
                 info!("loading config from {}", path.display());
                 match std::fs::read_to_string(path) {
                     Ok(contents) => match serde_yaml::from_str::<ServerConfig>(&contents) {
-                        Ok(cfg) => return cfg,
+                        Ok(mut cfg) => {
+                            // Resolve project_config_path relative to the server config file.
+                            if cfg.project_config_path.is_relative() {
+                                let base = path.parent().unwrap_or(std::path::Path::new("."));
+                                cfg.project_config_path = base.join(&cfg.project_config_path);
+                            }
+                            return cfg;
+                        }
                         Err(e) => {
                             eprintln!("warning: failed to parse {}: {e}", path.display());
                         }

@@ -29,6 +29,31 @@ input.addEventListener("input", () => {
   input.style.height = Math.min(input.scrollHeight, 120) + "px";
 });
 
+function processLine(line, assistantEl, getAnswer, setAnswer) {
+  if (!line.startsWith("data: ")) return;
+  let data;
+  try { data = JSON.parse(line.slice(6)); } catch { return; }
+
+  console.log("[sse]", data.type, data.type === "delta" ? data.text?.length + " chars" : "");
+
+  switch (data.type) {
+    case "delta":
+      assistantEl.textContent += data.text;
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      break;
+    case "answer":
+      setAnswer(data.text);
+      assistantEl.textContent = data.text;
+      break;
+    case "transaction":
+      addMessage("system", `tx ${data.result?.context?.tx_id?.slice(0, 8) || "ok"}`);
+      break;
+    case "error":
+      addMessage("error", data.error);
+      break;
+  }
+}
+
 function addMessage(role, text) {
   const el = document.createElement("div");
   el.className = `message ${role}`;
@@ -74,27 +99,13 @@ async function sendMessage(text) {
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        let data;
-        try { data = JSON.parse(line.slice(6)); } catch { continue; }
-
-        switch (data.type) {
-          case "delta":
-            assistantEl.textContent += data.text;
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-            break;
-          case "answer":
-            fullAnswer = data.text;
-            assistantEl.textContent = fullAnswer;
-            break;
-          case "transaction":
-            addMessage("system", `tx ${data.result?.context?.tx_id?.slice(0, 8) || "ok"}`);
-            break;
-          case "error":
-            addMessage("error", data.error);
-            break;
-        }
+        processLine(line, assistantEl, () => fullAnswer, (v) => { fullAnswer = v; });
       }
+    }
+
+    // Process any remaining data in buffer
+    if (buffer.trim()) {
+      processLine(buffer, assistantEl, () => fullAnswer, (v) => { fullAnswer = v; });
     }
   } catch (e) {
     addMessage("error", e.message);

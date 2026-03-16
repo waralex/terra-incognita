@@ -31,18 +31,22 @@ app.post("/api/chat", async (req, res) => {
     Connection: "keep-alive",
   });
 
+  let aborted = false;
+  res.on("close", () => { aborted = true; });
+
+  let eventCount = 0;
   const send = (data: unknown) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (aborted) return;
+    const payload = `data: ${JSON.stringify(data)}\n\n`;
+    const ok = res.write(payload);
+    eventCount++;
+    if (eventCount <= 3 || (data as any).type !== "delta") {
+      console.log("[sse] #%d type=%s write_ok=%s", eventCount, (data as any).type, ok);
+    }
   };
 
-  let aborted = false;
-  req.on("close", () => { aborted = true; });
-
   try {
-    for await (const event of handleChat(terra, llm, effectiveConfig, message)) {
-      if (aborted) break;
-      send(event);
-    }
+    await handleChat(terra, llm, effectiveConfig, message, send);
   } catch (e: any) {
     if (!aborted) {
       console.error("Chat error:", e);
@@ -51,6 +55,7 @@ app.post("/api/chat", async (req, res) => {
     }
   }
 
+  console.log("[sse] done, %d events sent, aborted=%s", eventCount, aborted);
   res.end();
 });
 

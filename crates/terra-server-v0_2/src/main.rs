@@ -39,15 +39,8 @@ async fn main() {
     let project = ProjectConfig::load(&server_config.project_config_path)
         .expect("failed to load project config");
 
-    let data_dir = if project.config.data_dir.is_relative() {
-        let base = server_config
-            .project_config_path
-            .parent()
-            .unwrap_or(std::path::Path::new("."));
-        base.join(&project.config.data_dir)
-    } else {
-        project.config.data_dir.clone()
-    };
+    // Relative paths resolve from CWD, not from the config file location.
+    let data_dir = project.config.data_dir.clone();
 
     std::fs::create_dir_all(&data_dir).expect("failed to create data directory");
 

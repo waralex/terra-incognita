@@ -8,6 +8,7 @@ export interface Config {
   openaiApiKey: string;
   contextTransactions: number;
   contextEntities: number;
+  logLlm: boolean;
 }
 
 export function loadConfig(): Config {
@@ -21,6 +22,7 @@ export function loadConfig(): Config {
     openaiApiKey: env("OPENAI_API_KEY", ""),
     contextTransactions: parseInt(env("CONTEXT_TRANSACTIONS", "10"), 10),
     contextEntities: parseInt(env("CONTEXT_ENTITIES", "20"), 10),
+    logLlm: env("LOG_LLM", "false") === "true",
   };
 }
 

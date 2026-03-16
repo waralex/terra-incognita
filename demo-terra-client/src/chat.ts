@@ -24,12 +24,13 @@ function loadPrompt(): string {
   return cachedPrompt;
 }
 
-export async function* handleChat(
+export async function handleChat(
   terra: TerraClient,
   llm: LlmProvider,
   config: Config,
   userMessage: string,
-): AsyncGenerator<ChatEvent> {
+  emit: (event: ChatEvent) => void,
+): Promise<void> {
   let context: string;
   try {
     context = await buildContext(terra, config);
@@ -39,22 +40,34 @@ export async function* handleChat(
 
   const systemPrompt = loadPrompt() + "\n\n" + context;
 
+  if (config.logLlm) {
+    console.log("\n--- LLM REQUEST ---");
+    console.log("System prompt:\n%s", systemPrompt);
+    console.log("\nUser message:\n%s", userMessage);
+    console.log("--- END REQUEST ---\n");
+  }
+
   let fullText = "";
   try {
     for await (const delta of llm.stream(systemPrompt, userMessage)) {
       fullText += delta;
-      yield { type: "delta", text: delta };
+      emit({ type: "delta", text: delta });
     }
   } catch (e: any) {
-    yield { type: "error", error: `LLM error: ${e.message}` };
-    yield { type: "done" };
+    emit({ type: "error", error: `LLM error: ${e.message}` });
+    emit({ type: "done" });
     return;
   }
 
-  const parsed = parseResponse(fullText);
-  yield { type: "answer", text: parsed.answer };
+  if (config.logLlm) {
+    console.log("\n--- LLM RESPONSE ---");
+    console.log(fullText);
+    console.log("--- END RESPONSE ---\n");
+  }
 
-  // Build and send transaction
+  const parsed = parseResponse(fullText);
+  emit({ type: "answer", text: parsed.answer });
+
   const txReq: TransactionReq = {
     meta: {
       question: userMessage,
@@ -72,11 +85,11 @@ export async function* handleChat(
   if (hasMutations) {
     try {
       const result = await terra.transaction(config.branch, txReq);
-      yield { type: "transaction", result };
+      emit({ type: "transaction", result });
     } catch (e: any) {
-      yield { type: "error", error: `Transaction error: ${e.message}` };
+      emit({ type: "error", error: `Transaction error: ${e.message}` });
     }
   }
 
-  yield { type: "done" };
+  emit({ type: "done" });
 }

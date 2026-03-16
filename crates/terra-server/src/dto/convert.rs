@@ -1,15 +1,15 @@
-//! Conversions between DTOs and terra-core-v0_2 domain types.
+//! Conversions between DTOs and terra-core domain types.
 
-use terra_core_v0_2::command::executor::checkout::CheckoutOutput;
-use terra_core_v0_2::command::input::checkout::CheckoutInput;
-use terra_core_v0_2::command::input::transaction::{TouchItem, TransactionInput};
-use terra_core_v0_2::domain::branch::Branch;
-use terra_core_v0_2::domain::entity::Entity;
-use terra_core_v0_2::domain::entity::PropertyValue;
-use terra_core_v0_2::domain::managed::Managed;
-use terra_core_v0_2::domain::transaction::Transaction;
-use terra_core_v0_2::domain::tx_meta::TxMeta;
-use terra_core_v0_2::io::slug::Slug;
+use terra_core::command::executor::checkout::CheckoutOutput;
+use terra_core::command::input::checkout::CheckoutInput;
+use terra_core::command::input::transaction::{TouchItem, TransactionInput};
+use terra_core::domain::branch::Branch;
+use terra_core::domain::entity::Entity;
+use terra_core::domain::entity::PropertyValue;
+use terra_core::domain::managed::Managed;
+use terra_core::domain::transaction::Transaction;
+use terra_core::domain::tx_meta::TxMeta;
+use terra_core::io::slug::Slug;
 
 use crate::dto::request::{
     CheckoutReq, EntityReq, ManagedReq, TransactionReq,

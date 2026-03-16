@@ -3,13 +3,13 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::http::header::CONTENT_TYPE;
-use terra_core_v0_2::command::input::get_branch::GetBranchQuery;
-use terra_core_v0_2::command::input::list_managed::ListManagedQuery;
-use terra_core_v0_2::command::input::list_transactions::ListTransactionsQuery;
-use terra_core_v0_2::command::input::similar_entities::SimilarEntitiesQuery;
-use terra_core_v0_2::command::input::touched_entities::TouchedEntitiesQuery;
-use terra_core_v0_2::io::slug::Slug;
-use terra_core_v0_2::Terra;
+use terra_core::command::input::get_branch::GetBranchQuery;
+use terra_core::command::input::list_managed::ListManagedQuery;
+use terra_core::command::input::list_transactions::ListTransactionsQuery;
+use terra_core::command::input::similar_entities::SimilarEntitiesQuery;
+use terra_core::command::input::touched_entities::TouchedEntitiesQuery;
+use terra_core::io::slug::Slug;
+use terra_core::Terra;
 
 use crate::dto::convert;
 use crate::dto::request::{
@@ -197,7 +197,7 @@ fn ok_response(format: ContentFormat, body: &impl serde::Serialize) -> Response 
     }
 }
 
-fn db_error_response(format: ContentFormat, err: &terra_core_v0_2::io::DbError) -> Response {
+fn db_error_response(format: ContentFormat, err: &terra_core::io::DbError) -> Response {
     let (status, kind) = classify(err);
     error_response(format, status, kind, &err.to_string())
 }
@@ -224,8 +224,8 @@ mod tests {
 
     use indoc::indoc;
     use serde_json::json;
-    use terra_core_v0_2::config::{DataSchema, ProjectConfig};
-    use terra_core_v0_2::embed::NoopEmbedder;
+    use terra_core::config::{DataSchema, ProjectConfig};
+    use terra_core::embed::NoopEmbedder;
 
     use super::*;
 

@@ -1,15 +1,20 @@
-use axum::http::StatusCode;
+//! Error mapping — DbError to HTTP status codes.
 
-/// Maps a QueryError kind string to an HTTP status code.
-pub fn error_kind_to_status(kind: &str) -> StatusCode {
-    match kind {
-        "parse_error" | "invalid_slug" | "reserved_property" | "conflicting_facts"
-        | "assertion_error" | "empty_transaction" => StatusCode::BAD_REQUEST,
-        "duplicate_entity_type" | "duplicate_property" | "entity_already_exists"
-        | "entity_status_conflict" | "branch_already_exists" => StatusCode::CONFLICT,
-        "entity_type_not_found" | "property_not_found" | "entity_not_found"
-        | "branch_not_found" => StatusCode::NOT_FOUND,
-        "max_depth_exceeded" => StatusCode::BAD_REQUEST,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
+use axum::http::StatusCode;
+use terra_core::io::DbError;
+
+/// Map a DbError to (HTTP status code, error kind string).
+pub fn classify(err: &DbError) -> (StatusCode, &'static str) {
+    match err {
+        DbError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
+        DbError::Storage(msg) => {
+            if msg.contains("already exists") {
+                (StatusCode::CONFLICT, "conflict")
+            } else if msg.contains("not found") {
+                (StatusCode::NOT_FOUND, "not_found")
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, "storage_error")
+            }
+        }
     }
 }

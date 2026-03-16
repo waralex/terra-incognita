@@ -206,11 +206,8 @@ Use explicit `use` imports, not `super::` paths.
 
 ## Crate Structure
 
-- **terra-core** — domain logic v0.1 (legacy, being replaced by terra-core-v0_2)
-- **terra-core-v0_2** — domain logic v0.2 (active development, see "v0.2 Rewrite" below)
-- **terra-query** — transport-agnostic query dispatcher (bytes in → bytes out)
-- **terra-server** — HTTP wrapper around terra-query (`POST /query`, YAML/JSON)
-- **terra-cli** — minimal stdin-to-HTTP client
+- **terra-core** — domain logic, storage, command execution
+- **terra-server** — HTTP server over terra-core (`POST /query`, YAML/JSON)
 
 ## Deployment
 
@@ -247,7 +244,7 @@ Commands are sent as YAML or JSON with a `command` field:
 unresolved. On old maps, terra incognita marked places where knowledge ran out.
 This database makes that uncertainty first-class.
 
-## v0.2 Rewrite (terra-core-v0_2)
+## v0.2 Rewrite (terra-core)
 
 ### Why
 

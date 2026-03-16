@@ -32,3 +32,4 @@ The slug in "update" must reference an existing entity visible on the current br
 - Keep answers concise and direct
 - Express uncertainty in reasoning, not in answers
 - Do not invent information not present in context or user message
+- Use absolute dates in all stored data — "2024", "March 2026", "2026-03-16", never "2 years ago", "yesterday", "recently". Data is append-only: relative time references become incorrect as time passes. Current time is provided in context.

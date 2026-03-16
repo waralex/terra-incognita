@@ -11,13 +11,31 @@
     <h1>terra incognita</h1>
     <span id="branch" class="branch">main</span>
   </header>
-  <main id="messages"></main>
-  <footer>
-    <form id="chat-form">
-      <textarea id="input" placeholder="Ask something..." rows="1" autofocus></textarea>
-      <button type="submit" id="send-btn">Send</button>
-    </form>
-  </footer>
+  <div id="app">
+    <div id="chat-panel">
+      <main id="messages"></main>
+      <footer>
+        <form id="chat-form">
+          <textarea id="input" placeholder="Ask something..." rows="1" autofocus></textarea>
+          <button type="submit" id="send-btn">Send</button>
+        </form>
+      </footer>
+    </div>
+    <aside id="inspector">
+      <div id="inspector-empty">Click a message to inspect</div>
+      <div id="inspector-content" hidden>
+        <h3 id="inspector-title"></h3>
+        <section id="inspector-before">
+          <h4>State before</h4>
+          <div id="before-content"></div>
+        </section>
+        <section id="inspector-response">
+          <h4>Agent response</h4>
+          <div id="response-content"></div>
+        </section>
+      </div>
+    </aside>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

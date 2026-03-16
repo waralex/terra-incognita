@@ -102,12 +102,18 @@ export class TerraClient {
     return this.query<CheckoutRes>({ command: "checkout", branch, ...req });
   }
 
-  async touchedEntities(branch: string, limit: number): Promise<EntityRes[]> {
-    return this.query<EntityRes[]>({ command: "entities.touched", branch, limit });
+  async touchedEntities(branch: string, limit: number, atTx?: string): Promise<EntityRes[]> {
+    return this.query<EntityRes[]>({
+      command: "entities.touched", branch, limit,
+      ...(atTx && { at_tx: atTx }),
+    });
   }
 
-  async listTransactions(branch: string, limit: number): Promise<TransactionRes[]> {
-    return this.query<TransactionRes[]>({ command: "transactions.list", branch, limit });
+  async listTransactions(branch: string, limit: number, atTx?: string): Promise<TransactionRes[]> {
+    return this.query<TransactionRes[]>({
+      command: "transactions.list", branch, limit,
+      ...(atTx && { at_tx: atTx }),
+    });
   }
 
   async getBranch(branch: string): Promise<BranchRes> {

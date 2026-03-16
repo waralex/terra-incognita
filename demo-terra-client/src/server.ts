@@ -59,6 +59,22 @@ app.post("/api/chat", async (req, res) => {
   res.end();
 });
 
+app.get("/api/snapshot", async (req, res) => {
+  const b = (req.query.branch as string) || config.branch;
+  const atTx = req.query.at_tx as string | undefined;
+  const entityLimit = parseInt(req.query.entities as string) || config.contextEntities;
+  const txLimit = parseInt(req.query.transactions as string) || config.contextTransactions;
+  try {
+    const [entities, transactions] = await Promise.all([
+      terra.touchedEntities(b, entityLimit, atTx),
+      terra.listTransactions(b, txLimit, atTx),
+    ]);
+    res.json({ entities, transactions });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/context", async (req, res) => {
   const branch = (req.query.branch as string) || config.branch;
   try {

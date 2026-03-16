@@ -9,7 +9,7 @@ import { parseResponse } from "./parse.js";
 
 export type ChatEvent =
   | { type: "delta"; text: string }
-  | { type: "answer"; text: string }
+  | { type: "answer"; text: string; mutations: Record<string, unknown[]> }
   | { type: "transaction"; result: unknown }
   | { type: "error"; error: string }
   | { type: "done" };
@@ -66,7 +66,11 @@ export async function handleChat(
   }
 
   const parsed = parseResponse(fullText);
-  emit({ type: "answer", text: parsed.answer });
+  const mutations: Record<string, unknown[]> = {};
+  if (parsed.create?.length) mutations.create = parsed.create;
+  if (parsed.update?.length) mutations.update = parsed.update;
+  if (parsed.touch?.length) mutations.touch = parsed.touch;
+  emit({ type: "answer", text: parsed.answer, mutations });
 
   const txReq: TransactionReq = {
     meta: {

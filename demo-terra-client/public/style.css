@@ -47,6 +47,19 @@ header h1 {
   border-radius: 4px;
 }
 
+#app {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+#chat-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 main {
   flex: 1;
   overflow-y: auto;
@@ -75,6 +88,15 @@ main {
   align-self: flex-start;
   background: var(--assistant-bg);
   border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.message.assistant:hover {
+  border-color: var(--accent);
+}
+
+.message.assistant.selected {
+  border-left: 3px solid var(--accent);
 }
 
 .message.system {
@@ -142,4 +164,129 @@ footer {
 
 #send-btn:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+/* Inspector panel */
+
+#inspector {
+  width: 400px;
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+}
+
+#inspector-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+#inspector-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+#inspector-content h3 {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--accent);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+#inspector-content h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+#inspector-content details {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+#inspector-content details > summary {
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border-radius: 4px;
+  user-select: none;
+}
+
+#inspector-content details > summary:hover {
+  color: var(--accent);
+}
+
+#inspector-content details[open] > summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: 4px 4px 0 0;
+}
+
+#inspector-content details .detail-body {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.prop-row {
+  display: flex;
+  gap: 8px;
+}
+
+.prop-key {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.prop-val {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.mutation-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-right: 6px;
+}
+
+.mutation-badge.create { background: #1a3a2a; color: #4ade80; }
+.mutation-badge.update { background: #3a3a1a; color: #facc15; }
+.mutation-badge.touch  { background: #1a2a3a; color: #60a5fa; }
+
+.no-data {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.tx-item {
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+.tx-item:last-child {
+  border-bottom: none;
+}
+
+.tx-time {
+  color: var(--text-dim);
 }

@@ -28,6 +28,12 @@ pub struct EmbeddingValue {
     pub embedding: Vec<f32>,
 }
 
+impl EmbeddingValue {
+    pub fn is_active(&self) -> bool {
+        !self.embedding.is_empty()
+    }
+}
+
 impl StorageValue for EmbeddingValue {
     fn encode(&self) -> Result<Vec<u8>, DbError> {
         serde_json::to_vec(self).map_err(|e| DbError::Storage(e.to_string()))

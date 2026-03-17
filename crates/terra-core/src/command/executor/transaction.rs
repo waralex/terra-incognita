@@ -75,7 +75,7 @@ impl ExecuteTransaction {
             batch.put(&EntityChangeEntry {
                 key: EntityChangeKey { change_id },
                 value: EntityChangeValue {
-                    entity: entity.slug.to_string(),
+                    entity: entity.slug.clone(),
                     tx_id,
                     meta: entity.meta.clone(),
                 },
@@ -204,9 +204,9 @@ impl ExecuteTransaction {
         Self::write_embedding(state, branch, tx_id, entity, change_id, entity.description.as_ref(), &[])?;
 
         Ok(ChangeItem {
-            entity: entity.slug.to_string(),
+            entity: entity.slug.clone(),
             change_id,
-            properties: entity.properties.iter().map(|pv| pv.property.to_string()).collect(),
+            properties: entity.properties.iter().map(|pv| pv.property.clone()).collect(),
         })
     }
 
@@ -262,9 +262,9 @@ impl ExecuteTransaction {
         Self::write_embedding(state, branch, tx_id, entity, change_id, description, &existing)?;
 
         Ok(ChangeItem {
-            entity: entity.slug.to_string(),
+            entity: entity.slug.clone(),
             change_id,
-            properties: entity.properties.iter().map(|pv| pv.property.to_string()).collect(),
+            properties: entity.properties.iter().map(|pv| pv.property.clone()).collect(),
         })
     }
 
@@ -426,7 +426,7 @@ impl Command for ExecuteTransaction {
         let mut deleted_slugs = Vec::new();
         for item in &input.delete_entities {
             self.delete_entity(branch, state, tx_id, item)?;
-            deleted_slugs.push(item.entity.to_string());
+            deleted_slugs.push(item.entity.clone());
         }
 
         for managed in &input.create_managed {
@@ -448,13 +448,13 @@ impl Command for ExecuteTransaction {
                 },
                 value: TouchedValue { reasoning: item.reasoning.clone() },
             })?;
-            touched_slugs.push(item.entity.to_string());
+            touched_slugs.push(item.entity.clone());
         }
 
         state.batch().put(&TransactionLogEntry {
             key: TransactionLogKey { tx_id },
             value: TransactionLogValue {
-                branch: branch.id().to_string(),
+                branch: branch.id().clone(),
                 created: created_items,
                 updated: updated_items,
                 touched: touched_slugs,
@@ -1453,7 +1453,8 @@ mod tests {
         assert_eq!(log1.value.branch, "main");
         assert_eq!(log1.value.created.len(), 2);
         assert_eq!(log1.value.created[0].entity, "alice");
-        assert_eq!(log1.value.created[0].properties, vec!["age"]);
+        assert_eq!(log1.value.created[0].properties.len(), 1);
+        assert_eq!(log1.value.created[0].properties[0], "age");
         assert_eq!(log1.value.created[1].entity, "bob");
         assert!(log1.value.created[1].properties.is_empty());
         assert!(log1.value.updated.is_empty());
@@ -1478,8 +1479,8 @@ mod tests {
         assert!(log2.value.created.is_empty());
         assert_eq!(log2.value.updated.len(), 1);
         assert_eq!(log2.value.updated[0].entity, "alice");
-        assert_eq!(log2.value.updated[0].properties, vec!["age"]);
-        assert_eq!(log2.value.deleted, vec!["bob"]);
-        assert_eq!(log2.value.touched, vec!["alice"]);
+        assert_eq!(log2.value.updated[0].properties[0], "age");
+        assert_eq!(log2.value.deleted[0], "bob");
+        assert_eq!(log2.value.touched[0], "alice");
     }
 }

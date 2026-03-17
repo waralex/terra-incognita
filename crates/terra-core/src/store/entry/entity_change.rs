@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
+use crate::io::slug::Slug;
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
 
@@ -25,7 +26,7 @@ storage_key! {
 /// Entity change value — metadata for a batch of property assertions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityChangeValue {
-    pub entity: String,
+    pub entity: Slug,
     pub tx_id: Uuid,
     pub meta: serde_json::Map<String, serde_json::Value>,
 }
@@ -89,7 +90,7 @@ mod tests {
                 change_id: Uuid::now_v7(),
             },
             value: EntityChangeValue {
-                entity: "alice".into(),
+                entity: "alice".parse().unwrap(),
                 tx_id: Uuid::now_v7(),
                 meta,
             },

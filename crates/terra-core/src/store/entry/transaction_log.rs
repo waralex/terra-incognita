@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::io::{DbItem, DbError};
+use crate::io::slug::Slug;
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
 
@@ -22,26 +23,26 @@ storage_key! {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangeItem {
     /// Entity slug.
-    pub entity: String,
+    pub entity: Slug,
     /// Points to EntityChangeEntry for reasoning/meta.
     pub change_id: Uuid,
     /// Property slugs changed in this transaction.
-    pub properties: Vec<String>,
+    pub properties: Vec<Slug>,
 }
 
 /// Denormalized transaction summary — what happened in a single transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionLogValue {
     /// Branch slug where the transaction was committed.
-    pub branch: String,
+    pub branch: Slug,
     /// Entities created in this transaction.
     pub created: Vec<ChangeItem>,
     /// Entities updated in this transaction.
     pub updated: Vec<ChangeItem>,
     /// Entity slugs explicitly touched (not from create/update).
-    pub touched: Vec<String>,
+    pub touched: Vec<Slug>,
     /// Entity slugs deleted in this transaction.
-    pub deleted: Vec<String>,
+    pub deleted: Vec<Slug>,
 }
 
 impl StorageValue for TransactionLogValue {
@@ -99,19 +100,19 @@ mod tests {
         let entry = TransactionLogEntry {
             key: TransactionLogKey { tx_id },
             value: TransactionLogValue {
-                branch: "main".into(),
+                branch: "main".parse().unwrap(),
                 created: vec![ChangeItem {
-                    entity: "alice".into(),
+                    entity: "alice".parse().unwrap(),
                     change_id: Uuid::now_v7(),
-                    properties: vec!["age".into(), "name".into()],
+                    properties: vec!["age".parse().unwrap(), "name".parse().unwrap()],
                 }],
                 updated: vec![ChangeItem {
-                    entity: "bob".into(),
+                    entity: "bob".parse().unwrap(),
                     change_id: Uuid::now_v7(),
-                    properties: vec!["status".into()],
+                    properties: vec!["status".parse().unwrap()],
                 }],
-                touched: vec!["server".into()],
-                deleted: vec!["old-item".into()],
+                touched: vec!["server".parse().unwrap()],
+                deleted: vec!["old-item".parse().unwrap()],
             },
         };
 
@@ -121,13 +122,13 @@ mod tests {
 
         let found = db.get::<TransactionLogEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.tx_id, tx_id);
-        assert_eq!(found.value.branch, "main");
+        assert_eq!(found.value.branch.as_str(), "main");
         assert_eq!(found.value.created.len(), 1);
-        assert_eq!(found.value.created[0].entity, "alice");
-        assert_eq!(found.value.created[0].properties, vec!["age", "name"]);
+        assert_eq!(found.value.created[0].entity.as_str(), "alice");
+        assert_eq!(found.value.created[0].properties.len(), 2);
         assert_eq!(found.value.updated.len(), 1);
-        assert_eq!(found.value.updated[0].entity, "bob");
-        assert_eq!(found.value.touched, vec!["server"]);
-        assert_eq!(found.value.deleted, vec!["old-item"]);
+        assert_eq!(found.value.updated[0].entity.as_str(), "bob");
+        assert_eq!(found.value.touched[0].as_str(), "server");
+        assert_eq!(found.value.deleted[0].as_str(), "old-item");
     }
 }

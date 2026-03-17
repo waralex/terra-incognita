@@ -6,4 +6,5 @@ pub mod entity_change;
 pub mod managed;
 pub mod touched;
 pub mod transaction;
+pub mod transaction_log;
 pub mod visibility;

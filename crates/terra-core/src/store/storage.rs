@@ -16,6 +16,7 @@ use crate::store::entry::entity_change::EntityChangeEntry;
 use crate::store::entry::managed::ManagedEntry;
 use crate::store::entry::touched::TouchedEntry;
 use crate::store::entry::transaction::TransactionEntry;
+use crate::store::entry::transaction_log::TransactionLogEntry;
 use crate::store::entry::visibility::VisibilityEntry;
 
 /// Top-level storage. Owns the database and project config.
@@ -108,6 +109,7 @@ impl Storage {
             .with::<ManagedEntry>()
             .with::<TouchedEntry>()
             .with::<TransactionEntry>()
+            .with::<TransactionLogEntry>()
             .with::<VisibilityEntry>();
         if read_only {
             builder = builder.read_only();

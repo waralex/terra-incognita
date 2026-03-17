@@ -20,6 +20,7 @@ use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, Ent
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
 use crate::store::entry::touched::{TouchedEntry, TouchedKey, TouchedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
+use crate::store::entry::transaction_log::{TransactionLogEntry, TransactionLogKey, TransactionLogValue, ChangeItem};
 
 /// Validates and writes a transaction to a branch.
 pub struct ExecuteTransaction {
@@ -176,7 +177,7 @@ impl ExecuteTransaction {
         state: &mut CommandState,
         tx_id: Uuid,
         entity: &Entity,
-    ) -> Result<(), DbError> {
+    ) -> Result<ChangeItem, DbError> {
         let bound = EntityKey::bound()
             .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = entity.slug.clone(); });
         if branch.exists::<EntityEntry>(&bound)? {
@@ -202,7 +203,11 @@ impl ExecuteTransaction {
         // New entity — description from input, no existing properties.
         Self::write_embedding(state, branch, tx_id, entity, change_id, entity.description.as_ref(), &[])?;
 
-        Ok(())
+        Ok(ChangeItem {
+            entity: entity.slug.to_string(),
+            change_id,
+            properties: entity.properties.iter().map(|pv| pv.property.to_string()).collect(),
+        })
     }
 
     fn update_entity(
@@ -211,7 +216,7 @@ impl ExecuteTransaction {
         state: &mut CommandState,
         tx_id: Uuid,
         entity: &Entity,
-    ) -> Result<(), DbError> {
+    ) -> Result<ChangeItem, DbError> {
         let bound = EntityKey::bound()
             .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = entity.slug.clone(); });
         if !branch.exists::<EntityEntry>(&bound)? {
@@ -256,7 +261,11 @@ impl ExecuteTransaction {
         let change_id = self.write_assertions(branch, state, tx_id, entity)?;
         Self::write_embedding(state, branch, tx_id, entity, change_id, description, &existing)?;
 
-        Ok(())
+        Ok(ChangeItem {
+            entity: entity.slug.to_string(),
+            change_id,
+            properties: entity.properties.iter().map(|pv| pv.property.to_string()).collect(),
+        })
     }
 
     fn create_managed_item(
@@ -404,16 +413,20 @@ impl Command for ExecuteTransaction {
 
         let tx_id = Uuid::now_v7();
 
+        let mut created_items = Vec::new();
         for entity in &input.create_entities {
-            self.create_entity(branch, state, tx_id, entity)?;
+            created_items.push(self.create_entity(branch, state, tx_id, entity)?);
         }
 
+        let mut updated_items = Vec::new();
         for entity in &input.update_entities {
-            self.update_entity(branch, state, tx_id, entity)?;
+            updated_items.push(self.update_entity(branch, state, tx_id, entity)?);
         }
 
+        let mut deleted_slugs = Vec::new();
         for item in &input.delete_entities {
             self.delete_entity(branch, state, tx_id, item)?;
+            deleted_slugs.push(item.entity.to_string());
         }
 
         for managed in &input.create_managed {
@@ -425,6 +438,7 @@ impl Command for ExecuteTransaction {
         }
 
         // Explicit touches — applied last to override auto-touches.
+        let mut touched_slugs = Vec::new();
         for item in &input.touched {
             state.batch().put(&TouchedEntry {
                 key: TouchedKey {
@@ -434,7 +448,19 @@ impl Command for ExecuteTransaction {
                 },
                 value: TouchedValue { reasoning: item.reasoning.clone() },
             })?;
+            touched_slugs.push(item.entity.to_string());
         }
+
+        state.batch().put(&TransactionLogEntry {
+            key: TransactionLogKey { tx_id },
+            value: TransactionLogValue {
+                branch: branch.id().to_string(),
+                created: created_items,
+                updated: updated_items,
+                touched: touched_slugs,
+                deleted: deleted_slugs,
+            },
+        })?;
 
         state.batch().put(&TransactionEntry {
             key: TransactionKey {
@@ -467,6 +493,7 @@ mod tests {
     use serde_json::{Map, Value};
 
     use indoc::indoc;
+    use crate::command::input::transaction::TouchItem;
     use crate::config::DataSchema;
 
     fn test_config() -> Arc<ProjectConfig> {
@@ -1394,5 +1421,65 @@ mod tests {
             let results = branch.similar_entities(&query, 10, 0.5, None).unwrap();
             assert!(results.is_empty());
         }
+    }
+
+    // --- Transaction log ---
+
+    #[test]
+    fn transaction_log_records_all_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage.clone());
+
+        // Step 1: create two entities.
+        let tx1 = exec(&branch, TransactionInput::new(meta("setup"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Person A")),
+                vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+                entity_meta("census"),
+            ))
+            .create_entity(Entity::new(
+                "bob".parse().unwrap(),
+                Some(serde_json::json!("Person B")),
+                vec![],
+                Map::new(),
+            )));
+
+        // Verify tx1 log.
+        let log1 = storage.get::<TransactionLogEntry>(
+            &TransactionLogKey { tx_id: tx1.context.tx_id }
+        ).unwrap().unwrap();
+        assert_eq!(log1.value.branch, "main");
+        assert_eq!(log1.value.created.len(), 2);
+        assert_eq!(log1.value.created[0].entity, "alice");
+        assert_eq!(log1.value.created[0].properties, vec!["age"]);
+        assert_eq!(log1.value.created[1].entity, "bob");
+        assert!(log1.value.created[1].properties.is_empty());
+        assert!(log1.value.updated.is_empty());
+        assert!(log1.value.touched.is_empty());
+        assert!(log1.value.deleted.is_empty());
+
+        // Step 2: update + touch + delete in one transaction.
+        let tx2 = exec(&branch, TransactionInput::new(meta("mixed ops"))
+            .update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(31), context: () }],
+                entity_meta("birthday"),
+            ))
+            .delete_entity(DeleteItem::new("bob".parse().unwrap(), serde_json::json!("no longer relevant")))
+            .touch(TouchItem::new("alice".parse().unwrap(), "still relevant")));
+
+        let log2 = storage.get::<TransactionLogEntry>(
+            &TransactionLogKey { tx_id: tx2.context.tx_id }
+        ).unwrap().unwrap();
+        assert_eq!(log2.value.branch, "main");
+        assert!(log2.value.created.is_empty());
+        assert_eq!(log2.value.updated.len(), 1);
+        assert_eq!(log2.value.updated[0].entity, "alice");
+        assert_eq!(log2.value.updated[0].properties, vec!["age"]);
+        assert_eq!(log2.value.deleted, vec!["bob"]);
+        assert_eq!(log2.value.touched, vec!["alice"]);
     }
 }

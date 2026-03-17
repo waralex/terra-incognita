@@ -1,7 +1,7 @@
 //! Entity change — provenance record for a batch of assertions on one entity.
 //!
 //! Key: `change_id(16)` = 16 bytes.
-//! Value: JSON with entity_id, tx_id, reasoning.
+//! Value: JSON with entity slug, tx_id, reasoning.
 //! Append-only, global (not branch-scoped).
 //!
 //! Multiple assertions (different properties) reference the same change_id,
@@ -25,7 +25,7 @@ storage_key! {
 /// Entity change value — metadata for a batch of property assertions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityChangeValue {
-    pub entity_id: Uuid,
+    pub entity: String,
     pub tx_id: Uuid,
     pub meta: serde_json::Map<String, serde_json::Value>,
 }
@@ -89,7 +89,7 @@ mod tests {
                 change_id: Uuid::now_v7(),
             },
             value: EntityChangeValue {
-                entity_id: Uuid::now_v7(),
+                entity: "alice".into(),
                 tx_id: Uuid::now_v7(),
                 meta,
             },

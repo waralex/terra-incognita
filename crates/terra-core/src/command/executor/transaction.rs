@@ -74,7 +74,7 @@ impl ExecuteTransaction {
             batch.put(&EntityChangeEntry {
                 key: EntityChangeKey { change_id },
                 value: EntityChangeValue {
-                    entity_id: entity.slug.hash(),
+                    entity: entity.slug.to_string(),
                     tx_id,
                     meta: entity.meta.clone(),
                 },
@@ -679,7 +679,7 @@ mod tests {
 
         let change = storage_get_exact(&branch, found.value.change_id).unwrap();
         assert_eq!(change.value.meta["reasoning"], "initial observation");
-        assert_eq!(change.value.entity_id, alice_slug.hash());
+        assert_eq!(change.value.entity, alice_slug.as_str());
     }
 
     fn storage_get_exact(branch: &BranchContext, change_id: Uuid) -> Result<EntityChangeEntry, DbError> {
@@ -1001,7 +1001,7 @@ mod tests {
         assert_eq!(age_entry.value.change_id, city_entry.value.change_id);
 
         let change = storage_get_exact(&branch, age_entry.value.change_id).unwrap();
-        assert_eq!(change.value.entity_id, alice_slug.hash());
+        assert_eq!(change.value.entity, alice_slug.as_str());
         assert_eq!(change.value.tx_id, result.context.tx_id);
         assert_eq!(change.value.meta["reasoning"], "census data");
     }

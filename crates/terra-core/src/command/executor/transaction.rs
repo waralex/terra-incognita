@@ -21,6 +21,7 @@ use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
 use crate::store::entry::touched::{TouchedEntry, TouchedKey, TouchedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
 use crate::store::entry::transaction_log::{TransactionLogEntry, TransactionLogKey, TransactionLogValue, ChangeItem};
+use crate::store::query::properties;
 
 /// Validates and writes a transaction to a branch.
 pub struct ExecuteTransaction {
@@ -236,7 +237,7 @@ impl ExecuteTransaction {
             } else {
                 None
             };
-            existing = branch.properties(&entity.slug, None)?;
+            existing = properties::properties(branch, &entity.slug, None)?;
         } else {
             stored_desc = None;
             existing = vec![];
@@ -489,6 +490,7 @@ mod tests {
     use crate::config::ProjectConfig;
     use crate::domain::entity::PropertyValue;
     use crate::domain::managed::Managed;
+    use crate::store::query::similarity;
     use crate::store::storage::Storage;
     use serde_json::{Map, Value};
 
@@ -1368,7 +1370,7 @@ mod tests {
 
             // Query with a vector similar to what TestEmbedder produces.
             let query = vec![50.0, 25.0, 5.0, 1.0];
-            let results = branch.similar_entities(&query, 10, 0.0, None).unwrap();
+            let results = similarity::similar_entities(&branch, &query, 10, 0.0, None).unwrap();
 
             assert_eq!(results.len(), 2);
             // Both should have high similarity (vectors are in the same direction).
@@ -1396,7 +1398,7 @@ mod tests {
             }
 
             let query = vec![10.0, 5.0, 1.0, 1.0];
-            let results = branch.similar_entities(&query, 2, 0.0, None).unwrap();
+            let results = similarity::similar_entities(&branch, &query, 2, 0.0, None).unwrap();
             assert_eq!(results.len(), 2);
         }
 
@@ -1418,7 +1420,7 @@ mod tests {
 
             // Orthogonal query — should have low similarity.
             let query = vec![0.0, 0.0, 0.0, 0.0];
-            let results = branch.similar_entities(&query, 10, 0.5, None).unwrap();
+            let results = similarity::similar_entities(&branch, &query, 10, 0.5, None).unwrap();
             assert!(results.is_empty());
         }
     }

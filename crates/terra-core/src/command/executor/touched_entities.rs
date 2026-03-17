@@ -15,6 +15,7 @@ use crate::io::storage_key::StorageKey;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::entry::touched::{TouchedEntry, TouchedKey};
+use crate::store::query::properties;
 
 /// Lists recently touched entities ordered by touch recency (most recent first).
 pub struct ListTouchedEntities;
@@ -120,7 +121,7 @@ impl ListTouchedEntities {
             let entity_tx = entry.as_ref().map(|e| e.key.tx_id).unwrap_or(Uuid::nil());
             let description = entry.and_then(|e| e.value.description);
 
-            let assertion_entries = branch.properties(slug, Some(at_tx))?;
+            let assertion_entries = properties::properties(branch, slug, Some(at_tx))?;
             let properties: Vec<PropertyValue<TxMeta>> = assertion_entries
                 .into_iter()
                 .map(|a| PropertyValue {

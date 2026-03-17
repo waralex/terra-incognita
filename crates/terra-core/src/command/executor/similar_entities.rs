@@ -6,6 +6,7 @@ use crate::command::input::similar_entities::SimilarEntitiesQuery;
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::store::branch_context::BranchContext;
+use crate::store::query::similarity;
 
 /// Accepts multiple query values, embeds each, and returns entities ranked
 /// by the maximum cosine similarity across all query vectors.
@@ -32,7 +33,7 @@ impl Command for FindSimilarEntities {
             })
             .collect::<Result<_, _>>()?;
 
-        branch.similar_entities_multi(&embeddings, input.limit, input.min_similarity, input.at_tx)
+        similarity::similar_entities_multi(branch, &embeddings, input.limit, input.min_similarity, input.at_tx)
     }
 }
 

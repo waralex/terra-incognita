@@ -47,9 +47,7 @@ export class AnthropicProvider implements LlmProvider {
 
     try {
       while (true) {
-        console.log("[anthropic] waiting for chunk...");
         const { done, value } = await reader.read();
-        console.log("[anthropic] chunk: done=%s, bytes=%d", done, value?.length ?? 0);
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -63,8 +61,6 @@ export class AnthropicProvider implements LlmProvider {
 
           let event;
           try { event = JSON.parse(data); } catch { continue; }
-
-          console.log("[anthropic] sse event: %s", event.type);
 
           if (
             event.type === "content_block_delta" &&

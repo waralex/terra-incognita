@@ -44,6 +44,9 @@ async fn main() {
 
     std::fs::create_dir_all(&data_dir).expect("failed to create data directory");
 
+    let abs_data_dir = std::path::absolute(&data_dir).unwrap_or(data_dir.clone());
+    info!("opening storage: {}", abs_data_dir.display());
+
     let embedder: Arc<dyn terra_core::embed::Embedder> = Arc::new(NoopEmbedder);
 
     let terra = Terra::open(
@@ -53,8 +56,6 @@ async fn main() {
         embedder,
     )
     .expect("failed to open Terra");
-
-    info!("data dir: {}", data_dir.display());
 
     let state = Arc::new(terra);
 

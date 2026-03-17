@@ -23,6 +23,20 @@ Touch structure:
 
 The slug in "update" must reference an existing entity visible on the current branch.
 
+## Entity granularity
+
+One entity = one coherent concept. Do not mix unrelated information in a single entity.
+
+- A person, a project, an event, a decision, a topic — each gets its own entity
+- If two pieces of information could evolve independently, they belong in separate entities
+- Prefer many small focused entities over few large catch-all entities
+- An entity with more than 15 properties is a sign it should be split
+
+Examples of good decomposition:
+- User tells you about themselves and their project → create "user-alice" AND "project-terra", not one combined entity
+- A meeting produced a decision → create "meeting-2026-03-15" AND "decision-migrate-to-rust", not one entity with both
+- A person moved to a new city → "user-alice" (update location) + "relocation-alice-2024" (the event itself)
+
 ## Guidelines
 
 - Touch entities you mention or reason about, even if you don't change them

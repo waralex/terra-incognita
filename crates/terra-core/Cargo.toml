@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = []
-onnx = ["dep:ort", "dep:tokenizers"]
+onnx = ["dep:ort", "dep:tokenizers", "dep:ndarray"]
 
 [dependencies]
 rocksdb = { version = "0.24", default-features = false, features = ["bindgen-runtime", "lz4"] }
@@ -21,6 +21,7 @@ paste = "1"
 typed-builder = "0.23.2"
 ort = { version = "2.0.0-rc.12", optional = true }
 tokenizers = { version = "0.22", default-features = false, features = ["onig"], optional = true }
+ndarray = { version = "0.17", optional = true }
 
 [dev-dependencies]
 indoc = "2"

@@ -15,6 +15,8 @@ pub struct ServerConfig {
     #[serde(default = "default_port")]
     pub port: u16,
     pub project_config_path: PathBuf,
+    /// Path to directory with model.onnx + tokenizer.json. Enables embeddings.
+    pub embed_model_dir: Option<PathBuf>,
 }
 
 fn default_port() -> u16 {
@@ -32,10 +34,15 @@ impl ServerConfig {
                 match std::fs::read_to_string(path) {
                     Ok(contents) => match serde_yaml::from_str::<ServerConfig>(&contents) {
                         Ok(mut cfg) => {
-                            // Resolve project_config_path relative to the server config file.
+                            let base = path.parent().unwrap_or(std::path::Path::new("."));
+                            // Resolve relative paths from the server config file location.
                             if cfg.project_config_path.is_relative() {
-                                let base = path.parent().unwrap_or(std::path::Path::new("."));
                                 cfg.project_config_path = base.join(&cfg.project_config_path);
+                            }
+                            if let Some(ref dir) = cfg.embed_model_dir {
+                                if dir.is_relative() {
+                                    cfg.embed_model_dir = Some(base.join(dir));
+                                }
                             }
                             return cfg;
                         }

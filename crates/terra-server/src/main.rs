@@ -12,6 +12,7 @@ use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::{routing::post, Router};
 use terra_core::config::ProjectConfig;
+use terra_core::embed::Embedder;
 use terra_core::embed::NoopEmbedder;
 use terra_core::Terra;
 use tracing::info;
@@ -47,7 +48,7 @@ async fn main() {
     let abs_data_dir = std::path::absolute(&data_dir).unwrap_or(data_dir.clone());
     info!("opening storage: {}", abs_data_dir.display());
 
-    let embedder: Arc<dyn terra_core::embed::Embedder> = Arc::new(NoopEmbedder);
+    let embedder: Arc<dyn Embedder> = create_embedder(&server_config);
 
     let terra = Terra::open(
         &data_dir,
@@ -70,4 +71,23 @@ async fn main() {
 
     info!("listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.expect("server error");
+}
+
+fn create_embedder(config: &ServerConfig) -> Arc<dyn Embedder> {
+    #[cfg(feature = "onnx")]
+    if let Some(ref dir) = config.embed_model_dir {
+        info!("loading ONNX embedder from {}", dir.display());
+        let embedder = terra_core::embed::OnnxEmbedder::from_dir(dir)
+            .expect("failed to load ONNX embedder");
+        info!("ONNX embedder ready ({}d)", embedder.dimensions());
+        return Arc::new(embedder);
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    if config.embed_model_dir.is_some() {
+        panic!("embed_model_dir is set but terra-server was built without the 'onnx' feature");
+    }
+
+    info!("embeddings disabled (no embed_model_dir)");
+    Arc::new(NoopEmbedder)
 }

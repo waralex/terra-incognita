@@ -1,6 +1,8 @@
 //! Embedding support — trait, NoopEmbedder, cosine similarity.
 
 pub mod onnx;
+#[cfg(feature = "onnx")]
+pub use onnx::OnnxEmbedder;
 
 use crate::io::DbError;
 

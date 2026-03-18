@@ -6,9 +6,10 @@
 #[cfg(feature = "onnx")]
 mod inner {
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::Mutex;
 
     use ort::session::Session;
+    use ort::value::Tensor;
     use tokenizers::Tokenizer;
 
     use crate::embed::Embedder;
@@ -18,7 +19,7 @@ mod inner {
 
     /// Embedder backed by ONNX Runtime running all-MiniLM-L6-v2.
     pub struct OnnxEmbedder {
-        session: Session,
+        session: Mutex<Session>,
         tokenizer: Tokenizer,
     }
 
@@ -29,14 +30,16 @@ mod inner {
             let tokenizer_path = dir.join("tokenizer.json");
 
             let session = Session::builder()
-                .and_then(|b| b.with_intra_threads(1))
-                .and_then(|b| b.commit_from_file(&model_path))
+                .map_err(|e| DbError::Storage(format!("ONNX builder error: {}", e)))?
+                .with_intra_threads(1)
+                .map_err(|e| DbError::Storage(format!("ONNX threads error: {}", e)))?
+                .commit_from_file(&model_path)
                 .map_err(|e| DbError::Storage(format!("ONNX session error: {}", e)))?;
 
             let tokenizer = Tokenizer::from_file(&tokenizer_path)
                 .map_err(|e| DbError::Storage(format!("tokenizer error: {}", e)))?;
 
-            Ok(Self { session, tokenizer })
+            Ok(Self { session: Mutex::new(session), tokenizer })
         }
     }
 
@@ -50,31 +53,33 @@ mod inner {
             let token_types: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
             let len = ids.len();
 
-            let ids_array = ndarray::Array2::from_shape_vec((1, len), ids)
-                .map_err(|e| DbError::Storage(format!("ndarray error: {}", e)))?;
-            let mask_array = ndarray::Array2::from_shape_vec((1, len), attention)
-                .map_err(|e| DbError::Storage(format!("ndarray error: {}", e)))?;
-            let type_array = ndarray::Array2::from_shape_vec((1, len), token_types)
-                .map_err(|e| DbError::Storage(format!("ndarray error: {}", e)))?;
+            let ids_tensor = Tensor::from_array(([1, len], ids))
+                .map_err(|e| DbError::Storage(format!("tensor error: {}", e)))?;
+            let mask_tensor = Tensor::from_array(([1, len], attention))
+                .map_err(|e| DbError::Storage(format!("tensor error: {}", e)))?;
+            let type_tensor = Tensor::from_array(([1, len], token_types))
+                .map_err(|e| DbError::Storage(format!("tensor error: {}", e)))?;
 
-            let outputs = self.session.run(
-                ort::inputs![ids_array, mask_array, type_array]
-                    .map_err(|e| DbError::Storage(format!("ort input error: {}", e)))?
-            ).map_err(|e| DbError::Storage(format!("ort run error: {}", e)))?;
+            let mut session = self.session.lock()
+                .map_err(|e| DbError::Storage(format!("session lock error: {}", e)))?;
+            let outputs = session.run(ort::inputs![ids_tensor, mask_tensor, type_tensor])
+                .map_err(|e| DbError::Storage(format!("ort run error: {}", e)))?;
 
-            // Output shape: (1, tokens, 384). Mean-pool over token dimension.
-            let output = outputs[0]
+            // Output shape: (1, tokens, 384). Extract then release the lock.
+            let (shape, data) = outputs[0]
                 .try_extract_tensor::<f32>()
                 .map_err(|e| DbError::Storage(format!("ort extract error: {}", e)))?;
 
-            let shape = output.shape();
-            let token_count = shape[1];
-            let dim = shape[2];
+            let token_count = shape[1] as usize;
+            let dim = shape[2] as usize;
+            let flat: Vec<f32> = data.to_vec();
+            drop(outputs);
+            drop(session);
 
             let mut pooled = vec![0.0f32; dim];
             for t in 0..token_count {
                 for d in 0..dim {
-                    pooled[d] += output[[0, t, d]];
+                    pooled[d] += flat[t * dim + d];
                 }
             }
             let count = token_count as f32;

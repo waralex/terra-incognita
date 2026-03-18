@@ -4,6 +4,10 @@ version = "0.2.0"
 edition = "2021"
 license.workspace = true
 
+[features]
+default = []
+onnx = ["terra-core/onnx"]
+
 [dependencies]
 terra-core = { path = "../terra-core" }
 axum = "0.8"

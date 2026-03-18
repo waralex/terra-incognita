@@ -6,6 +6,8 @@ import { TerraClient, type TransactionReq } from "./terra.js";
 import type { LlmProvider } from "./llm/index.js";
 import { buildContext } from "./context.js";
 import { parseResponse } from "./parse.js";
+// HACK: remove this import to disable translation
+import { translateToEnglish } from "./translate.js";
 
 export type ChatEvent =
   | { type: "delta"; text: string }
@@ -28,9 +30,15 @@ export async function handleChat(
   terra: TerraClient,
   llm: LlmProvider,
   config: Config,
-  userMessage: string,
+  rawMessage: string,
   emit: (event: ChatEvent) => void,
 ): Promise<void> {
+  // HACK: translate user message to English before processing
+  let userMessage = rawMessage;
+  if (config.anthropicApiKey) {
+    userMessage = await translateToEnglish(config.anthropicApiKey, rawMessage);
+  }
+
   let context: string;
   try {
     context = await buildContext(terra, config);

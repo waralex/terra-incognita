@@ -38,11 +38,14 @@ fn collect_managed(
     seen_items: &mut HashSet<Slug>,
     result: &mut Vec<Managed<TxMeta>>,
 ) -> Result<(), DbError> {
-    let bound = ManagedKey::bound()
+    let mut bound = ManagedKey::bound()
         .with_prefix(|k| {
             k.branch = on_branch.clone();
             k.type_name = type_slug.clone();
         });
+    if let Some(tx) = at_tx {
+        bound = bound.with_upper(|k| k.tx_id = tx);
+    }
 
     let mut iter = storage.scan::<ManagedEntry>(&bound)?;
 
@@ -251,5 +254,56 @@ mod tests {
         let managed = cmd.execute(&branch, &mut state, ListManagedQuery::new(None)).unwrap();
         assert_eq!(managed.len(), 1);
         assert_eq!(managed[0].slug.as_str(), "task-open");
+    }
+
+    #[test]
+    fn managed_inherited_from_parent_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let main = storage.main_branch();
+
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("parent task"));
+
+        exec_tx(&main, TransactionInput::new(meta("setup"))
+            .create_managed(crate::domain::managed::Managed::new(
+                "task".parse().unwrap(),
+                "task-from-main".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            )));
+
+        // Checkout child branch.
+        let checkout_cmd = crate::command::executor::checkout::ExecuteCheckout::new(
+            DomainValidator::new(test_schema()),
+        );
+        let mut cs = CommandState::new(&storage);
+        checkout_cmd.execute(&main, &mut cs, crate::command::input::checkout::CheckoutInput::new(
+            "child".parse().unwrap(),
+            meta("explore"),
+            None,
+            TransactionInput::new(meta("child task"))
+                .create_managed(crate::domain::managed::Managed::new(
+                    "task".parse().unwrap(),
+                    "task-from-child".parse().unwrap(),
+                    Some("open".into()),
+                    {
+                        let mut f = Map::new();
+                        f.insert("goal".into(), serde_json::json!("child task"));
+                        f
+                    },
+                )),
+        )).unwrap();
+        cs.commit().unwrap();
+
+        let child = storage.branch("child".parse().unwrap()).unwrap();
+        let cmd = ListManaged::new(test_schema());
+        let mut state = CommandState::new(child.storage());
+        let managed = cmd.execute(&child, &mut state, ListManagedQuery::new(None)).unwrap();
+
+        assert_eq!(managed.len(), 2);
+        let slugs: Vec<&str> = managed.iter().map(|m| m.slug.as_str()).collect();
+        assert!(slugs.contains(&"task-from-main"));
+        assert!(slugs.contains(&"task-from-child"));
     }
 }

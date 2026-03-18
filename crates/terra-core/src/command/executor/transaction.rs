@@ -472,10 +472,10 @@ impl Command for ExecuteTransaction {
 
         let tx_id = Uuid::now_v7();
 
-        let mut created_entity_slugs: HashSet<&Slug> = HashSet::new();
+        let mut seen_entity_slugs: HashSet<&Slug> = HashSet::new();
         let mut created_items = Vec::new();
         for entity in &input.create_entities {
-            if !created_entity_slugs.insert(&entity.slug) {
+            if !seen_entity_slugs.insert(&entity.slug) {
                 return Err(DbError::Storage(format!(
                     "duplicate entity in transaction: {}", entity.slug
                 )));
@@ -485,18 +485,28 @@ impl Command for ExecuteTransaction {
 
         let mut updated_items = Vec::new();
         for entity in &input.update_entities {
+            if !seen_entity_slugs.insert(&entity.slug) {
+                return Err(DbError::Storage(format!(
+                    "duplicate entity in transaction: {}", entity.slug
+                )));
+            }
             updated_items.push(self.update_entity(branch, state, tx_id, entity)?);
         }
 
         let mut deleted_items = Vec::new();
         for item in &input.delete_entities {
+            if !seen_entity_slugs.insert(&item.entity) {
+                return Err(DbError::Storage(format!(
+                    "duplicate entity in transaction: {}", item.entity
+                )));
+            }
             deleted_items.push(self.delete_entity(branch, state, tx_id, item)?);
         }
 
-        let mut created_managed_slugs: HashSet<(&Slug, &Slug)> = HashSet::new();
+        let mut seen_managed_slugs: HashSet<(&Slug, &Slug)> = HashSet::new();
         let mut created_managed_items = Vec::new();
         for managed in &input.create_managed {
-            if !created_managed_slugs.insert((&managed.type_name, &managed.slug)) {
+            if !seen_managed_slugs.insert((&managed.type_name, &managed.slug)) {
                 return Err(DbError::Storage(format!(
                     "duplicate managed item in transaction: {}/{}", managed.type_name, managed.slug
                 )));
@@ -510,6 +520,11 @@ impl Command for ExecuteTransaction {
 
         let mut updated_managed_items = Vec::new();
         for managed in &input.update_managed {
+            if !seen_managed_slugs.insert((&managed.type_name, &managed.slug)) {
+                return Err(DbError::Storage(format!(
+                    "duplicate managed item in transaction: {}/{}", managed.type_name, managed.slug
+                )));
+            }
             self.update_managed_item(branch, state.batch(), tx_id, managed)?;
             updated_managed_items.push(ManagedItem {
                 type_name: managed.type_name.clone(),
@@ -1785,6 +1800,70 @@ mod tests {
             )));
 
         assert_eq!(result.meta["reasoning"], "two entities");
+    }
+
+    #[test]
+    fn duplicate_update_entity_in_transaction_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![],
+                Map::new(),
+            )));
+
+        let c = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup update"))
+            .update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                entity_meta("first"),
+            ))
+            .update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                entity_meta("second"),
+            ))
+        ).unwrap_err();
+        assert!(err.to_string().contains("duplicate entity in transaction: alice"));
+    }
+
+    #[test]
+    fn duplicate_delete_entity_in_transaction_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![],
+                Map::new(),
+            )));
+
+        let c = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup delete"))
+            .delete_entity(DeleteItem::new("alice".parse().unwrap(), serde_json::json!("reason 1")))
+            .delete_entity(DeleteItem::new("alice".parse().unwrap(), serde_json::json!("reason 2")))
+        ).unwrap_err();
+        assert!(err.to_string().contains("duplicate entity in transaction: alice"));
     }
 
     // --- Re-create after deletion ---

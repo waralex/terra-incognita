@@ -68,7 +68,8 @@ export async function buildContext(
 }
 
 function formatEntity(e: EntityRes): string {
-  const lines: string[] = [`## ${e.slug}`];
+  const created = e.context?.time ? ` (created_at: ${formatTime(e.context.time)})` : "";
+  const lines: string[] = [`## ${e.slug}${created}`];
   if (e.description != null) {
     lines.push(`description: ${JSON.stringify(e.description)}`);
   }

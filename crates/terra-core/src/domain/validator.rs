@@ -159,11 +159,21 @@ fn validate_state(
         (Some(_), None) => Err(ValidationError::MissingState {
             type_name: type_name.into(),
         }),
+        (Some(lc), Some(s)) => {
+            if !lc.states.contains(s) {
+                Err(ValidationError::InvalidState {
+                    type_name: type_name.into(),
+                    state: s.clone(),
+                })
+            } else {
+                Ok(())
+            }
+        }
         (None, Some(s)) => Err(ValidationError::InvalidState {
             type_name: type_name.into(),
             state: s.clone(),
         }),
-        _ => Ok(()),
+        (None, None) => Ok(()),
     }
 }
 
@@ -456,5 +466,29 @@ mod tests {
         let v = DomainValidator::new(schema_with_entity_change_meta());
         let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
         v.check_entity_update(&e).unwrap();
+    }
+
+    // --- Lifecycle state validation ---
+
+    #[test]
+    fn create_managed_with_invalid_state() {
+        let v = DomainValidator::new(schema_with_managed());
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("do stuff"));
+
+        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("banana".into()), fields);
+        let err = v.check_managed_create(&m).unwrap_err();
+        assert!(matches!(err, ValidationError::InvalidState { type_name, state }
+            if type_name == "task" && state == "banana"));
+    }
+
+    #[test]
+    fn update_managed_with_invalid_state() {
+        let v = DomainValidator::new(schema_with_managed());
+
+        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("banana".into()), Map::new());
+        let err = v.check_managed_update(&m).unwrap_err();
+        assert!(matches!(err, ValidationError::InvalidState { type_name, state }
+            if type_name == "task" && state == "banana"));
     }
 }

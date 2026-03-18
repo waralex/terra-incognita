@@ -93,13 +93,17 @@ pub struct ManagedTypeDef {
 
 /// Lifecycle definition for a managed type.
 ///
-/// States are free-form strings — any value is valid.
-/// The lifecycle defines which state is assigned on creation
+/// The lifecycle defines valid states, which state is assigned on creation,
 /// and which states are included in default listings.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LifecycleDef {
     /// State assigned on creation.
     pub initial: String,
+
+    /// Full set of valid states. If empty in YAML, derived from `{initial} ∪ visible`
+    /// during validation.
+    #[serde(default)]
+    pub states: Vec<String>,
 
     /// States included in default listings (loaded into agent context).
     /// If empty, all states are visible by default.
@@ -132,7 +136,7 @@ pub enum ConfigError {
 impl DataSchema {
     /// Parse config from a YAML string.
     pub fn from_yaml(yaml: &str) -> Result<Self, ConfigError> {
-        let config: Self = serde_yaml::from_str(yaml)?;
+        let mut config: Self = serde_yaml::from_str(yaml)?;
         config.validate()?;
         Ok(config)
     }
@@ -144,8 +148,9 @@ impl DataSchema {
     }
 
     /// Validate internal consistency after deserialization.
-    fn validate(&self) -> Result<(), ConfigError> {
-        for (name, def) in &self.managed_types {
+    /// Populates `states` from `{initial} ∪ visible` when not explicitly provided.
+    fn validate(&mut self) -> Result<(), ConfigError> {
+        for (name, def) in &mut self.managed_types {
             if def.lifecycle.is_some() && def.fields.contains_key("state") {
                 return Err(ConfigError::ReservedField {
                     type_name: name.clone(),
@@ -153,7 +158,7 @@ impl DataSchema {
                 });
             }
 
-            if let Some(lc) = &def.lifecycle {
+            if let Some(lc) = &mut def.lifecycle {
                 if lc.initial.is_empty() {
                     return Err(ConfigError::Lifecycle {
                         type_name: name.clone(),
@@ -166,6 +171,32 @@ impl DataSchema {
                         return Err(ConfigError::Lifecycle {
                             type_name: name.clone(),
                             message: "visible state is empty".into(),
+                        });
+                    }
+                }
+
+                // Derive states from {initial} ∪ visible when not provided.
+                if lc.states.is_empty() {
+                    let mut derived = std::collections::BTreeSet::new();
+                    derived.insert(lc.initial.clone());
+                    derived.extend(lc.visible.iter().cloned());
+                    lc.states = derived.into_iter().collect();
+                }
+
+                // Validate initial is in states.
+                if !lc.states.contains(&lc.initial) {
+                    return Err(ConfigError::Lifecycle {
+                        type_name: name.clone(),
+                        message: format!("initial state \"{}\" is not in states", lc.initial),
+                    });
+                }
+
+                // Validate all visible entries are in states.
+                for v in &lc.visible {
+                    if !lc.states.contains(v) {
+                        return Err(ConfigError::Lifecycle {
+                            type_name: name.clone(),
+                            message: format!("visible state \"{}\" is not in states", v),
                         });
                     }
                 }
@@ -353,5 +384,81 @@ mod tests {
                 required: true
         "}).unwrap();
         assert_eq!(config.transaction_meta["data"].field_type, FieldType::Json);
+    }
+
+    #[test]
+    fn states_derived_from_initial_and_visible() {
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              task:
+                fields:
+                  goal: { type: json, required: true }
+                lifecycle:
+                  initial: open
+                  visible: [open]
+        "}).unwrap();
+        let lc = config.managed_types["task"].lifecycle.as_ref().unwrap();
+        assert_eq!(lc.states, vec!["open"]);
+    }
+
+    #[test]
+    fn states_derived_includes_all() {
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              task:
+                fields:
+                  goal: { type: json }
+                lifecycle:
+                  initial: open
+                  visible: [open, in_progress]
+        "}).unwrap();
+        let lc = config.managed_types["task"].lifecycle.as_ref().unwrap();
+        assert!(lc.states.contains(&"open".to_string()));
+        assert!(lc.states.contains(&"in_progress".to_string()));
+    }
+
+    #[test]
+    fn explicit_states_preserved() {
+        let config = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              task:
+                fields:
+                  goal: { type: json }
+                lifecycle:
+                  initial: open
+                  states: [open, closed, archived]
+                  visible: [open]
+        "}).unwrap();
+        let lc = config.managed_types["task"].lifecycle.as_ref().unwrap();
+        assert_eq!(lc.states, vec!["open", "closed", "archived"]);
+    }
+
+    #[test]
+    fn initial_not_in_explicit_states() {
+        let err = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              bad:
+                fields:
+                  x: { type: text }
+                lifecycle:
+                  initial: draft
+                  states: [open, closed]
+        "}).unwrap_err();
+        assert!(err.to_string().contains("initial state \"draft\" is not in states"));
+    }
+
+    #[test]
+    fn visible_not_in_explicit_states() {
+        let err = DataSchema::from_yaml(indoc! {"
+            managed_types:
+              bad:
+                fields:
+                  x: { type: text }
+                lifecycle:
+                  initial: open
+                  states: [open, closed]
+                  visible: [open, pending]
+        "}).unwrap_err();
+        assert!(err.to_string().contains("visible state \"pending\" is not in states"));
     }
 }

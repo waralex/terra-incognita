@@ -245,6 +245,7 @@ mod tests {
                   goal: { type: json, required: true }
                 lifecycle:
                   initial: open
+                  states: [open, closed]
                   visible: [open]
         "}).unwrap())
     }

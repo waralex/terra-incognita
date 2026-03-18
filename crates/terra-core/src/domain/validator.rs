@@ -98,10 +98,14 @@ impl DomainValidator {
     }
 
     /// Validate a managed item for update (required fields not checked).
+    /// State=None is allowed on update (means "carry forward existing state").
     pub fn check_managed_update(&self, managed: &Managed) -> Result<(), ValidationError> {
         let type_def = self.resolve_managed_type(managed)?;
         validate_fields(&managed.fields, &type_def.fields, false)?;
-        validate_state(managed.type_name.as_str(), &managed.state, type_def)
+        if managed.state.is_some() {
+            validate_state(managed.type_name.as_str(), &managed.state, type_def)?;
+        }
+        Ok(())
     }
 
     /// Access the underlying schema.
@@ -131,7 +135,7 @@ fn validate_fields(
             None if check_required && def.required => {
                 return Err(ValidationError::MissingField { field: name.clone() });
             }
-            Some(val) if def.field_type == FieldType::Text && !val.is_string() => {
+            Some(val) if def.field_type == FieldType::Text && !val.is_string() && !val.is_null() => {
                 return Err(ValidationError::TypeMismatch {
                     field: name.clone(),
                     actual: value_type_name(val).into(),

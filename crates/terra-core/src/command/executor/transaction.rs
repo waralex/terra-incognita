@@ -321,11 +321,24 @@ impl ExecuteTransaction {
                 k.type_name = managed.type_name.clone();
                 k.item = managed.slug.clone();
             });
-        if !branch.exists::<ManagedEntry>(&bound)? {
-            return Err(DbError::Storage(format!(
+        let existing = branch.get_latest::<ManagedEntry>(&bound)?
+            .ok_or_else(|| DbError::Storage(format!(
                 "managed item not found: {}/{}", managed.type_name, managed.slug
-            )));
+            )))?;
+
+        // Merge fields: start with existing, overlay with input.
+        // Null values in input remove the field.
+        let mut merged_fields = existing.value.fields;
+        for (key, value) in &managed.fields {
+            if value.is_null() {
+                merged_fields.remove(key);
+            } else {
+                merged_fields.insert(key.clone(), value.clone());
+            }
         }
+
+        // Carry forward existing state when input state is None.
+        let merged_state = managed.state.clone().or(existing.value.state);
 
         batch.put(&ManagedEntry {
             key: ManagedKey {
@@ -336,8 +349,8 @@ impl ExecuteTransaction {
             },
             value: ManagedValue {
                 slug: managed.slug.to_string(),
-                state: managed.state.clone(),
-                fields: managed.fields.clone(),
+                state: merged_state,
+                fields: merged_fields,
             },
         })?;
 
@@ -565,6 +578,7 @@ mod tests {
                   notes: { type: json }
                 lifecycle:
                   initial: open
+                  states: [open, closed]
                   visible: [open]
         "}).unwrap())
     }
@@ -954,6 +968,146 @@ mod tests {
             ))
         ).unwrap_err();
         assert!(err.to_string().contains("managed item not found: task/ghost"));
+    }
+
+    #[test]
+    fn update_managed_partial_fields_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("explore"));
+        fields.insert("notes".into(), serde_json::json!("initial notes"));
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            )));
+
+        // Update only notes — goal should be preserved.
+        let mut update_fields = Map::new();
+        update_fields.insert("notes".into(), serde_json::json!("updated notes"));
+
+        exec(&branch, TransactionInput::new(meta("partial update"))
+            .update_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                update_fields,
+            )));
+
+        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap().unwrap();
+        assert_eq!(entry.value.fields["goal"], "explore");
+        assert_eq!(entry.value.fields["notes"], "updated notes");
+    }
+
+    #[test]
+    fn update_managed_null_removes_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("explore"));
+        fields.insert("notes".into(), serde_json::json!("some notes"));
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            )));
+
+        // Send null for notes — should be removed.
+        let mut update_fields = Map::new();
+        update_fields.insert("notes".into(), serde_json::Value::Null);
+
+        exec(&branch, TransactionInput::new(meta("remove notes"))
+            .update_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                update_fields,
+            )));
+
+        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap().unwrap();
+        assert_eq!(entry.value.fields["goal"], "explore");
+        assert!(!entry.value.fields.contains_key("notes"));
+    }
+
+    #[test]
+    fn update_managed_state_only_preserves_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("explore"));
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            )));
+
+        // Update state only, no fields.
+        exec(&branch, TransactionInput::new(meta("close"))
+            .update_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("closed".into()),
+                Map::new(),
+            )));
+
+        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap().unwrap();
+        assert_eq!(entry.value.state.as_deref(), Some("closed"));
+        assert_eq!(entry.value.fields["goal"], "explore");
+    }
+
+    #[test]
+    fn update_managed_fields_only_preserves_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("explore"));
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            )));
+
+        // Update fields only, state = None → carry forward.
+        let mut update_fields = Map::new();
+        update_fields.insert("notes".into(), serde_json::json!("found it"));
+
+        exec(&branch, TransactionInput::new(meta("add notes"))
+            .update_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                None,
+                update_fields,
+            )));
+
+        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap().unwrap();
+        assert_eq!(entry.value.state.as_deref(), Some("open"));
+        assert_eq!(entry.value.fields["notes"], "found it");
+        assert_eq!(entry.value.fields["goal"], "explore");
     }
 
     // --- Mixed operations ---

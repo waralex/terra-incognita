@@ -184,10 +184,12 @@ impl ExecuteTransaction {
     ) -> Result<ChangeItem, DbError> {
         let bound = EntityKey::bound()
             .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = entity.slug.clone(); });
-        if branch.exists::<EntityEntry>(&bound)? {
-            return Err(DbError::Storage(format!(
-                "entity already exists: {}", entity.slug
-            )));
+        if let Some(existing) = branch.get_latest::<EntityEntry>(&bound)? {
+            if !existing.value.is_deleted() {
+                return Err(DbError::Storage(format!(
+                    "entity already exists: {}", entity.slug
+                )));
+            }
         }
 
         state.batch().put(&EntityEntry {
@@ -397,18 +399,40 @@ impl ExecuteTransaction {
             },
         })?;
 
+        // Nullify existing properties so re-create starts clean.
+        let existing_props = properties::properties(branch, &item.entity, None)?;
+        let mut nullified_props = Vec::new();
+        for prop in &existing_props {
+            state.batch().put(&AssertionEntry {
+                key: AssertionKey {
+                    branch: branch.id().clone(),
+                    entity: item.entity.clone(),
+                    prop: prop.key.prop.clone(),
+                    tx_id,
+                },
+                value: AssertionValue {
+                    change_id,
+                    value: serde_json::Value::Null,
+                    reasoning: String::new(),
+                },
+            })?;
+            nullified_props.push(prop.key.prop.clone());
+        }
+
         // Deactivate embedding.
-        state.batch().put(&EmbeddingEntry {
-            key: EmbeddingKey {
-                branch: branch.id().clone(),
-                entity: item.entity.clone(),
-                tx_id,
-            },
-            value: EmbeddingValue {
-                change_id: Uuid::nil(),
-                embedding: vec![],
-            },
-        })?;
+        if state.embedder().dimensions() != 0 {
+            state.batch().put(&EmbeddingEntry {
+                key: EmbeddingKey {
+                    branch: branch.id().clone(),
+                    entity: item.entity.clone(),
+                    tx_id,
+                },
+                value: EmbeddingValue {
+                    change_id: Uuid::nil(),
+                    embedding: vec![],
+                },
+            })?;
+        }
 
         Self::write_touched(branch, state.batch(), tx_id, &Entity::new(
             item.entity.clone(),
@@ -420,7 +444,7 @@ impl ExecuteTransaction {
         Ok(ChangeItem {
             entity: item.entity.clone(),
             change_id,
-            properties: vec![],
+            properties: nullified_props,
         })
     }
 }
@@ -1760,5 +1784,144 @@ mod tests {
             )));
 
         assert_eq!(result.meta["reasoning"], "two entities");
+    }
+
+    // --- Re-create after deletion ---
+
+    #[test]
+    fn recreate_after_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Original Alice")),
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                entity_meta("initial"),
+            )));
+
+        exec(&branch, TransactionInput::new(meta("delete"))
+            .delete_entity(DeleteItem::new(
+                "alice".parse().unwrap(),
+                serde_json::json!("no longer relevant"),
+            )));
+
+        // Re-create with same slug, different data.
+        exec(&branch, TransactionInput::new(meta("recreate"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("New Alice")),
+                vec![PropertyValue {
+                    property: "role".parse().unwrap(),
+                    value: serde_json::json!("admin"),
+                    context: (),
+                }],
+                entity_meta("reborn"),
+            )));
+
+        let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap().unwrap();
+        assert!(!entry.value.is_deleted());
+        assert_eq!(entry.value.description, Some(serde_json::json!("New Alice")));
+    }
+
+    #[test]
+    fn recreated_entity_has_no_old_properties() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Alice")),
+                vec![
+                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                    PropertyValue { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                ],
+                entity_meta("initial"),
+            )));
+
+        exec(&branch, TransactionInput::new(meta("delete"))
+            .delete_entity(DeleteItem::new(
+                "alice".parse().unwrap(),
+                serde_json::json!("removed"),
+            )));
+
+        exec(&branch, TransactionInput::new(meta("recreate"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("New Alice")),
+                vec![PropertyValue {
+                    property: "role".parse().unwrap(),
+                    value: serde_json::json!("admin"),
+                    context: (),
+                }],
+                entity_meta("fresh start"),
+            )));
+
+        let props = properties::properties(&branch, &"alice".parse().unwrap(), None).unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0].key.prop.as_str(), "role");
+        assert_eq!(props[0].value.value, serde_json::json!("admin"));
+    }
+
+    #[test]
+    fn properties_empty_after_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Alice")),
+                vec![
+                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                ],
+                entity_meta("initial"),
+            )));
+
+        exec(&branch, TransactionInput::new(meta("delete"))
+            .delete_entity(DeleteItem::new(
+                "alice".parse().unwrap(),
+                serde_json::json!("removed"),
+            )));
+
+        let props = properties::properties(&branch, &"alice".parse().unwrap(), None).unwrap();
+        assert!(props.is_empty());
+    }
+
+    #[test]
+    fn create_non_deleted_entity_still_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        exec(&branch, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Alice")),
+                vec![],
+                Map::new(),
+            )));
+
+        let c = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("duplicate"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Duplicate")),
+                vec![],
+                Map::new(),
+            ))
+        ).unwrap_err();
+        assert!(err.to_string().contains("already exists"));
     }
 }

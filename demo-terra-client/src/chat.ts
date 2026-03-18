@@ -115,16 +115,11 @@ export async function handleChat(
     }];
   }
 
-  const hasMutations = parsed.create?.length || parsed.update?.length || parsed.delete?.length
-    || parsed.touch?.length || parsed.create_rule || parsed.update_rule;
-
-  if (hasMutations) {
-    try {
-      const result = await terra.transaction(config.branch, txReq);
-      emit({ type: "transaction", result });
-    } catch (e: any) {
-      emit({ type: "error", error: `Transaction error: ${e.message}` });
-    }
+  try {
+    const result = await terra.transaction(config.branch, txReq);
+    emit({ type: "transaction", result });
+  } catch (e: any) {
+    emit({ type: "error", error: `Transaction error: ${e.message}` });
   }
 
   emit({ type: "done" });

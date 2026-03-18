@@ -1,12 +1,40 @@
 import type { Config } from "./config.js";
 import type { TerraClient, EntityRes, TransactionRes, ManagedRes } from "./terra.js";
 
-export async function buildContext(terra: TerraClient, config: Config): Promise<string> {
-  const [entities, transactions, managed] = await Promise.all([
+export async function buildContext(
+  terra: TerraClient,
+  config: Config,
+  userMessage?: string,
+): Promise<string> {
+  const [allEntities, transactions, managed, similar] = await Promise.all([
     terra.touchedEntities(config.branch, config.contextEntities).catch(() => []),
     terra.listTransactions(config.branch, config.contextTransactions).catch(() => []),
     terra.listManaged(config.branch).catch(() => []),
+    userMessage && config.similarEntities > 0
+      ? terra.similarEntities(
+          config.branch, [userMessage], config.similarEntities, config.similarMinScore,
+        ).catch(() => [])
+      : Promise.resolve([]),
   ]);
+
+  if (similar.length > 0) {
+    console.log("[similar] raw results: %s", similar.map((s) => `${s.slug}(${s.similarity.toFixed(3)})`).join(", "));
+  }
+
+  const recentSlugs = new Set(allEntities.map((e) => e.slug));
+
+  // Similar entities not already in recent — resolve from the full fetch.
+  const entityBySlug = new Map(allEntities.map((e) => [e.slug, e]));
+  const relatedEntities: EntityRes[] = [];
+  for (const s of similar) {
+    if (recentSlugs.has(s.slug)) continue;
+    const entity = entityBySlug.get(s.slug);
+    if (entity) {
+      relatedEntities.push(entity);
+    } else {
+      console.log("[similar] %s not in touched, skipping (need entity.get)", s.slug);
+    }
+  }
 
   const rules = managed.filter((m) => m.type_name === "rule");
 
@@ -23,10 +51,18 @@ export async function buildContext(terra: TerraClient, config: Config): Promise<
     }
   }
 
-  if (entities.length > 0) {
+  if (allEntities.length > 0) {
     parts.push("");
     parts.push("# Recent entities (by last touch)");
-    for (const e of entities) {
+    for (const e of allEntities) {
+      parts.push(formatEntity(e));
+    }
+  }
+
+  if (relatedEntities.length > 0) {
+    parts.push("");
+    parts.push("# Possibly related to the question");
+    for (const e of relatedEntities) {
       parts.push(formatEntity(e));
     }
   }

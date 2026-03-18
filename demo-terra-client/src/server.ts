@@ -88,8 +88,9 @@ app.get("/api/transaction", async (req, res) => {
 
 app.get("/api/context", async (req, res) => {
   const branch = (req.query.branch as string) || config.branch;
+  const query = req.query.q as string | undefined;
   try {
-    const ctx = await buildContext(terra, { ...config, branch });
+    const ctx = await buildContext(terra, { ...config, branch }, query);
     res.type("text/plain").send(ctx);
   } catch (e: any) {
     res.status(500).json({ error: e.message });

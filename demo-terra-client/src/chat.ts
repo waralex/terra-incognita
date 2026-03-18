@@ -41,7 +41,7 @@ export async function handleChat(
 
   let context: string;
   try {
-    context = await buildContext(terra, config);
+    context = await buildContext(terra, config, userMessage);
   } catch (e) {
     context = `# Branch: ${config.branch}\n\n(Could not fetch context from Terra)`;
   }

@@ -8,6 +8,8 @@ export interface Config {
   openaiApiKey: string;
   contextTransactions: number;
   contextEntities: number;
+  similarEntities: number;
+  similarMinScore: number;
   logLlm: boolean;
 }
 
@@ -22,6 +24,8 @@ export function loadConfig(): Config {
     openaiApiKey: env("OPENAI_API_KEY", ""),
     contextTransactions: parseInt(env("CONTEXT_TRANSACTIONS", "10"), 10),
     contextEntities: parseInt(env("CONTEXT_ENTITIES", "20"), 10),
+    similarEntities: parseInt(env("SIMILAR_ENTITIES", "20"), 10),
+    similarMinScore: parseFloat(env("SIMILAR_MIN_SCORE", "0.7")),
     logLlm: env("LOG_LLM", "false") === "true",
   };
 }

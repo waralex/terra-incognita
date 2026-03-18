@@ -268,6 +268,7 @@ footer {
 
 .mutation-badge.create { background: #1a3a2a; color: #4ade80; }
 .mutation-badge.update { background: #3a3a1a; color: #facc15; }
+.mutation-badge.delete { background: #3a1a1a; color: #f87171; }
 .mutation-badge.touch  { background: #1a2a3a; color: #60a5fa; }
 
 .no-data {

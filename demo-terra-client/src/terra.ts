@@ -44,6 +44,30 @@ export interface SimilarEntityRes {
   similarity: number;
 }
 
+export interface TransactionDetailRes {
+  meta: Record<string, unknown>;
+  branch: string;
+  context: TxContext;
+  created: EntityRes[];
+  updated: EntityRes[];
+  deleted: DeletedEntityRes[];
+  touched: TouchedEntityRes[];
+  created_managed?: ManagedRes[];
+  updated_managed?: ManagedRes[];
+}
+
+export interface DeletedEntityRes {
+  slug: string;
+  meta: Record<string, unknown>;
+  reasoning: unknown;
+  context: TxContext;
+}
+
+export interface TouchedEntityRes {
+  slug: string;
+  reasoning: string;
+}
+
 export interface EntityReq {
   slug: string;
   description?: unknown;
@@ -122,6 +146,13 @@ export class TerraClient {
 
   async listManaged(branch: string): Promise<ManagedRes[]> {
     return this.query<ManagedRes[]>({ command: "managed.list", branch });
+  }
+
+  async getTransaction(branch: string, txId?: string): Promise<TransactionDetailRes> {
+    return this.query<TransactionDetailRes>({
+      command: "transaction.get", branch,
+      ...(txId && { tx_id: txId }),
+    });
   }
 
   async similarEntities(branch: string, queries: unknown[], limit: number, minSimilarity?: number): Promise<SimilarEntityRes[]> {

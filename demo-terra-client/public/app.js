@@ -127,12 +127,25 @@ async function selectMessage(el) {
   const msgText = el.textContent;
   inspectorTitle.textContent = msgText.length > 60 ? msgText.slice(0, 60) + "..." : msgText;
 
-  // Render mutations (only available for live messages)
-  const mutations = el.dataset.mutations ? JSON.parse(el.dataset.mutations) : {};
-  renderMutations(mutations);
+  const txId = el.dataset.txId;
+
+  // Load transaction detail from server
+  if (txId) {
+    responseContent.innerHTML = '<div class="no-data">Loading...</div>';
+    try {
+      const res = await fetch(`/api/transaction?branch=${encodeURIComponent(branch)}&tx_id=${encodeURIComponent(txId)}`);
+      const detail = await res.json();
+      if (selectedEl === el) renderTransactionDetail(detail);
+    } catch (e) {
+      if (selectedEl === el) {
+        responseContent.innerHTML = `<div class="no-data">Failed to load: ${e.message}</div>`;
+      }
+    }
+  } else {
+    responseContent.innerHTML = '<div class="no-data">No transaction</div>';
+  }
 
   // Find previous tx for "state before"
-  const txId = el.dataset.txId;
   const prevTx = txId ? findPrevTx(txId) : null;
 
   if (!prevTx) {
@@ -162,16 +175,8 @@ function renderSnapshot(snapshot) {
   const parts = [];
 
   if (snapshot.entities?.length > 0) {
-    parts.push('<div style="margin-bottom:8px;font-size:12px;color:var(--text-dim)">Entities</div>');
     for (const e of snapshot.entities) {
       parts.push(renderEntityDetails(e));
-    }
-  }
-
-  if (snapshot.transactions?.length > 0) {
-    parts.push('<div style="margin-top:8px;margin-bottom:8px;font-size:12px;color:var(--text-dim)">Transactions</div>');
-    for (const tx of snapshot.transactions) {
-      parts.push(renderTxItem(tx));
     }
   }
 
@@ -194,29 +199,27 @@ function renderEntityDetails(e) {
   return `<details><summary>${esc(e.slug)}</summary><div class="detail-body">${descHtml}${propsHtml || '<span class="no-data">no properties</span>'}</div></details>`;
 }
 
-function renderTxItem(tx) {
-  const time = tx.context?.time ? formatTime(tx.context.time) : "?";
-  const q = tx.meta?.question ? ` — ${esc(String(tx.meta.question).slice(0, 80))}` : "";
-  return `<div class="tx-item"><span class="tx-time">${esc(time)}</span>${q}</div>`;
-}
 
-function renderMutations(mutations) {
+function renderTransactionDetail(detail) {
   const parts = [];
 
-  if (mutations.create?.length) {
-    for (const item of mutations.create) {
-      parts.push(renderMutationItem("create", item.slug, item));
-    }
+  for (const item of detail.created || []) {
+    parts.push(renderMutationItem("create", item.slug, item));
   }
-  if (mutations.update?.length) {
-    for (const item of mutations.update) {
-      parts.push(renderMutationItem("update", item.slug, item));
-    }
+  for (const item of detail.updated || []) {
+    parts.push(renderMutationItem("update", item.slug, item));
   }
-  if (mutations.touch?.length) {
-    for (const item of mutations.touch) {
-      parts.push(renderMutationItem("touch", item.entity, item));
-    }
+  for (const item of detail.deleted || []) {
+    parts.push(renderMutationItem("delete", item.slug, item));
+  }
+  for (const item of detail.touched || []) {
+    parts.push(renderMutationItem("touch", item.slug, item));
+  }
+  for (const item of detail.created_managed || []) {
+    parts.push(renderMutationItem("create", `${item.type_name}/${item.slug}`, item));
+  }
+  for (const item of detail.updated_managed || []) {
+    parts.push(renderMutationItem("update", `${item.type_name}/${item.slug}`, item));
   }
 
   if (parts.length === 0) {
@@ -229,12 +232,13 @@ function renderMutations(mutations) {
 
 function renderMutationItem(type, label, item) {
   const badge = `<span class="mutation-badge ${type}">${type}</span>`;
-  let body = "";
+  const lines = [];
 
   if (type === "touch") {
-    body = `<div class="detail-body"><div class="prop-row"><span class="prop-key">reasoning:</span> <span class="prop-val">${esc(item.reasoning || "")}</span></div></div>`;
+    lines.push(`<div class="prop-row"><span class="prop-key">reasoning:</span> <span class="prop-val">${esc(item.reasoning || "")}</span></div>`);
+  } else if (type === "delete") {
+    lines.push(`<div class="prop-row"><span class="prop-key">reasoning:</span> <span class="prop-val">${esc(JSON.stringify(item.reasoning ?? ""))}</span></div>`);
   } else {
-    const lines = [];
     if (item.description != null) {
       lines.push(`<div class="prop-row"><span class="prop-key">description:</span> <span class="prop-val">${esc(JSON.stringify(item.description))}</span></div>`);
     }
@@ -243,9 +247,17 @@ function renderMutationItem(type, label, item) {
         lines.push(`<div class="prop-row"><span class="prop-key">${esc(p.property)}:</span> <span class="prop-val">${esc(JSON.stringify(p.value))}</span></div>`);
       }
     }
-    body = `<div class="detail-body">${lines.join("") || '<span class="no-data">no data</span>'}</div>`;
+    if (item.fields) {
+      for (const [k, v] of Object.entries(item.fields)) {
+        lines.push(`<div class="prop-row"><span class="prop-key">${esc(k)}:</span> <span class="prop-val">${esc(JSON.stringify(v))}</span></div>`);
+      }
+    }
+    if (item.state != null) {
+      lines.push(`<div class="prop-row"><span class="prop-key">state:</span> <span class="prop-val">${esc(item.state)}</span></div>`);
+    }
   }
 
+  const body = `<div class="detail-body">${lines.join("") || '<span class="no-data">no data</span>'}</div>`;
   return `<details open><summary>${badge}${esc(label)}</summary>${body}</details>`;
 }
 

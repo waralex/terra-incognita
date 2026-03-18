@@ -75,6 +75,17 @@ app.get("/api/snapshot", async (req, res) => {
   }
 });
 
+app.get("/api/transaction", async (req, res) => {
+  const b = (req.query.branch as string) || config.branch;
+  const txId = req.query.tx_id as string | undefined;
+  try {
+    const detail = await terra.getTransaction(b, txId);
+    res.json(detail);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/context", async (req, res) => {
   const branch = (req.query.branch as string) || config.branch;
   try {

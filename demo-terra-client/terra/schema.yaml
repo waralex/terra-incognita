@@ -16,3 +16,13 @@ branch_meta:
   reasoning:
     type: text
     required: true
+
+managed_types:
+  rule:
+    fields:
+      content:   { type: text, required: true }
+      rationale: { type: text }
+    lifecycle:
+      initial: draft
+      states: [draft, active, rejected, promoted]
+      visible: [draft, active]

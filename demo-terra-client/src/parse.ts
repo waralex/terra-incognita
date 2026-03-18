@@ -4,6 +4,8 @@ export interface ParsedResponse {
   create?: CreateItem[];
   update?: UpdateItem[];
   touch?: TouchItem[];
+  create_rule?: RuleItem;
+  update_rule?: RuleUpdate;
 }
 
 export interface CreateItem {
@@ -22,6 +24,19 @@ export interface UpdateItem {
 export interface TouchItem {
   entity: string;
   reasoning: string;
+}
+
+export interface RuleItem {
+  slug: string;
+  content: string;
+  rationale?: string;
+}
+
+export interface RuleUpdate {
+  slug: string;
+  state?: string;
+  content?: string;
+  rationale?: string;
 }
 
 export function parseResponse(text: string): ParsedResponse {
@@ -55,5 +70,7 @@ export function parseResponse(text: string): ParsedResponse {
     create: json.create,
     update: json.update,
     touch: json.touch,
+    create_rule: json.create_rule,
+    update_rule: json.update_rule,
   };
 }

@@ -92,7 +92,30 @@ export async function handleChat(
   if (parsed.update?.length) txReq.update = parsed.update;
   if (parsed.touch?.length) txReq.touch = parsed.touch;
 
-  const hasMutations = parsed.create?.length || parsed.update?.length || parsed.touch?.length;
+  // Map rule operations to managed API
+  if (parsed.create_rule) {
+    const r = parsed.create_rule;
+    txReq.create_managed = [{
+      type_name: "rule",
+      slug: r.slug,
+      fields: { content: r.content, ...(r.rationale && { rationale: r.rationale }) },
+    }];
+  }
+  if (parsed.update_rule) {
+    const r = parsed.update_rule;
+    txReq.update_managed = [{
+      type_name: "rule",
+      slug: r.slug,
+      ...(r.state && { state: r.state }),
+      fields: {
+        ...(r.content && { content: r.content }),
+        ...(r.rationale && { rationale: r.rationale }),
+      },
+    }];
+  }
+
+  const hasMutations = parsed.create?.length || parsed.update?.length || parsed.touch?.length
+    || parsed.create_rule || parsed.update_rule;
 
   if (hasMutations) {
     try {

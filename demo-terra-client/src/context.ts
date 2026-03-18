@@ -1,16 +1,27 @@
 import type { Config } from "./config.js";
-import type { TerraClient, EntityRes, TransactionRes } from "./terra.js";
+import type { TerraClient, EntityRes, TransactionRes, ManagedRes } from "./terra.js";
 
 export async function buildContext(terra: TerraClient, config: Config): Promise<string> {
-  const [entities, transactions] = await Promise.all([
+  const [entities, transactions, managed] = await Promise.all([
     terra.touchedEntities(config.branch, config.contextEntities).catch(() => []),
     terra.listTransactions(config.branch, config.contextTransactions).catch(() => []),
+    terra.listManaged(config.branch).catch(() => []),
   ]);
+
+  const rules = managed.filter((m) => m.type_name === "rule");
 
   const parts: string[] = [];
 
   parts.push(`# Branch: ${config.branch}`);
   parts.push(`# Current time: ${formatTime(new Date().toISOString())}`);
+
+  if (rules.length > 0) {
+    parts.push("");
+    parts.push("# Active rules");
+    for (const r of rules) {
+      parts.push(formatRule(r));
+    }
+  }
 
   if (entities.length > 0) {
     parts.push("");
@@ -56,6 +67,12 @@ function formatTime(iso?: string): string {
     timeZone: "UTC",
     timeZoneName: "short",
   });
+}
+
+function formatRule(r: ManagedRes): string {
+  const state = r.state ? ` [${r.state}]` : "";
+  const rationale = r.fields.rationale ? ` (rationale: ${JSON.stringify(r.fields.rationale)})` : "";
+  return `- **${r.slug}**${state}: ${r.fields.content ?? ""}${rationale}`;
 }
 
 function formatTransaction(tx: TransactionRes): string {

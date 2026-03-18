@@ -40,7 +40,7 @@ impl Command for GetTransaction {
             })?,
         };
 
-        // Load transaction log (global, not branch-scoped).
+        // Load transaction log (global, not branch-scoped — cross-branch by design).
         let log = branch.storage().get::<TransactionLogEntry>(
             &TransactionLogKey { tx_id },
         )?.ok_or_else(|| {
@@ -48,6 +48,13 @@ impl Command for GetTransaction {
         })?;
 
         let log_branch = log.value.branch.clone();
+
+        if input.only_current_branch && log_branch != *branch.id() {
+            return Err(DbError::Storage(format!(
+                "transaction {} belongs to branch \"{}\", not current branch \"{}\"",
+                tx_id, log_branch, branch.id()
+            )));
+        }
 
         // Load transaction metadata (branch-scoped).
         let tx_entry = branch.storage().get::<TransactionEntry>(
@@ -542,5 +549,43 @@ mod tests {
         assert_eq!(detail.branch.as_str(), "feature");
         assert_eq!(detail.created.len(), 1);
         assert_eq!(detail.created[0].slug.as_str(), "bob");
+    }
+
+    #[test]
+    fn only_current_branch_rejects_foreign_tx() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let main = storage.main_branch();
+
+        exec_tx(&main, TransactionInput::new(meta("seed")));
+
+        let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
+        let mut cs = CommandState::new(&storage);
+        let checkout_result = checkout_cmd.execute(
+            &main, &mut cs,
+            CheckoutInput::new(
+                "feature".parse().unwrap(),
+                meta("explore"),
+                None,
+                TransactionInput::new(meta("on feature")),
+            ),
+        ).unwrap();
+        cs.commit().unwrap();
+
+        let child_tx_id = checkout_result.transaction.context.tx_id;
+
+        // Cross-branch without filter — works.
+        let detail = get_tx(&main, Some(child_tx_id));
+        assert_eq!(detail.branch.as_str(), "feature");
+
+        // With only_current_branch — rejects.
+        let cmd = GetTransaction;
+        let mut state = CommandState::new(&storage);
+        let err = cmd.execute(
+            &main, &mut state,
+            GetTransactionQuery::new(Some(child_tx_id)).only_current_branch(),
+        ).unwrap_err();
+        assert!(err.to_string().contains("belongs to branch"));
+        assert!(err.to_string().contains("feature"));
     }
 }

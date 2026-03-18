@@ -227,7 +227,7 @@ Commands are sent as YAML or JSON with a `command` field:
   - `entity-type.list`, `entity-type.get` — schema types (visibility-filtered)
   - `property.list` — schema properties (visibility-filtered)
   - `entity.list`, `entity.get` — entities (visibility-filtered)
-  - `transaction.get` — full transaction detail (entities, properties, managed, deleted, touched)
+  - `transaction.get` — full transaction detail (cross-branch by design, like `git show <sha>`)
   - `branch.get`, `branch.list` — branches
   - `log.list` — fact log entries
 

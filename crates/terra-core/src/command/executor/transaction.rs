@@ -1,5 +1,7 @@
 //! ExecuteTransaction — validates and writes a transaction to a branch.
 
+use std::collections::HashSet;
+
 use uuid::Uuid;
 
 use crate::command::Command;
@@ -10,6 +12,7 @@ use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::{TxMeta, time_from_uuid};
 use crate::domain::validator::DomainValidator;
 use crate::io::DbError;
+use crate::io::slug::Slug;
 use crate::io::WriteBatch;
 use crate::io::storage_key::StorageKey;
 use crate::store::branch_context::BranchContext;
@@ -431,8 +434,14 @@ impl Command for ExecuteTransaction {
 
         let tx_id = Uuid::now_v7();
 
+        let mut created_entity_slugs: HashSet<&Slug> = HashSet::new();
         let mut created_items = Vec::new();
         for entity in &input.create_entities {
+            if !created_entity_slugs.insert(&entity.slug) {
+                return Err(DbError::Storage(format!(
+                    "duplicate entity in transaction: {}", entity.slug
+                )));
+            }
             created_items.push(self.create_entity(branch, state, tx_id, entity)?);
         }
 
@@ -446,8 +455,14 @@ impl Command for ExecuteTransaction {
             deleted_items.push(self.delete_entity(branch, state, tx_id, item)?);
         }
 
+        let mut created_managed_slugs: HashSet<(&Slug, &Slug)> = HashSet::new();
         let mut created_managed_items = Vec::new();
         for managed in &input.create_managed {
+            if !created_managed_slugs.insert((&managed.type_name, &managed.slug)) {
+                return Err(DbError::Storage(format!(
+                    "duplicate managed item in transaction: {}/{}", managed.type_name, managed.slug
+                )));
+            }
             self.create_managed_item(branch, state.batch(), tx_id, managed)?;
             created_managed_items.push(ManagedItem {
                 type_name: managed.type_name.clone(),
@@ -1513,5 +1528,83 @@ mod tests {
         assert_eq!(log2.value.deleted[0].entity, "bob");
         assert!(log2.value.deleted[0].properties.is_empty());
         assert_eq!(log2.value.touched[0], "alice");
+    }
+
+    // --- Duplicate slug detection ---
+
+    #[test]
+    fn duplicate_entity_slug_in_transaction_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let c = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("First")),
+                vec![],
+                Map::new(),
+            ))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Second")),
+                vec![],
+                Map::new(),
+            ))
+        ).unwrap_err();
+        assert!(err.to_string().contains("duplicate entity in transaction: alice"));
+    }
+
+    #[test]
+    fn duplicate_managed_slug_in_transaction_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let mut fields = Map::new();
+        fields.insert("goal".into(), serde_json::json!("task A"));
+
+        let c = cmd();
+        let mut state = CommandState::new(branch.storage());
+        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup"))
+            .create_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields.clone(),
+            ))
+            .create_managed(Managed::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            ))
+        ).unwrap_err();
+        assert!(err.to_string().contains("duplicate managed item in transaction: task/task-1"));
+    }
+
+    #[test]
+    fn different_entity_slugs_in_transaction_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = BranchContext::main(storage);
+
+        let result = exec(&branch, TransactionInput::new(meta("two entities"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Person A")),
+                vec![],
+                Map::new(),
+            ))
+            .create_entity(Entity::new(
+                "bob".parse().unwrap(),
+                Some(serde_json::json!("Person B")),
+                vec![],
+                Map::new(),
+            )));
+
+        assert_eq!(result.meta["reasoning"], "two entities");
     }
 }

@@ -104,12 +104,11 @@ impl ListTouchedEntities {
         at_tx: Uuid,
     ) -> Result<Vec<Entity<TxMeta>>, DbError> {
         let mut entities = Vec::with_capacity(slugs.len());
-        let branch_id = branch.id().clone();
 
         for slug in slugs {
             let bound = EntityKey::bound()
                 .with_prefix(|k| {
-                    k.branch = branch_id.clone();
+                    k.branch = branch.id().clone();
                     k.entity = slug.clone();
                 })
                 .with_upper(|k| k.tx_id = at_tx);
@@ -118,7 +117,11 @@ impl ListTouchedEntities {
             if entry.as_ref().is_some_and(|e| e.value.is_deleted()) {
                 continue;
             }
+            // Provenance-first: tx_id and branch from where the record actually lives.
             let entity_tx = entry.as_ref().map(|e| e.key.tx_id).unwrap_or(Uuid::nil());
+            let entity_branch = entry.as_ref()
+                .map(|e| e.key.branch.clone())
+                .unwrap_or_else(|| branch.id().clone());
             let description = entry.and_then(|e| e.value.description);
 
             let assertion_entries = properties::properties(branch, slug, Some(at_tx))?;
@@ -143,7 +146,7 @@ impl ListTouchedEntities {
                 meta: serde_json::Map::new(),
                 context: TxMeta {
                     tx_id: entity_tx,
-                    branch: branch_id.clone(),
+                    branch: entity_branch,
                     reasoning: None,
                     time: time_from_uuid(entity_tx),
                 },
@@ -346,5 +349,71 @@ mod tests {
         for prop in &entities[0].properties {
             assert_eq!(prop.context.reasoning.as_deref(), Some("census data"));
         }
+    }
+
+    #[test]
+    fn provenance_branch_from_record_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let main = storage.main_branch();
+
+        // Create entity on main.
+        exec_tx(&main, TransactionInput::new(meta("create"))
+            .create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![
+                    PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
+                ],
+                meta("initial"),
+            )));
+
+        // Checkout child, touch alice.
+        let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
+        let mut cs = CommandState::new(&storage);
+        checkout_cmd.execute(&main, &mut cs, CheckoutInput::new(
+            "child".parse().unwrap(),
+            meta("explore"),
+            None,
+            TransactionInput::new(meta("touch alice"))
+                .touch(TouchItem::new("alice".parse().unwrap(), "reviewing")),
+        )).unwrap();
+        cs.commit().unwrap();
+
+        let child = storage.branch("child".parse().unwrap()).unwrap();
+        let entities = query(&child, 10);
+        assert_eq!(entities.len(), 1);
+        // Entity record lives on main — provenance should reflect that.
+        assert_eq!(entities[0].context.branch.as_str(), "main");
+    }
+
+    #[test]
+    fn provenance_branch_from_current_when_created_here() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let main = storage.main_branch();
+
+        exec_tx(&main, TransactionInput::new(meta("seed")));
+
+        let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
+        let mut cs = CommandState::new(&storage);
+        checkout_cmd.execute(&main, &mut cs, CheckoutInput::new(
+            "child".parse().unwrap(),
+            meta("explore"),
+            None,
+            TransactionInput::new(meta("create on child"))
+                .create_entity(Entity::new(
+                    "bob".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![],
+                    serde_json::Map::new(),
+                )),
+        )).unwrap();
+        cs.commit().unwrap();
+
+        let child = storage.branch("child".parse().unwrap()).unwrap();
+        let entities = query(&child, 10);
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0].context.branch.as_str(), "child");
     }
 }

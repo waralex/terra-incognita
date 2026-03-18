@@ -3,6 +3,7 @@ export interface ParsedResponse {
   reasoning: string;
   create?: CreateItem[];
   update?: UpdateItem[];
+  delete?: DeleteItem[];
   touch?: TouchItem[];
   create_rule?: RuleItem;
   update_rule?: RuleUpdate;
@@ -19,6 +20,11 @@ export interface UpdateItem {
   slug: string;
   properties?: { property: string; value: unknown }[];
   meta?: Record<string, unknown>;
+}
+
+export interface DeleteItem {
+  entity: string;
+  reasoning: unknown;
 }
 
 export interface TouchItem {
@@ -69,6 +75,7 @@ export function parseResponse(text: string): ParsedResponse {
     reasoning: json.reasoning ?? "",
     create: json.create,
     update: json.update,
+    delete: json.delete,
     touch: json.touch,
     create_rule: json.create_rule,
     update_rule: json.update_rule,

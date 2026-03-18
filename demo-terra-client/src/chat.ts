@@ -90,6 +90,7 @@ export async function handleChat(
 
   if (parsed.create?.length) txReq.create = parsed.create;
   if (parsed.update?.length) txReq.update = parsed.update;
+  if (parsed.delete?.length) txReq.delete = parsed.delete;
   if (parsed.touch?.length) txReq.touch = parsed.touch;
 
   // Map rule operations to managed API
@@ -114,8 +115,8 @@ export async function handleChat(
     }];
   }
 
-  const hasMutations = parsed.create?.length || parsed.update?.length || parsed.touch?.length
-    || parsed.create_rule || parsed.update_rule;
+  const hasMutations = parsed.create?.length || parsed.update?.length || parsed.delete?.length
+    || parsed.touch?.length || parsed.create_rule || parsed.update_rule;
 
   if (hasMutations) {
     try {

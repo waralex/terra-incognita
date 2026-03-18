@@ -72,11 +72,30 @@ impl ProjectConfig {
     }
 
     /// Load project config and resolve the data schema.
-    /// Relative paths resolve from CWD, not from the config file location.
+    ///
+    /// Relative paths in the config (`data_dir`, `schema_path`, `model_path`)
+    /// are resolved from the config file's parent directory, not from CWD.
     pub fn load(config_path: &Path) -> Result<Project, ProjectError> {
-        let config = Self::from_file(config_path)?;
+        let mut config = Self::from_file(config_path)?;
+        let base = config_path.parent().unwrap_or(Path::new("."));
+        config.resolve_paths(base);
         let schema = DataSchema::from_file(&config.schema_path)?;
         Ok(Project { config, schema })
+    }
+
+    /// Resolve relative paths against a base directory.
+    fn resolve_paths(&mut self, base: &Path) {
+        if self.data_dir.is_relative() {
+            self.data_dir = base.join(&self.data_dir);
+        }
+        if self.schema_path.is_relative() {
+            self.schema_path = base.join(&self.schema_path);
+        }
+        if let Some(ref p) = self.model_path {
+            if p.is_relative() {
+                self.model_path = Some(base.join(p));
+            }
+        }
     }
 }
 
@@ -130,16 +149,14 @@ mod tests {
             managed_types: {}
         "}).unwrap();
 
-        // schema_path is absolute — resolves as-is regardless of CWD
-        let config_yaml = format!(
-            "data_dir: ./data\nschema_path: {}",
-            schema_path.display()
-        );
+        // Relative paths resolve from config file's parent directory.
+        let config_yaml = "data_dir: ./data\nschema_path: schema.yaml";
         let config_path = dir.path().join("terra.yaml");
         fs::write(&config_path, config_yaml).unwrap();
 
         let project = ProjectConfig::load(&config_path).unwrap();
-        assert_eq!(project.config.data_dir, PathBuf::from("./data"));
+        assert_eq!(project.config.data_dir, dir.path().join("./data"));
+        assert_eq!(project.config.schema_path, dir.path().join("schema.yaml"));
         assert!(project.schema.transaction_meta.contains_key("reasoning"));
     }
 

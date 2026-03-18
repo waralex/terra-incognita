@@ -1,0 +1,18 @@
+transaction_meta:
+  reasoning:
+    type: text
+    required: true
+  question:
+    type: text
+  answer:
+    type: text
+
+entity_change_meta:
+  reasoning:
+    type: text
+    required: true
+
+branch_meta:
+  reasoning:
+    type: text
+    required: true

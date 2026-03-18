@@ -99,6 +99,7 @@ export async function handleChat(
     txReq.create_managed = [{
       type_name: "rule",
       slug: r.slug,
+      state: r.state || "draft",
       fields: { content: r.content, ...(r.rationale && { rationale: r.rationale }) },
     }];
   }

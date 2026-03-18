@@ -36,6 +36,7 @@ export interface RuleItem {
   slug: string;
   content: string;
   rationale?: string;
+  state?: string;
 }
 
 export interface RuleUpdate {

@@ -142,6 +142,7 @@ pub fn transaction_detail_to_res(detail: TransactionDetail) -> TransactionDetail
         updated: detail.updated.into_iter().map(entity_to_res).collect(),
         deleted: detail.deleted.into_iter().map(|d| DeletedEntityRes {
             slug: d.slug.to_string(),
+            meta: d.meta,
             reasoning: d.reasoning,
             context: tx_meta_to_res(d.context),
         }).collect(),

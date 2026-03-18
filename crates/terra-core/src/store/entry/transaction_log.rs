@@ -48,8 +48,8 @@ pub struct TransactionLogValue {
     pub updated: Vec<ChangeItem>,
     /// Entity slugs explicitly touched (not from create/update).
     pub touched: Vec<Slug>,
-    /// Entity slugs deleted in this transaction.
-    pub deleted: Vec<Slug>,
+    /// Entities deleted in this transaction.
+    pub deleted: Vec<ChangeItem>,
     /// Managed items created in this transaction.
     #[serde(default)]
     pub created_managed: Vec<ManagedItem>,
@@ -125,7 +125,11 @@ mod tests {
                     properties: vec!["status".parse().unwrap()],
                 }],
                 touched: vec!["server".parse().unwrap()],
-                deleted: vec!["old-item".parse().unwrap()],
+                deleted: vec![ChangeItem {
+                    entity: "old-item".parse().unwrap(),
+                    change_id: Uuid::now_v7(),
+                    properties: vec![],
+                }],
                 created_managed: vec![ManagedItem {
                     type_name: "task".parse().unwrap(),
                     slug: "fix-bug".parse().unwrap(),
@@ -147,7 +151,7 @@ mod tests {
         assert_eq!(found.value.updated.len(), 1);
         assert_eq!(found.value.updated[0].entity.as_str(), "bob");
         assert_eq!(found.value.touched[0].as_str(), "server");
-        assert_eq!(found.value.deleted[0].as_str(), "old-item");
+        assert_eq!(found.value.deleted[0].entity.as_str(), "old-item");
         assert_eq!(found.value.created_managed.len(), 1);
         assert_eq!(found.value.created_managed[0].type_name.as_str(), "task");
         assert_eq!(found.value.created_managed[0].slug.as_str(), "fix-bug");

@@ -82,6 +82,7 @@ pub struct TransactionDetailRes {
 #[derive(Serialize)]
 pub struct DeletedEntityRes {
     pub slug: String,
+    pub meta: Map<String, Value>,
     pub reasoning: Value,
     pub context: TxMetaRes,
 }

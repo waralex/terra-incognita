@@ -42,10 +42,11 @@ pub struct TransactionDetail {
     pub updated_managed: Vec<Managed<TxMeta>>,
 }
 
-/// A deleted entity with its deletion reasoning.
+/// A deleted entity with its deletion reasoning and provenance.
 #[derive(Debug, Clone)]
 pub struct DeletedEntity {
     pub slug: Slug,
+    pub meta: Map<String, Value>,
     pub reasoning: Value,
     pub context: TxMeta,
 }

@@ -347,7 +347,7 @@ impl ExecuteTransaction {
         state: &mut CommandState,
         tx_id: Uuid,
         item: &DeleteItem,
-    ) -> Result<(), DbError> {
+    ) -> Result<ChangeItem, DbError> {
         let bound = EntityKey::bound()
             .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = item.entity.clone(); });
         if !branch.exists::<EntityEntry>(&bound)? {
@@ -365,6 +365,19 @@ impl ExecuteTransaction {
             value: EntityValue {
                 deleted: Some(item.reasoning.clone()),
                 ..Default::default()
+            },
+        })?;
+
+        // Write EntityChangeEntry for provenance.
+        let change_id = Uuid::now_v7();
+        let mut meta = serde_json::Map::new();
+        meta.insert("reasoning".into(), item.reasoning.clone());
+        state.batch().put(&EntityChangeEntry {
+            key: EntityChangeKey { change_id },
+            value: EntityChangeValue {
+                entity: item.entity.clone(),
+                tx_id,
+                meta,
             },
         })?;
 
@@ -388,7 +401,11 @@ impl ExecuteTransaction {
             serde_json::Map::new(),
         ))?;
 
-        Ok(())
+        Ok(ChangeItem {
+            entity: item.entity.clone(),
+            change_id,
+            properties: vec![],
+        })
     }
 }
 
@@ -424,10 +441,9 @@ impl Command for ExecuteTransaction {
             updated_items.push(self.update_entity(branch, state, tx_id, entity)?);
         }
 
-        let mut deleted_slugs = Vec::new();
+        let mut deleted_items = Vec::new();
         for item in &input.delete_entities {
-            self.delete_entity(branch, state, tx_id, item)?;
-            deleted_slugs.push(item.entity.clone());
+            deleted_items.push(self.delete_entity(branch, state, tx_id, item)?);
         }
 
         let mut created_managed_items = Vec::new();
@@ -469,7 +485,7 @@ impl Command for ExecuteTransaction {
                 created: created_items,
                 updated: updated_items,
                 touched: touched_slugs,
-                deleted: deleted_slugs,
+                deleted: deleted_items,
                 created_managed: created_managed_items,
                 updated_managed: updated_managed_items,
             },
@@ -1494,7 +1510,8 @@ mod tests {
         assert_eq!(log2.value.updated.len(), 1);
         assert_eq!(log2.value.updated[0].entity, "alice");
         assert_eq!(log2.value.updated[0].properties[0], "age");
-        assert_eq!(log2.value.deleted[0], "bob");
+        assert_eq!(log2.value.deleted[0].entity, "bob");
+        assert!(log2.value.deleted[0].properties.is_empty());
         assert_eq!(log2.value.touched[0], "alice");
     }
 }

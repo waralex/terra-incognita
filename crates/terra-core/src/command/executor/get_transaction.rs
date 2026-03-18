@@ -75,7 +75,7 @@ impl Command for GetTransaction {
 
         // Reconstruct deleted entities.
         let deleted = log.value.deleted.iter()
-            .map(|slug| self.reconstruct_deleted(branch, &log_branch, tx_id, slug))
+            .map(|item| self.reconstruct_deleted(branch, &log_branch, tx_id, item))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Reconstruct touched entities.
@@ -120,7 +120,7 @@ impl GetTransaction {
         let change = branch.storage().get::<EntityChangeEntry>(
             &EntityChangeKey { change_id: item.change_id },
         )?;
-        let meta = change.as_ref().map(|c| c.value.meta.clone()).unwrap_or_default();
+        let meta = change.map(|c| c.value.meta).unwrap_or_default();
 
         // Load entity record at this tx for description.
         let entity_entry = branch.storage().get::<EntityEntry>(
@@ -171,28 +171,27 @@ impl GetTransaction {
         })
     }
 
-    /// Reconstruct a deleted entity.
+    /// Reconstruct a deleted entity from a ChangeItem.
     fn reconstruct_deleted(
         &self,
         branch: &BranchContext,
         log_branch: &Slug,
         tx_id: Uuid,
-        slug: &Slug,
+        item: &ChangeItem,
     ) -> Result<DeletedEntity, DbError> {
-        let entity_entry = branch.storage().get::<EntityEntry>(
-            &EntityKey {
-                branch: log_branch.clone(),
-                entity: slug.clone(),
-                tx_id,
-            },
+        // Load EntityChangeEntry for meta (reasoning etc.)
+        let change = branch.storage().get::<EntityChangeEntry>(
+            &EntityChangeKey { change_id: item.change_id },
         )?;
+        let meta = change.map(|c| c.value.meta).unwrap_or_default();
 
-        let reasoning = entity_entry
-            .and_then(|e| e.value.deleted)
+        let reasoning = meta.get("reasoning")
+            .cloned()
             .unwrap_or(serde_json::Value::Null);
 
         Ok(DeletedEntity {
-            slug: slug.clone(),
+            slug: item.entity.clone(),
+            meta,
             reasoning,
             context: TxMeta {
                 tx_id,

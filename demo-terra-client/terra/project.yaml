@@ -1,2 +1,2 @@
-data_dir: data
-schema_path: schema.yaml
+data_dir: terra/data
+schema_path: terra/schema.yaml

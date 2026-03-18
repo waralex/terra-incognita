@@ -91,6 +91,7 @@ function processLine(line, assistantEl, setAnswer) {
         txList.push(txId);
       }
       addMessage("system", `tx ${txId?.slice(0, 8) || "ok"}`);
+      selectMessage(assistantEl);
       break;
     }
     case "error":

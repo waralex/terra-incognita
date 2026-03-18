@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "terra": "TERRA_SERVER_CONFIG=terra/terra-server.yaml cargo run --manifest-path ../Cargo.toml -p terra-server --features onnx",
+    "terra:no-embed": "TERRA_SERVER_CONFIG=terra/terra-server.yaml cargo run --manifest-path ../Cargo.toml -p terra-server"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

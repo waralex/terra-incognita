@@ -75,8 +75,8 @@ function formatEntity(e: EntityRes): string {
   if (e.properties?.length > 0) {
     lines.push("properties:");
     for (const p of e.properties) {
-      const reasoning = p.context.reasoning ? ` (reasoning: ${JSON.stringify(p.context.reasoning)})` : "";
-      lines.push(`  ${p.property}: ${JSON.stringify(p.value)}${reasoning}`);
+      const updated = p.context.time ? ` (updated_at: ${formatTime(p.context.time)})` : "";
+      lines.push(`  ${p.property}: ${JSON.stringify(p.value)}${updated}`);
     }
   }
   return lines.join("\n");

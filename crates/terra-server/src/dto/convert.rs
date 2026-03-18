@@ -4,8 +4,7 @@ use terra_core::command::executor::checkout::CheckoutOutput;
 use terra_core::command::input::checkout::CheckoutInput;
 use terra_core::command::input::transaction::{DeleteItem, TouchItem, TransactionInput};
 use terra_core::domain::branch::Branch;
-use terra_core::domain::entity::Entity;
-use terra_core::domain::entity::PropertyValue;
+use terra_core::domain::entity::{Entity, PropertyValue, SimilarEntity};
 use terra_core::domain::managed::Managed;
 use terra_core::domain::transaction::{Transaction, TransactionDetail};
 use terra_core::domain::tx_meta::TxMeta;
@@ -163,12 +162,13 @@ pub fn checkout_to_res(out: CheckoutOutput) -> CheckoutRes {
     }
 }
 
-pub fn similar_to_res(pairs: Vec<(Slug, f32)>) -> Vec<SimilarEntityRes> {
-    pairs
+pub fn similar_to_res(items: Vec<SimilarEntity<TxMeta>>) -> Vec<SimilarEntityRes> {
+    items
         .into_iter()
-        .map(|(slug, similarity)| SimilarEntityRes {
-            slug: slug.to_string(),
-            similarity,
+        .map(|s| SimilarEntityRes {
+            entity: entity_to_res(s.entity),
+            similarity: s.similarity,
+            matched_query: s.matched_query,
         })
         .collect()
 }

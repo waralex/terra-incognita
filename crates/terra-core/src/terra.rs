@@ -25,7 +25,7 @@ use crate::command::input::transaction::TransactionInput;
 use crate::command::{Command, CommandState};
 use crate::config::{DataSchema, ProjectConfig};
 use crate::domain::branch::Branch;
-use crate::domain::entity::Entity;
+use crate::domain::entity::{Entity, SimilarEntity};
 use crate::domain::entity_history::EntityHistoryEntry;
 use crate::domain::managed::Managed;
 use crate::domain::transaction::{Transaction, TransactionDetail};
@@ -217,7 +217,7 @@ impl Executable for EntityHistoryQuery {
 }
 
 impl Executable for SimilarEntitiesQuery {
-    type Output = Vec<(Slug, f32)>;
+    type Output = Vec<SimilarEntity<TxMeta>>;
 
     fn execute_on(
         self,
@@ -435,8 +435,9 @@ mod tests {
         ).unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0.as_str(), "auth-service");
-        assert!(results[0].1 > 0.0);
+        assert_eq!(results[0].entity.slug.as_str(), "auth-service");
+        assert!(results[0].similarity > 0.0);
+        assert_eq!(results[0].matched_query, 0);
     }
 
     #[test]

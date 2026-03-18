@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import type { TerraClient, EntityRes, TransactionRes, ManagedRes } from "./terra.js";
+import type { TerraClient, EntityRes, TransactionRes, ManagedRes, SimilarEntityRes } from "./terra.js";
 
 export async function buildContext(
   terra: TerraClient,
@@ -18,23 +18,12 @@ export async function buildContext(
   ]);
 
   if (similar.length > 0) {
-    console.log("[similar] raw results: %s", similar.map((s) => `${s.slug}(${s.similarity.toFixed(3)})`).join(", "));
+    console.log("[similar] raw results: %s", similar.map((s) => `${s.slug}(${s.similarity.toFixed(3)}, q${s.matched_query})`).join(", "));
   }
 
+  // Filter similar: exclude entities already in touched.
   const recentSlugs = new Set(allEntities.map((e) => e.slug));
-
-  // Similar entities not already in recent — resolve from the full fetch.
-  const entityBySlug = new Map(allEntities.map((e) => [e.slug, e]));
-  const relatedEntities: EntityRes[] = [];
-  for (const s of similar) {
-    if (recentSlugs.has(s.slug)) continue;
-    const entity = entityBySlug.get(s.slug);
-    if (entity) {
-      relatedEntities.push(entity);
-    } else {
-      console.log("[similar] %s not in touched, skipping (need entity.get)", s.slug);
-    }
-  }
+  const relatedEntities: SimilarEntityRes[] = similar.filter((s) => !recentSlugs.has(s.slug));
 
   const rules = managed.filter((m) => m.type_name === "rule");
 

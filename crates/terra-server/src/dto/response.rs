@@ -102,11 +102,13 @@ pub struct CheckoutRes {
     pub transaction: TransactionRes,
 }
 
-/// Similar entity search result entry.
+/// Similar entity search result entry — full entity + score.
 #[derive(Serialize)]
 pub struct SimilarEntityRes {
-    pub slug: String,
+    #[serde(flatten)]
+    pub entity: EntityRes,
     pub similarity: f32,
+    pub matched_query: usize,
 }
 
 /// Error response.

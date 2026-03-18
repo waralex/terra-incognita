@@ -7,15 +7,14 @@ use uuid::Uuid;
 use crate::command::Command;
 use crate::command::CommandState;
 use crate::command::input::touched_entities::TouchedEntitiesQuery;
-use crate::domain::entity::{Entity, PropertyValue};
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
+use crate::domain::entity::Entity;
+use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
 use crate::store::branch_context::BranchContext;
-use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::entry::touched::{TouchedEntry, TouchedKey};
-use crate::store::query::properties;
+use crate::store::query::entity_snapshot;
 
 /// Lists recently touched entities ordered by touch recency (most recent first).
 pub struct ListTouchedEntities;
@@ -104,55 +103,11 @@ impl ListTouchedEntities {
         at_tx: Uuid,
     ) -> Result<Vec<Entity<TxMeta>>, DbError> {
         let mut entities = Vec::with_capacity(slugs.len());
-
         for slug in slugs {
-            let bound = EntityKey::bound()
-                .with_prefix(|k| {
-                    k.branch = branch.id().clone();
-                    k.entity = slug.clone();
-                })
-                .with_upper(|k| k.tx_id = at_tx);
-
-            let entry = branch.get_latest::<EntityEntry>(&bound)?;
-            if entry.as_ref().is_some_and(|e| e.value.is_deleted()) {
-                continue;
+            if let Some(entity) = entity_snapshot::entity_snapshot(branch, slug, Some(at_tx))? {
+                entities.push(entity);
             }
-            // Provenance-first: tx_id and branch from where the record actually lives.
-            let entity_tx = entry.as_ref().map(|e| e.key.tx_id).unwrap_or(Uuid::nil());
-            let entity_branch = entry.as_ref()
-                .map(|e| e.key.branch.clone())
-                .unwrap_or_else(|| branch.id().clone());
-            let description = entry.and_then(|e| e.value.description);
-
-            let assertion_entries = properties::properties(branch, slug, Some(at_tx))?;
-            let properties: Vec<PropertyValue<TxMeta>> = assertion_entries
-                .into_iter()
-                .map(|a| PropertyValue {
-                    property: a.key.prop,
-                    value: a.value.value.clone(),
-                    context: TxMeta {
-                        tx_id: a.key.tx_id,
-                        branch: a.key.branch,
-                        reasoning: Some(a.value.reasoning),
-                        time: time_from_uuid(a.key.tx_id),
-                    },
-                })
-                .collect();
-
-            entities.push(Entity {
-                slug: slug.clone(),
-                description,
-                properties,
-                meta: serde_json::Map::new(),
-                context: TxMeta {
-                    tx_id: entity_tx,
-                    branch: entity_branch,
-                    reasoning: None,
-                    time: time_from_uuid(entity_tx),
-                },
-            });
         }
-
         Ok(entities)
     }
 }

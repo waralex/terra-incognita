@@ -1611,8 +1611,8 @@ mod tests {
 
             assert_eq!(results.len(), 2);
             // Both should have high similarity (vectors are in the same direction).
-            for (_, score) in &results {
-                assert!(*score > 0.9);
+            for m in &results {
+                assert!(m.similarity > 0.9);
             }
         }
 

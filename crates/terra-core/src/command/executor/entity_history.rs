@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use crate::command::Command;
+
 use crate::command::CommandState;
 use crate::command::input::entity_history::EntityHistoryQuery;
-use crate::domain::entity::{Entity, PropertyValue};
+use crate::domain::entity::Entity;
 use crate::domain::entity_history::EntityHistoryEntry;
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
+use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
@@ -17,7 +18,7 @@ use crate::store::branch_context::BranchContext;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey};
 use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey};
-use crate::store::query::properties;
+use crate::store::query::entity_snapshot;
 
 /// Lists entity history entries ordered most-recent-first.
 pub struct ListEntityHistory;
@@ -173,58 +174,31 @@ fn collect_entity_txs(
 /// Build a single EntityHistoryEntry for a given tx_id.
 fn build_history_entry(
     branch: &BranchContext,
-    entity: &Slug,
+    slug: &Slug,
     tx_id: Uuid,
     changed_props: Vec<Slug>,
 ) -> Result<EntityHistoryEntry, DbError> {
-    // Load properties at this point.
-    let assertion_entries = properties::properties(branch, entity, Some(tx_id))?;
-    let properties: Vec<PropertyValue<TxMeta>> = assertion_entries
-        .into_iter()
-        .map(|a| PropertyValue {
-            property: a.key.prop,
-            value: a.value.value.clone(),
+    let entity = entity_snapshot::entity_snapshot(branch, slug, Some(tx_id))?
+        .unwrap_or_else(|| Entity {
+            slug: slug.clone(),
+            description: None,
+            properties: vec![],
+            meta: serde_json::Map::new(),
             context: TxMeta {
-                tx_id: a.key.tx_id,
-                branch: a.key.branch,
-                reasoning: Some(a.value.reasoning),
-                time: time_from_uuid(a.key.tx_id),
+                tx_id: Uuid::nil(),
+                branch: branch.id().clone(),
+                reasoning: None,
+                time: None,
             },
-        })
-        .collect();
+        });
 
-    // Load entity record at this point.
-    let entity_bound = EntityKey::bound()
-        .with_prefix(|k| k.entity = entity.clone())
-        .with_upper(|k| k.tx_id = tx_id);
-    let entity_entry = branch.get_latest::<EntityEntry>(&entity_bound)?;
-
-    let entity_tx = entity_entry.as_ref().map(|e| e.key.tx_id).unwrap_or(Uuid::nil());
-    let entity_branch = entity_entry
-        .as_ref()
-        .map(|e| e.key.branch.clone())
-        .unwrap_or_else(|| branch.id().clone());
-    let description = entity_entry.and_then(|e| e.value.description);
-
-    // Load transaction metadata.
     let tx_entry = load_transaction_meta(branch, tx_id)?;
     let transaction_meta = tx_entry
         .map(|e| e.value.meta)
         .unwrap_or_default();
 
     Ok(EntityHistoryEntry {
-        entity: Entity {
-            slug: entity.clone(),
-            description,
-            properties,
-            meta: serde_json::Map::new(),
-            context: TxMeta {
-                tx_id: entity_tx,
-                branch: entity_branch,
-                reasoning: None,
-                time: time_from_uuid(entity_tx),
-            },
-        },
+        entity,
         changed_properties: changed_props,
         transaction_meta,
     })

@@ -39,9 +39,9 @@ export interface ManagedRes {
   context: TxContext;
 }
 
-export interface SimilarEntityRes {
-  slug: string;
+export interface SimilarEntityRes extends EntityRes {
   similarity: number;
+  matched_query: number;
 }
 
 export interface TransactionDetailRes {

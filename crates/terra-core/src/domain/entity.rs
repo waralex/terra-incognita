@@ -30,6 +30,15 @@ pub struct Entity<M = ()> {
     pub context: M,
 }
 
+/// Entity with a similarity score — returned by semantic search.
+#[derive(Debug, Clone)]
+pub struct SimilarEntity<M = ()> {
+    pub entity: Entity<M>,
+    pub similarity: f32,
+    /// Index of the query that produced the best match.
+    pub matched_query: usize,
+}
+
 impl Entity<()> {
     /// Create a new entity input (before persisting).
     pub fn new(

@@ -1,20 +1,23 @@
-//! FindSimilarEntities — multi-vector semantic entity search.
+//! FindSimilarEntities — multi-vector semantic entity search with full entity loading.
 
 use crate::command::Command;
 use crate::command::CommandState;
 use crate::command::input::similar_entities::SimilarEntitiesQuery;
+use crate::domain::entity::SimilarEntity;
+use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
-use crate::io::slug::Slug;
 use crate::store::branch_context::BranchContext;
-use crate::store::query::similarity;
+use crate::store::query::{entity_snapshot, similarity};
 
 /// Accepts multiple query values, embeds each, and returns entities ranked
 /// by the maximum cosine similarity across all query vectors.
+/// Each result includes the full entity snapshot and the index of the
+/// best-matching query.
 pub struct FindSimilarEntities;
 
 impl Command for FindSimilarEntities {
     type Input = SimilarEntitiesQuery;
-    type Output = Vec<(Slug, f32)>;
+    type Output = Vec<SimilarEntity<TxMeta>>;
 
     fn execute(
         &self,
@@ -33,7 +36,24 @@ impl Command for FindSimilarEntities {
             })
             .collect::<Result<_, _>>()?;
 
-        similarity::similar_entities_multi(branch, &embeddings, input.limit, input.min_similarity, input.at_tx)
+        let matches = similarity::similar_entities_multi(
+            branch, &embeddings, input.limit, input.min_similarity, input.at_tx,
+        )?;
+
+        let at_tx = input.at_tx;
+        let mut results = Vec::with_capacity(matches.len());
+
+        for m in matches {
+            if let Some(entity) = entity_snapshot::entity_snapshot(branch, &m.slug, at_tx)? {
+                results.push(SimilarEntity {
+                    entity,
+                    similarity: m.similarity,
+                    matched_query: m.matched_query,
+                });
+            }
+        }
+
+        Ok(results)
     }
 }
 
@@ -134,7 +154,7 @@ mod tests {
         branch: &BranchContext,
         embedder: Arc<dyn Embedder>,
         input: SimilarEntitiesQuery,
-    ) -> Vec<(Slug, f32)> {
+    ) -> Vec<SimilarEntity<TxMeta>> {
         let cmd = FindSimilarEntities;
         let mut state = CommandState::with_embedder(branch.storage(), embedder);
         cmd.execute(branch, &mut state, input).unwrap()
@@ -173,8 +193,11 @@ mod tests {
         );
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0.as_str(), "auth-service");
-        assert!(results[0].1 > 0.0);
+        assert_eq!(results[0].entity.slug.as_str(), "auth-service");
+        assert!(results[0].similarity > 0.0);
+        assert_eq!(results[0].matched_query, 0);
+        assert_eq!(results[0].entity.properties.len(), 1);
+        assert_eq!(results[0].entity.description, Some(serde_json::json!("auth service")));
     }
 
     #[test]
@@ -216,7 +239,7 @@ mod tests {
         );
 
         assert_eq!(results.len(), 2);
-        let slugs: Vec<&str> = results.iter().map(|r| r.0.as_str()).collect();
+        let slugs: Vec<&str> = results.iter().map(|r| r.entity.slug.as_str()).collect();
         assert!(slugs.contains(&"auth-service"));
         assert!(slugs.contains(&"payment-service"));
     }
@@ -245,10 +268,7 @@ mod tests {
             SimilarEntitiesQuery::new(vec![serde_json::json!("query")], 10, 0.9999),
         );
 
-        // TestEmbedder produces vectors based on text length, so unless
-        // lengths match exactly, similarity < 1.0. With a very high threshold
-        // the result should be filtered out.
-        assert!(results.is_empty() || results[0].1 >= 0.9999);
+        assert!(results.is_empty() || results[0].similarity >= 0.9999);
     }
 
     #[test]

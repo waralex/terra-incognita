@@ -15,27 +15,34 @@ use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
 ///
 /// Walks the current branch and ancestry chain, collecting the latest
 /// embedding per entity, then ranks by cosine similarity.
-/// Returns `(entity_slug, similarity_score)` pairs sorted by score descending.
 pub fn similar_entities(
     branch: &BranchContext,
     query_embedding: &[f32],
     limit: usize,
     min_similarity: f32,
     at_tx: Option<Uuid>,
-) -> Result<Vec<(Slug, f32)>, DbError> {
+) -> Result<Vec<SimilarityMatch>, DbError> {
     similar_entities_multi(branch, &[query_embedding.to_vec()], limit, min_similarity, at_tx)
+}
+
+/// Result of a multi-vector similarity search: entity slug, best score, and
+/// the index of the query embedding that produced the best match.
+pub struct SimilarityMatch {
+    pub slug: Slug,
+    pub similarity: f32,
+    pub matched_query: usize,
 }
 
 /// Multi-vector semantic search: accepts multiple query embeddings, performs a single
 /// scan over entity embeddings, and scores each entity by the maximum cosine similarity
-/// across all query vectors.
+/// across all query vectors. Returns the index of the best-matching query per entity.
 pub fn similar_entities_multi(
     branch: &BranchContext,
     query_embeddings: &[Vec<f32>],
     limit: usize,
     min_similarity: f32,
     at_tx: Option<Uuid>,
-) -> Result<Vec<(Slug, f32)>, DbError> {
+) -> Result<Vec<SimilarityMatch>, DbError> {
     if query_embeddings.is_empty() {
         return Ok(Vec::new());
     }
@@ -50,22 +57,23 @@ pub fn similar_entities_multi(
         collect_embeddings(branch, &scope.branch, scope.upper_tx, &mut latest)?;
     }
 
-    let mut scored: Vec<(Slug, f32)> = latest
+    let mut scored: Vec<SimilarityMatch> = latest
         .into_iter()
         .filter_map(|(slug, emb)| {
-            let max_sim = query_embeddings
+            let (best_idx, best_sim) = query_embeddings
                 .iter()
-                .map(|q| cosine_similarity(q, &emb))
-                .fold(f32::NEG_INFINITY, f32::max);
-            if max_sim >= min_similarity {
-                Some((slug, max_sim))
+                .enumerate()
+                .map(|(i, q)| (i, cosine_similarity(q, &emb)))
+                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
+            if best_sim >= min_similarity {
+                Some(SimilarityMatch { slug, similarity: best_sim, matched_query: best_idx })
             } else {
                 None
             }
         })
         .collect();
 
-    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(limit);
     Ok(scored)
 }

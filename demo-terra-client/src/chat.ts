@@ -11,6 +11,7 @@ import { translateToEnglish } from "./translate.js";
 
 export type ChatEvent =
   | { type: "delta"; text: string }
+  | { type: "translated"; text: string }
   | { type: "answer"; text: string; mutations: Record<string, unknown[]> }
   | { type: "transaction"; result: unknown }
   | { type: "error"; error: string }
@@ -38,6 +39,9 @@ export async function handleChat(
   let userMessage = rawMessage;
   if (config.anthropicApiKey) {
     userMessage = await translateToEnglish(config.anthropicApiKey, rawMessage);
+    if (userMessage !== rawMessage) {
+      emit({ type: "translated", text: userMessage });
+    }
   }
 
   let context: string;

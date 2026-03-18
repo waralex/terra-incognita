@@ -70,6 +70,9 @@ function processLine(line, assistantEl, setAnswer) {
   try { data = JSON.parse(line.slice(6)); } catch { return; }
 
   switch (data.type) {
+    case "translated":
+      addMessage("system", `→ ${data.text}`);
+      break;
     case "delta":
       assistantEl.textContent += data.text;
       messagesEl.scrollTop = messagesEl.scrollHeight;

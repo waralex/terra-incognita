@@ -42,11 +42,14 @@ fn collect_props(
     on_branch: &Slug,
     result: &mut HashMap<Slug, AssertionEntry>,
 ) -> Result<(), DbError> {
-    let entity_bound = AssertionKey::bound()
+    let mut entity_bound = AssertionKey::bound()
         .with_prefix(|k| {
             k.branch = on_branch.clone();
             k.entity = entity.clone();
         });
+    if let Some(tx) = at_tx {
+        entity_bound = entity_bound.with_upper(|k| k.tx_id = tx);
+    }
 
     let mut iter = branch.storage().scan::<AssertionEntry>(&entity_bound)?;
 

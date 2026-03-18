@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::command::executor::checkout::{CheckoutOutput, ExecuteCheckout};
+use crate::command::executor::entity_history::ListEntityHistory;
 use crate::command::executor::get_branch::GetBranch;
 use crate::command::executor::get_transaction::GetTransaction;
 use crate::command::executor::list_managed::ListManaged;
@@ -13,6 +14,7 @@ use crate::command::executor::similar_entities::FindSimilarEntities;
 use crate::command::executor::touched_entities::ListTouchedEntities;
 use crate::command::executor::transaction::ExecuteTransaction;
 use crate::command::input::checkout::CheckoutInput;
+use crate::command::input::entity_history::EntityHistoryQuery;
 use crate::command::input::get_branch::GetBranchQuery;
 use crate::command::input::get_transaction::GetTransactionQuery;
 use crate::command::input::list_managed::ListManagedQuery;
@@ -24,6 +26,7 @@ use crate::command::{Command, CommandState};
 use crate::config::{DataSchema, ProjectConfig};
 use crate::domain::branch::Branch;
 use crate::domain::entity::Entity;
+use crate::domain::entity_history::EntityHistoryEntry;
 use crate::domain::managed::Managed;
 use crate::domain::transaction::{Transaction, TransactionDetail};
 use crate::domain::tx_meta::TxMeta;
@@ -197,6 +200,19 @@ impl Executable for ListManagedQuery {
     ) -> Result<Self::Output, DbError> {
         ListManaged::new(terra.schema.clone())
             .execute(branch, state, self)
+    }
+}
+
+impl Executable for EntityHistoryQuery {
+    type Output = Vec<EntityHistoryEntry>;
+
+    fn execute_on(
+        self,
+        _terra: &Terra,
+        branch: &BranchContext,
+        state: &mut CommandState,
+    ) -> Result<Self::Output, DbError> {
+        ListEntityHistory.execute(branch, state, self)
     }
 }
 

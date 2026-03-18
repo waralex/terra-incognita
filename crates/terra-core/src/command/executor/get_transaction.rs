@@ -116,11 +116,14 @@ impl GetTransaction {
         tx_id: Uuid,
         item: &ChangeItem,
     ) -> Result<Entity<TxMeta>, DbError> {
-        // Load entity change entry for meta.
-        let change = branch.storage().get::<EntityChangeEntry>(
-            &EntityChangeKey { change_id: item.change_id },
-        )?;
-        let meta = change.map(|c| c.value.meta).unwrap_or_default();
+        // Load entity change entry for meta (nil = no properties changed).
+        let meta = if item.change_id.is_nil() {
+            serde_json::Map::new()
+        } else {
+            branch.storage().get::<EntityChangeEntry>(
+                &EntityChangeKey { change_id: item.change_id },
+            )?.map(|c| c.value.meta).unwrap_or_default()
+        };
 
         // Load entity record at this tx for description.
         let entity_entry = branch.storage().get::<EntityEntry>(
@@ -180,10 +183,13 @@ impl GetTransaction {
         item: &ChangeItem,
     ) -> Result<DeletedEntity, DbError> {
         // Load EntityChangeEntry for meta (reasoning etc.)
-        let change = branch.storage().get::<EntityChangeEntry>(
-            &EntityChangeKey { change_id: item.change_id },
-        )?;
-        let meta = change.map(|c| c.value.meta).unwrap_or_default();
+        let meta = if item.change_id.is_nil() {
+            serde_json::Map::new()
+        } else {
+            branch.storage().get::<EntityChangeEntry>(
+                &EntityChangeKey { change_id: item.change_id },
+            )?.map(|c| c.value.meta).unwrap_or_default()
+        };
 
         let reasoning = meta.get("reasoning")
             .cloned()

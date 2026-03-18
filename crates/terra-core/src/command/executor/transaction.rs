@@ -67,39 +67,40 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<Uuid, DbError> {
+        if entity.properties.is_empty() {
+            return Ok(Uuid::nil());
+        }
+
         let change_id = Uuid::now_v7();
+        let reasoning = entity.meta.get("reasoning")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        if !entity.properties.is_empty() {
-            let reasoning = entity.meta.get("reasoning")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+        let batch = state.batch();
+        batch.put(&EntityChangeEntry {
+            key: EntityChangeKey { change_id },
+            value: EntityChangeValue {
+                entity: entity.slug.clone(),
+                tx_id,
+                meta: entity.meta.clone(),
+            },
+        })?;
 
-            let batch = state.batch();
-            batch.put(&EntityChangeEntry {
-                key: EntityChangeKey { change_id },
-                value: EntityChangeValue {
+        for pv in &entity.properties {
+            batch.put(&AssertionEntry {
+                key: AssertionKey {
+                    branch: branch.id().clone(),
                     entity: entity.slug.clone(),
+                    prop: pv.property.clone(),
                     tx_id,
-                    meta: entity.meta.clone(),
+                },
+                value: AssertionValue {
+                    change_id,
+                    value: pv.value.clone(),
+                    reasoning: reasoning.clone(),
                 },
             })?;
-
-            for pv in &entity.properties {
-                batch.put(&AssertionEntry {
-                    key: AssertionKey {
-                        branch: branch.id().clone(),
-                        entity: entity.slug.clone(),
-                        prop: pv.property.clone(),
-                        tx_id,
-                    },
-                    value: AssertionValue {
-                        change_id,
-                        value: pv.value.clone(),
-                        reasoning: reasoning.clone(),
-                    },
-                })?;
-            }
         }
 
         Ok(change_id)

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use crate::command::executor::checkout::{CheckoutOutput, ExecuteCheckout};
 use crate::command::executor::get_branch::GetBranch;
+use crate::command::executor::get_transaction::GetTransaction;
 use crate::command::executor::list_managed::ListManaged;
 use crate::command::executor::list_transactions::ListTransactions;
 use crate::command::executor::similar_entities::FindSimilarEntities;
@@ -13,6 +14,7 @@ use crate::command::executor::touched_entities::ListTouchedEntities;
 use crate::command::executor::transaction::ExecuteTransaction;
 use crate::command::input::checkout::CheckoutInput;
 use crate::command::input::get_branch::GetBranchQuery;
+use crate::command::input::get_transaction::GetTransactionQuery;
 use crate::command::input::list_managed::ListManagedQuery;
 use crate::command::input::list_transactions::ListTransactionsQuery;
 use crate::command::input::similar_entities::SimilarEntitiesQuery;
@@ -23,7 +25,7 @@ use crate::config::{DataSchema, ProjectConfig};
 use crate::domain::branch::Branch;
 use crate::domain::entity::Entity;
 use crate::domain::managed::Managed;
-use crate::domain::transaction::Transaction;
+use crate::domain::transaction::{Transaction, TransactionDetail};
 use crate::domain::tx_meta::TxMeta;
 use crate::domain::validator::DomainValidator;
 use crate::embed::Embedder;
@@ -129,6 +131,19 @@ impl Executable for CheckoutInput {
     ) -> Result<Self::Output, DbError> {
         ExecuteCheckout::new(terra.validator.clone())
             .execute(branch, state, self)
+    }
+}
+
+impl Executable for GetTransactionQuery {
+    type Output = TransactionDetail;
+
+    fn execute_on(
+        self,
+        _terra: &Terra,
+        branch: &BranchContext,
+        state: &mut CommandState,
+    ) -> Result<Self::Output, DbError> {
+        GetTransaction.execute(branch, state, self)
     }
 }
 

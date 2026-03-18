@@ -62,6 +62,37 @@ pub struct ManagedRes {
     pub context: TxMetaRes,
 }
 
+/// Full transaction detail result.
+#[derive(Serialize)]
+pub struct TransactionDetailRes {
+    pub meta: Map<String, Value>,
+    pub branch: String,
+    pub context: TxMetaRes,
+    pub created: Vec<EntityRes>,
+    pub updated: Vec<EntityRes>,
+    pub deleted: Vec<DeletedEntityRes>,
+    pub touched: Vec<TouchedEntityRes>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub created_managed: Vec<ManagedRes>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub updated_managed: Vec<ManagedRes>,
+}
+
+/// Deleted entity in a transaction detail.
+#[derive(Serialize)]
+pub struct DeletedEntityRes {
+    pub slug: String,
+    pub reasoning: Value,
+    pub context: TxMetaRes,
+}
+
+/// Touched entity in a transaction detail.
+#[derive(Serialize)]
+pub struct TouchedEntityRes {
+    pub slug: String,
+    pub reasoning: String,
+}
+
 /// Checkout result.
 #[derive(Serialize)]
 pub struct CheckoutRes {

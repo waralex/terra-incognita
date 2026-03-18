@@ -7,7 +7,7 @@ use terra_core::domain::branch::Branch;
 use terra_core::domain::entity::Entity;
 use terra_core::domain::entity::PropertyValue;
 use terra_core::domain::managed::Managed;
-use terra_core::domain::transaction::Transaction;
+use terra_core::domain::transaction::{Transaction, TransactionDetail};
 use terra_core::domain::tx_meta::TxMeta;
 use terra_core::io::slug::Slug;
 
@@ -15,8 +15,9 @@ use crate::dto::request::{
     CheckoutReq, EntityReq, ManagedReq, TransactionReq,
 };
 use crate::dto::response::{
-    BranchRes, CheckoutRes, EntityRes, ManagedRes, PropertyValueRes,
-    SimilarEntityRes, TransactionRes, TxMetaRes,
+    BranchRes, CheckoutRes, DeletedEntityRes, EntityRes, ManagedRes,
+    PropertyValueRes, SimilarEntityRes, TouchedEntityRes, TransactionDetailRes,
+    TransactionRes, TxMetaRes,
 };
 
 // --- Request → Domain ---
@@ -129,6 +130,27 @@ pub fn managed_to_res(m: Managed<TxMeta>) -> ManagedRes {
         state: m.state,
         fields: m.fields,
         context: tx_meta_to_res(m.context),
+    }
+}
+
+pub fn transaction_detail_to_res(detail: TransactionDetail) -> TransactionDetailRes {
+    TransactionDetailRes {
+        meta: detail.meta,
+        branch: detail.branch.to_string(),
+        context: tx_meta_to_res(detail.context),
+        created: detail.created.into_iter().map(entity_to_res).collect(),
+        updated: detail.updated.into_iter().map(entity_to_res).collect(),
+        deleted: detail.deleted.into_iter().map(|d| DeletedEntityRes {
+            slug: d.slug.to_string(),
+            reasoning: d.reasoning,
+            context: tx_meta_to_res(d.context),
+        }).collect(),
+        touched: detail.touched.into_iter().map(|t| TouchedEntityRes {
+            slug: t.slug.to_string(),
+            reasoning: t.reasoning,
+        }).collect(),
+        created_managed: detail.created_managed.into_iter().map(managed_to_res).collect(),
+        updated_managed: detail.updated_managed.into_iter().map(managed_to_res).collect(),
     }
 }
 

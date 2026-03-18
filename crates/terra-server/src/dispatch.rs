@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::http::header::CONTENT_TYPE;
 use terra_core::command::input::get_branch::GetBranchQuery;
+use terra_core::command::input::get_transaction::GetTransactionQuery;
 use terra_core::command::input::list_managed::ListManagedQuery;
 use terra_core::command::input::list_transactions::ListTransactionsQuery;
 use terra_core::command::input::similar_entities::SimilarEntitiesQuery;
@@ -13,8 +14,8 @@ use terra_core::Terra;
 
 use crate::dto::convert;
 use crate::dto::request::{
-    CheckoutReq, CommandEnvelope, ListManagedReq, ListTransactionsReq,
-    SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
+    CheckoutReq, CommandEnvelope, GetTransactionReq, ListManagedReq,
+    ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
 };
 use crate::dto::response::ErrorRes;
 use crate::error::classify;
@@ -46,6 +47,7 @@ pub fn handle(terra: &Terra, body: &[u8], format: ContentFormat) -> Response {
         "entities.touched" => cmd_touched_entities(terra, &branch, envelope.body, format),
         "branch.get" => cmd_get_branch(terra, &branch, format),
         "managed.list" => cmd_list_managed(terra, &branch, envelope.body, format),
+        "transaction.get" => cmd_get_transaction(terra, &branch, envelope.body, format),
         "entities.similar" => cmd_similar_entities(terra, &branch, envelope.body, format),
         other => error_response(
             format,
@@ -159,6 +161,23 @@ fn cmd_list_managed(
             let res: Vec<_> = items.into_iter().map(convert::managed_to_res).collect();
             ok_response(format, &res)
         }
+        Err(e) => db_error_response(format, &e),
+    }
+}
+
+fn cmd_get_transaction(
+    terra: &Terra,
+    branch: &Slug,
+    body: serde_json::Value,
+    format: ContentFormat,
+) -> Response {
+    let req: GetTransactionReq = match serde_json::from_value(body) {
+        Ok(v) => v,
+        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+    };
+    let input = GetTransactionQuery::new(req.tx_id);
+    match terra.execute(branch, input) {
+        Ok(detail) => ok_response(format, &convert::transaction_detail_to_res(detail)),
         Err(e) => db_error_response(format, &e),
     }
 }
@@ -456,6 +475,35 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["slug"], "main");
+    }
+
+    #[test]
+    fn transaction_get_latest() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        dispatch_json(&terra, json!({
+            "command": "transaction",
+            "meta": { "reasoning": "create" },
+            "create": [{
+                "slug": "alice",
+                "description": "A person",
+                "properties": [{ "property": "age", "value": 25 }],
+                "meta": { "reasoning": "initial" }
+            }]
+        }));
+
+        let (status, res) = dispatch_json(&terra, json!({
+            "command": "transaction.get"
+        }));
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(res["meta"]["reasoning"], "create");
+        assert_eq!(res["branch"], "main");
+        assert_eq!(res["created"][0]["slug"], "alice");
+        assert_eq!(res["created"][0]["properties"][0]["property"], "age");
+        assert_eq!(res["created"][0]["properties"][0]["value"], 25);
+        assert!(res["context"]["tx_id"].is_string());
     }
 
     #[test]

@@ -30,6 +30,13 @@ pub struct ChangeItem {
     pub properties: Vec<Slug>,
 }
 
+/// A managed item reference within a transaction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManagedItem {
+    pub type_name: Slug,
+    pub slug: Slug,
+}
+
 /// Denormalized transaction summary — what happened in a single transaction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransactionLogValue {
@@ -43,6 +50,12 @@ pub struct TransactionLogValue {
     pub touched: Vec<Slug>,
     /// Entity slugs deleted in this transaction.
     pub deleted: Vec<Slug>,
+    /// Managed items created in this transaction.
+    #[serde(default)]
+    pub created_managed: Vec<ManagedItem>,
+    /// Managed items updated in this transaction.
+    #[serde(default)]
+    pub updated_managed: Vec<ManagedItem>,
 }
 
 impl StorageValue for TransactionLogValue {
@@ -113,6 +126,11 @@ mod tests {
                 }],
                 touched: vec!["server".parse().unwrap()],
                 deleted: vec!["old-item".parse().unwrap()],
+                created_managed: vec![ManagedItem {
+                    type_name: "task".parse().unwrap(),
+                    slug: "fix-bug".parse().unwrap(),
+                }],
+                updated_managed: vec![],
             },
         };
 
@@ -130,5 +148,9 @@ mod tests {
         assert_eq!(found.value.updated[0].entity.as_str(), "bob");
         assert_eq!(found.value.touched[0].as_str(), "server");
         assert_eq!(found.value.deleted[0].as_str(), "old-item");
+        assert_eq!(found.value.created_managed.len(), 1);
+        assert_eq!(found.value.created_managed[0].type_name.as_str(), "task");
+        assert_eq!(found.value.created_managed[0].slug.as_str(), "fix-bug");
+        assert!(found.value.updated_managed.is_empty());
     }
 }

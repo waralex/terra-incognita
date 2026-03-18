@@ -108,6 +108,12 @@ pub struct ListManagedReq {
     pub at_tx: Option<Uuid>,
 }
 
+/// `transaction.get` command body.
+#[derive(Deserialize)]
+pub struct GetTransactionReq {
+    pub tx_id: Option<Uuid>,
+}
+
 /// `entities.similar` command body.
 #[derive(Deserialize)]
 pub struct SimilarEntitiesReq {

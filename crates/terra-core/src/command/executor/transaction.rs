@@ -20,7 +20,7 @@ use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, Ent
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
 use crate::store::entry::touched::{TouchedEntry, TouchedKey, TouchedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
-use crate::store::entry::transaction_log::{TransactionLogEntry, TransactionLogKey, TransactionLogValue, ChangeItem};
+use crate::store::entry::transaction_log::{TransactionLogEntry, TransactionLogKey, TransactionLogValue, ChangeItem, ManagedItem};
 use crate::store::query::properties;
 
 /// Validates and writes a transaction to a branch.
@@ -430,12 +430,22 @@ impl Command for ExecuteTransaction {
             deleted_slugs.push(item.entity.clone());
         }
 
+        let mut created_managed_items = Vec::new();
         for managed in &input.create_managed {
             self.create_managed_item(branch, state.batch(), tx_id, managed)?;
+            created_managed_items.push(ManagedItem {
+                type_name: managed.type_name.clone(),
+                slug: managed.slug.clone(),
+            });
         }
 
+        let mut updated_managed_items = Vec::new();
         for managed in &input.update_managed {
             self.update_managed_item(branch, state.batch(), tx_id, managed)?;
+            updated_managed_items.push(ManagedItem {
+                type_name: managed.type_name.clone(),
+                slug: managed.slug.clone(),
+            });
         }
 
         // Explicit touches — applied last to override auto-touches.
@@ -460,6 +470,8 @@ impl Command for ExecuteTransaction {
                 updated: updated_items,
                 touched: touched_slugs,
                 deleted: deleted_slugs,
+                created_managed: created_managed_items,
+                updated_managed: updated_managed_items,
             },
         })?;
 

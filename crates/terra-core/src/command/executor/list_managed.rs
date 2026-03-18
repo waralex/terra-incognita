@@ -27,6 +27,92 @@ fn is_lifecycle_visible(type_def: &ManagedTypeDef, state: Option<&str>) -> bool 
     }
 }
 
+/// Collect managed items on a single branch scope via forward scan with seek-to-skip.
+/// Discovers item slugs, then does a bounded reverse seek per item.
+fn collect_managed(
+    storage: &crate::store::storage::Storage,
+    type_slug: &Slug,
+    on_branch: &Slug,
+    at_tx: Option<Uuid>,
+    type_def: &ManagedTypeDef,
+    seen_items: &mut HashSet<Slug>,
+    result: &mut Vec<Managed<TxMeta>>,
+) -> Result<(), DbError> {
+    let bound = ManagedKey::bound()
+        .with_prefix(|k| {
+            k.branch = on_branch.clone();
+            k.type_name = type_slug.clone();
+        });
+
+    let mut iter = storage.scan::<ManagedEntry>(&bound)?;
+
+    loop {
+        let entry = match iter.next() {
+            Some(Ok(e)) => e,
+            Some(Err(e)) => return Err(e),
+            None => break,
+        };
+
+        let item_slug = entry.key.item.clone();
+
+        if seen_items.contains(&item_slug) {
+            let skip = ManagedKey::bound()
+                .with_prefix(|k| {
+                    k.branch = on_branch.clone();
+                    k.type_name = type_slug.clone();
+                    k.item = item_slug.clone();
+                    k.tx_id = Uuid::max();
+                });
+            iter.seek(&skip);
+            continue;
+        }
+        seen_items.insert(item_slug.clone());
+
+        let mut item_bound = ManagedKey::bound()
+            .with_prefix(|k| {
+                k.branch = on_branch.clone();
+                k.type_name = type_slug.clone();
+                k.item = item_slug.clone();
+            });
+        if let Some(tx) = at_tx {
+            item_bound = item_bound.with_upper(|k| k.tx_id = tx);
+        }
+
+        let latest = match storage.get_latest::<ManagedEntry>(&item_bound)? {
+            Some(e) => e,
+            None => continue,
+        };
+
+        if !is_lifecycle_visible(type_def, latest.value.state.as_deref()) {
+            continue;
+        }
+
+        result.push(Managed {
+            type_name: type_slug.clone(),
+            slug: item_slug,
+            state: latest.value.state,
+            fields: latest.value.fields,
+            context: TxMeta {
+                tx_id: latest.key.tx_id,
+                branch: latest.key.branch,
+                reasoning: None,
+                time: time_from_uuid(latest.key.tx_id),
+            },
+        });
+
+        let skip = ManagedKey::bound()
+            .with_prefix(|k| {
+                k.branch = on_branch.clone();
+                k.type_name = type_slug.clone();
+                k.item = entry.key.item.clone();
+                k.tx_id = Uuid::max();
+            });
+        iter.seek(&skip);
+    }
+
+    Ok(())
+}
+
 /// Lists managed items filtered by lifecycle visibility, walking ancestry.
 pub struct ListManaged {
     schema: Arc<DataSchema>,
@@ -59,145 +145,19 @@ impl Command for ListManaged {
             let type_slug: Slug = type_name.parse()
                 .map_err(|e: crate::io::slug::SlugError| DbError::Storage(e.to_string()))?;
 
-            let bound = ManagedKey::bound()
-                .with_prefix(|k| {
-                    k.branch = branch.id().clone();
-                    k.type_name = type_slug.clone();
-                });
-
-            // FIXME: inefficient two-pass scan strategy.
-            //
-            // Current approach: forward scan discovers all item slugs (reading every
-            // version of every item — O(N*V)), then does a separate reverse
-            // `get_latest` seek per item to find the latest version within at_tx.
-            //
-            // Better approach: single reverse scan with seek-to-skip, same pattern
-            // as `BranchContext::collect_props` / `collect_embeddings`. A reverse
-            // scan naturally lands on the latest version first, so we read one
-            // entry per item — O(N) seeks total instead of O(N*V) forward reads
-            // plus O(N) reverse seeks. The same applies to the ancestry loop below.
-            let mut iter = branch.storage().scan::<ManagedEntry>(&bound)?;
             let mut seen_items = HashSet::new();
 
-            loop {
-                let entry = match iter.next() {
-                    Some(Ok(e)) => e,
-                    Some(Err(e)) => return Err(e),
-                    None => break,
-                };
-
-                let item_slug = entry.key.item.clone();
-                if seen_items.contains(&item_slug) {
-                    let skip = ManagedKey::bound()
-                        .with_prefix(|k| {
-                            k.branch = branch.id().clone();
-                            k.type_name = type_slug.clone();
-                            k.item = item_slug.clone();
-                            k.tx_id = Uuid::max();
-                        });
-                    iter.seek(&skip);
-                    continue;
-                }
-                seen_items.insert(item_slug.clone());
-
-                // Get latest version within tx bound.
-                let item_bound = ManagedKey::bound()
-                    .with_prefix(|k| {
-                        k.branch = branch.id().clone();
-                        k.type_name = type_slug.clone();
-                        k.item = item_slug.clone();
-                    })
-                    .with_upper(|k| k.tx_id = at_tx);
-
-                let latest = match branch.get_latest::<ManagedEntry>(&item_bound)? {
-                    Some(e) => e,
-                    None => continue,
-                };
-
-                if !is_lifecycle_visible(type_def, latest.value.state.as_deref()) {
-                    continue;
-                }
-
-                result.push(Managed {
-                    type_name: type_slug.clone(),
-                    slug: item_slug,
-                    state: latest.value.state,
-                    fields: latest.value.fields,
-                    context: TxMeta {
-                        tx_id: latest.key.tx_id,
-                        branch: latest.key.branch,
-                        reasoning: None,
-                        time: time_from_uuid(latest.key.tx_id),
-                    },
-                });
-            }
-
-            // Walk ancestry for this managed type.
-            for ancestor in branch.ancestry() {
-                let ancestor_bound = ManagedKey::bound()
-                    .with_prefix(|k| {
-                        k.branch = ancestor.branch.clone();
-                        k.type_name = type_slug.clone();
-                    });
-
-                let mut ancestor_iter = branch.storage().scan::<ManagedEntry>(&ancestor_bound)?;
-
-                loop {
-                    let entry = match ancestor_iter.next() {
-                        Some(Ok(e)) => e,
-                        Some(Err(e)) => return Err(e),
-                        None => break,
-                    };
-
-                    let item_slug = entry.key.item.clone();
-                    if seen_items.contains(&item_slug) {
-                        let skip = ManagedKey::bound()
-                            .with_prefix(|k| {
-                                k.branch = ancestor.branch.clone();
-                                k.type_name = type_slug.clone();
-                                k.item = item_slug.clone();
-                                k.tx_id = Uuid::max();
-                            });
-                        ancestor_iter.seek(&skip);
-                        continue;
-                    }
-                    seen_items.insert(item_slug.clone());
-
-                    let item_bound = ManagedKey::bound()
-                        .with_prefix(|k| {
-                            k.branch = ancestor.branch.clone();
-                            k.type_name = type_slug.clone();
-                            k.item = item_slug.clone();
-                        })
-                        .with_upper(|k| k.tx_id = ancestor.branch_point_tx);
-
-                    let latest = match branch.storage().get_latest::<ManagedEntry>(&item_bound)? {
-                        Some(e) => e,
-                        None => continue,
-                    };
-
-                    if let Some(lc) = &type_def.lifecycle {
-                        if !lc.visible.is_empty() {
-                            let state = latest.value.state.as_deref().unwrap_or("");
-                            if !lc.visible.iter().any(|s| s == state) {
-                                continue;
-                            }
-                        }
-                    }
-
-                    result.push(Managed {
-                        type_name: type_slug.clone(),
-                        slug: item_slug,
-                        state: latest.value.state,
-                        fields: latest.value.fields,
-                        context: TxMeta {
-                            tx_id: latest.key.tx_id,
-                            branch: latest.key.branch,
-                            reasoning: None,
-                            time: time_from_uuid(latest.key.tx_id),
-                        },
-                    });
-                }
+            let scopes: Vec<_> = branch.scopes_at(at_tx).collect();
+            for scope in &scopes {
+                collect_managed(
+                    branch.storage(),
+                    &type_slug,
+                    &scope.branch,
+                    scope.upper_tx,
+                    type_def,
+                    &mut seen_items,
+                    &mut result,
+                )?;
             }
         }
 

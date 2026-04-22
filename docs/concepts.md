@@ -1,13 +1,9 @@
 # Concepts
 
-This file explains the concepts behind terra's data model — what the
-pieces are and how they relate. It is a conceptual reference, not an
-API reference.
-
-The first pass below introduces each concept in just enough depth to
-place it in the overall picture. Deeper mechanics (projections, branch
-isolation semantics, meta hierarchy, lifecycle) come in later sections
-once all the pieces are named.
+This file explains the concepts behind terra's data model — what
+the pieces are and how they relate. It is a conceptual reference,
+not an API reference. Each concept is described in just enough depth
+to place it in the overall picture.
 
 Read top to bottom. Later concepts build on earlier ones.
 
@@ -19,10 +15,9 @@ project-defined meta (by default: `reasoning`). Identified by `tx_id`,
 a UUID v7 — unique and chronologically ordered at once.
 
 No mutable slots anywhere: every write is versioned by tx_id. What
-"the current value of X" returns is a projection over the history of
-transactions that touched X. State as of any past transaction is
-reachable through the same projection capped earlier — details in
-[Projections and `at_tx`][projections].
+"the current value of X" returns is a projection over the history
+of transactions that touched X. State as of any past transaction is
+reachable through the same projection capped earlier.
 
 ## Branches
 
@@ -36,7 +31,7 @@ with zero transactions.
 
 A child sees the parent's history up to the branch point, and its
 own history afterwards; the parent does not see the child. Branches
-are isolated by construction — details in [Branch isolation][isolation].
+are isolated by construction.
 
 ## Entities
 
@@ -356,6 +351,3 @@ Results are returned most-recently-touched first. `climbing-project`,
 so they come back at the top. Entities touched only in earlier
 transactions would appear below, with older tx_ids on their latest
 touch.
-
-[projections]: #projections-and-at_tx
-[isolation]: #branch-isolation

@@ -80,72 +80,31 @@ terra keeps **all** assertions — including contradicting ones — and
 hands back the full distribution. Conflict resolution is explicitly the
 caller's problem. Uncertainty is data, not a bug to smooth over.
 
-## Core model
+## What's stored
 
-### Assertions
+terra is built around two kinds of objects:
 
-An assertion is an atomic claim about one property of one entity,
-carried by a transaction, with reasoning. Multiple assertions about the
-same property coexist — terra does not auto-resolve.
+- **Entities** — open records identified by a slug, carrying any
+  set of properties. No entity types, no runtime property registry:
+  any property slug is valid, values are arbitrary JSON.
+- **Managed items** — typed records declared in `schema.yaml`, each
+  type with its own fields and an optional state lifecycle. Good
+  for tasks, rules, decisions — anything with known structure.
 
-Uncertainty is expressed in the data: alternative values across
-transactions, hedging language in reasoning, differing sources.
+Both live on **branches** — git-like isolated lines of history —
+and all writes go through **transactions**, atomic batches that
+carry their own metadata and a time-ordered `tx_id`. Nothing is
+ever overwritten: the current value of anything is a projection
+over the history of transactions, and the state at any past
+transaction can be reconstructed.
 
-### Entities
+## Documentation
 
-An entity is addressed by a slug — a human-readable identifier
-(unique within the current branch's ancestry). It carries a description
-and a set of properties.
-
-Property slugs are free-form — there is no runtime property registry.
-The model is open-world: any new property slug is valid, and absence
-of an assertion means "we don't know," not "false."
-
-### Transactions
-
-The single mutation primitive. A transaction atomically covers entity
-creation, updates, managed-type operations, soft-deletion, and explicit
-touches. Transaction metadata is project-defined — fields like
-`reasoning`, `question`, `answer` are declared in the data schema
-(YAML), not baked into terra.
-
-Each transaction has a `tx_id` that is both a unique identity and a
-chronological ordering, so queries like "show me state at tx X" work
-naturally. This is also the foundation for future rebase / cherry-pick
-semantics.
-
-### Branches
-
-Branches are the unit of isolated exploration, modeled like git. A
-child branch inherits everything its parent had at the branch point,
-then evolves independently — creating a branch is cheap and does not
-duplicate data. The `main` branch is implicit and always present.
-
-`checkout` creates a branch and may carry an embedded initial
-transaction in the same atomic step.
-
-### Managed types
-
-Typed, versioned records with an optional lifecycle. Defined in the
-project's data schema — tasks, rules, decisions, whatever the caller
-wants. Declaring a new managed type in the schema makes it immediately
-writable: no code changes, no migration.
-
-The demo client uses a `rule` managed type to persist self-improving
-agent instructions across conversations.
-
-### Deletion
-
-Deletion is a new fact. `delete` marks an entity as no-longer-existing
-with reasoning, but prior assertions stay queryable — history is
-append-only. Re-creating with the same slug later is allowed.
-
-### Embeddings (optional)
-
-When compiled with the `onnx` feature and pointed at an ONNX model
-directory (e.g. `all-MiniLM-L6-v2`), terra computes embeddings for
-entity descriptions and serves the `entities.similar` query. Without
-the feature, similarity queries return empty.
+- [Concepts](docs/concepts.md) — data model, branches, touching,
+  deletion, with a worked transaction example.
+- [HTTP API](docs/api.md) — command reference for `POST /query`.
+- [Configuration](docs/configuration.md) — `terra-server.yaml`,
+  `project.yaml`, `schema.yaml` reference.
 
 ## Invariants
 
@@ -170,62 +129,6 @@ the feature, similarity queries return empty.
   endpoint `POST /query` accepting JSON or YAML (selected via
   `Content-Type`).
 
-## HTTP commands
-
-All requests go to `POST /query` with a `command` discriminator and an
-optional `branch` (defaults to `main`):
-
-- Writes: `transaction`, `checkout`
-- Reads: `transactions.list`, `transaction.get`, `entities.touched`,
-  `entities.similar`, `branch.get`, `managed.list`
-
-A `transaction` body accepts: `meta`, `create`, `update`,
-`create_managed`, `update_managed`, `delete`, `touch`.
-
-Errors come back with a `kind` field (`validation_error`, `not_found`,
-`unknown_command`, `invalid_slug`, `parse_error`, ...).
-
-## Config
-
-Three YAML files:
-
-```yaml
-# terra-server.yaml
-port: 3000
-project_config_path: ./project.yaml
-embed_model_dir: ../models/all-MiniLM-L6-v2  # optional, needs `onnx` feature
-```
-
-```yaml
-# project.yaml
-data_dir: ./data
-schema_path: ./schema.yaml
-```
-
-```yaml
-# schema.yaml
-transaction_meta:
-  reasoning: { type: text, required: true }
-  question:  { type: text }
-  answer:    { type: text }
-
-entity_change_meta:
-  reasoning: { type: text, required: true }
-
-branch_meta:
-  reasoning: { type: text, required: true }
-
-managed_types:
-  rule:
-    fields:
-      content:   { type: text, required: true }
-      rationale: { type: text }
-    lifecycle:
-      initial: draft
-      states: [draft, active, rejected, promoted]
-      visible: [draft, active]
-```
-
 ## Clients in this repo
 
 - **demo-terra-client** — an exploratory POC used during v0.2
@@ -234,9 +137,6 @@ managed_types:
   memory, with a small web UI. Not a reference integration and not
   maintained as a product — kept here as a working example of the
   shortest path from zero to a talking agent with terra as memory.
-
-See also: [product-docs/concept.md](product-docs/concept.md) for
-underlying design rationale.
 
 ## Non-goals
 

@@ -131,12 +131,14 @@ transaction can be reconstructed.
 
 ## Clients in this repo
 
-- **demo-terra-client** — an exploratory POC used during v0.2
-  development to validate terra's shape end-to-end. Wires an LLM
-  (OpenAI-compatible or Anthropic) to terra-server as persistent
+- **[demo-terra-client](demo-terra-client/)** — an exploratory POC
+  used during v0.2 development to validate terra's shape end-to-end.
+  Wires an LLM (Anthropic or OpenAI) to terra-server as persistent
   memory, with a small web UI. Not a reference integration and not
   maintained as a product — kept here as a working example of the
   shortest path from zero to a talking agent with terra as memory.
+  See [demo-terra-client/README.md](demo-terra-client/README.md) for
+  setup and environment variables.
 
 ## Non-goals
 

@@ -7,9 +7,9 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::io::{DbItem, DbError};
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::io::{DbError, DbItem};
 
 const CF_BRANCH_MAIN: &str = "branch_main";
 
@@ -84,7 +84,9 @@ mod tests {
 
         let branch_slug: Slug = "exploration".parse().unwrap();
         let entry = BranchEntry {
-            key: BranchKey { branch: branch_slug.clone() },
+            key: BranchKey {
+                branch: branch_slug.clone(),
+            },
             value: BranchValue {
                 slug: "exploration".into(),
                 meta: serde_json::Map::new(),

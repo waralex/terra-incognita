@@ -86,7 +86,10 @@ impl DomainValidator {
     }
 
     /// Validate entity change metadata against `DataSchema.entity_change_meta`.
-    pub fn check_entity_change_meta(&self, meta: &Map<String, Value>) -> Result<(), ValidationError> {
+    pub fn check_entity_change_meta(
+        &self,
+        meta: &Map<String, Value>,
+    ) -> Result<(), ValidationError> {
         validate_fields(meta, &self.schema.entity_change_meta, true)
     }
 
@@ -114,7 +117,9 @@ impl DomainValidator {
     }
 
     fn resolve_managed_type(&self, managed: &Managed) -> Result<&ManagedTypeDef, ValidationError> {
-        self.schema.managed_types.get(managed.type_name.as_str())
+        self.schema
+            .managed_types
+            .get(managed.type_name.as_str())
             .ok_or_else(|| ValidationError::UnknownManagedType {
                 type_name: managed.type_name.to_string(),
             })
@@ -133,9 +138,13 @@ fn validate_fields(
     for (name, def) in defs {
         match values.get(name.as_str()) {
             None if check_required && def.required => {
-                return Err(ValidationError::MissingField { field: name.clone() });
+                return Err(ValidationError::MissingField {
+                    field: name.clone(),
+                });
             }
-            Some(val) if def.field_type == FieldType::Text && !val.is_string() && !val.is_null() => {
+            Some(val)
+                if def.field_type == FieldType::Text && !val.is_string() && !val.is_null() =>
+            {
                 return Err(ValidationError::TypeMismatch {
                     field: name.clone(),
                     actual: value_type_name(val).into(),
@@ -194,12 +203,13 @@ fn value_type_name(v: &Value) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
     use super::*;
     use crate::domain::entity::Entity;
+    use indoc::indoc;
 
     fn schema_with_tx_meta() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             transaction_meta:
               reasoning:
                 type: text
@@ -208,11 +218,14 @@ mod tests {
                 type: text
               answer:
                 type: text
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     fn schema_with_managed() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             managed_types:
               task:
                 fields:
@@ -224,7 +237,9 @@ mod tests {
               note:
                 fields:
                   content: { type: text, required: true }
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     // --- Transaction ---
@@ -241,7 +256,9 @@ mod tests {
     #[test]
     fn transaction_missing_required() {
         let v = DomainValidator::new(schema_with_tx_meta());
-        let err = v.check_transaction(&Transaction::new(Map::new())).unwrap_err();
+        let err = v
+            .check_transaction(&Transaction::new(Map::new()))
+            .unwrap_err();
         assert!(matches!(err, ValidationError::MissingField { field } if field == "reasoning"));
     }
 
@@ -277,7 +294,12 @@ mod tests {
     #[test]
     fn entity_create_with_description() {
         let v = DomainValidator::new(schema_with_tx_meta());
-        let e = Entity::new("person".parse().unwrap(), Some(serde_json::json!("A person")), vec![], Map::new());
+        let e = Entity::new(
+            "person".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![],
+            Map::new(),
+        );
         v.check_entity_create(&e).unwrap();
     }
 
@@ -305,14 +327,24 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("do stuff"));
 
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("open".into()), fields);
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            Some("open".into()),
+            fields,
+        );
         v.check_managed_create(&m).unwrap();
     }
 
     #[test]
     fn create_managed_missing_required() {
         let v = DomainValidator::new(schema_with_managed());
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("open".into()), Map::new());
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            Some("open".into()),
+            Map::new(),
+        );
 
         let err = v.check_managed_create(&m).unwrap_err();
         assert!(matches!(err, ValidationError::MissingField { field } if field == "goal"));
@@ -324,7 +356,12 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("do stuff"));
 
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), None, fields);
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            None,
+            fields,
+        );
         let err = v.check_managed_create(&m).unwrap_err();
         assert!(matches!(err, ValidationError::MissingState { .. }));
     }
@@ -335,7 +372,12 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("content".into(), Value::String("hello".into()));
 
-        let m = Managed::new("note".parse().unwrap(), "note-1".parse().unwrap(), Some("active".into()), fields);
+        let m = Managed::new(
+            "note".parse().unwrap(),
+            "note-1".parse().unwrap(),
+            Some("active".into()),
+            fields,
+        );
         let err = v.check_managed_create(&m).unwrap_err();
         assert!(matches!(err, ValidationError::InvalidState { .. }));
     }
@@ -343,7 +385,12 @@ mod tests {
     #[test]
     fn create_managed_unknown_type() {
         let v = DomainValidator::new(schema_with_managed());
-        let m = Managed::new("nonexistent".parse().unwrap(), "item-1".parse().unwrap(), None, Map::new());
+        let m = Managed::new(
+            "nonexistent".parse().unwrap(),
+            "item-1".parse().unwrap(),
+            None,
+            Map::new(),
+        );
 
         let err = v.check_managed_create(&m).unwrap_err();
         assert!(matches!(err, ValidationError::UnknownManagedType { .. }));
@@ -355,7 +402,12 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("content".into(), Value::String("hello".into()));
 
-        let m = Managed::new("note".parse().unwrap(), "note-1".parse().unwrap(), None, fields);
+        let m = Managed::new(
+            "note".parse().unwrap(),
+            "note-1".parse().unwrap(),
+            None,
+            fields,
+        );
         v.check_managed_create(&m).unwrap();
     }
 
@@ -367,7 +419,12 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("notes".into(), serde_json::json!("just notes"));
 
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("open".into()), fields);
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            Some("open".into()),
+            fields,
+        );
         v.check_managed_update(&m).unwrap();
     }
 
@@ -377,7 +434,12 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("content".into(), serde_json::json!(42));
 
-        let m = Managed::new("note".parse().unwrap(), "note-1".parse().unwrap(), None, fields);
+        let m = Managed::new(
+            "note".parse().unwrap(),
+            "note-1".parse().unwrap(),
+            None,
+            fields,
+        );
         let err = v.check_managed_update(&m).unwrap_err();
         assert!(matches!(err, ValidationError::TypeMismatch { field, .. } if field == "content"));
     }
@@ -388,7 +450,12 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("bogus".into(), serde_json::json!("nope"));
 
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("open".into()), fields);
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            Some("open".into()),
+            fields,
+        );
         let err = v.check_managed_update(&m).unwrap_err();
         assert!(matches!(err, ValidationError::UnexpectedField { field } if field == "bogus"));
     }
@@ -396,14 +463,17 @@ mod tests {
     // --- Entity change meta ---
 
     fn schema_with_entity_change_meta() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             entity_change_meta:
               reasoning:
                 type: text
                 required: true
               confidence:
                 type: json
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     #[test]
@@ -417,7 +487,11 @@ mod tests {
         let e = Entity::new(
             "person".parse().unwrap(),
             Some(serde_json::json!("A person")),
-            vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+            vec![PropertyValue {
+                property: "age".parse().unwrap(),
+                value: serde_json::json!(30),
+                context: (),
+            }],
             meta,
         );
         v.check_entity_create(&e).unwrap();
@@ -431,7 +505,11 @@ mod tests {
         let e = Entity::new(
             "person".parse().unwrap(),
             Some(serde_json::json!("A person")),
-            vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+            vec![PropertyValue {
+                property: "age".parse().unwrap(),
+                value: serde_json::json!(30),
+                context: (),
+            }],
             Map::new(),
         );
         let err = v.check_entity_create(&e).unwrap_err();
@@ -458,7 +536,11 @@ mod tests {
         let e = Entity::new(
             "person".parse().unwrap(),
             None,
-            vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(31), context: () }],
+            vec![PropertyValue {
+                property: "age".parse().unwrap(),
+                value: serde_json::json!(31),
+                context: (),
+            }],
             Map::new(),
         );
         let err = v.check_entity_update(&e).unwrap_err();
@@ -480,19 +562,33 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("do stuff"));
 
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("banana".into()), fields);
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            Some("banana".into()),
+            fields,
+        );
         let err = v.check_managed_create(&m).unwrap_err();
-        assert!(matches!(err, ValidationError::InvalidState { type_name, state }
-            if type_name == "task" && state == "banana"));
+        assert!(
+            matches!(err, ValidationError::InvalidState { type_name, state }
+            if type_name == "task" && state == "banana")
+        );
     }
 
     #[test]
     fn update_managed_with_invalid_state() {
         let v = DomainValidator::new(schema_with_managed());
 
-        let m = Managed::new("task".parse().unwrap(), "task-1".parse().unwrap(), Some("banana".into()), Map::new());
+        let m = Managed::new(
+            "task".parse().unwrap(),
+            "task-1".parse().unwrap(),
+            Some("banana".into()),
+            Map::new(),
+        );
         let err = v.check_managed_update(&m).unwrap_err();
-        assert!(matches!(err, ValidationError::InvalidState { type_name, state }
-            if type_name == "task" && state == "banana"));
+        assert!(
+            matches!(err, ValidationError::InvalidState { type_name, state }
+            if type_name == "task" && state == "banana")
+        );
     }
 }

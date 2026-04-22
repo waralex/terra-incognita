@@ -2,13 +2,13 @@
 
 use uuid::Uuid;
 
+use crate::command::input::list_transactions::ListTransactionsQuery;
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::list_transactions::ListTransactionsQuery;
 use crate::domain::transaction::Transaction;
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
-use crate::io::DbError;
+use crate::domain::tx_meta::{time_from_uuid, TxMeta};
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey};
 
@@ -62,7 +62,9 @@ impl Command for ListTransactions {
                 .with_prefix(|k| k.branch = ancestor.branch.clone())
                 .with_upper(|k| k.tx_id = ancestor.branch_point_tx);
 
-            let iter = branch.storage().scan_rev::<TransactionEntry>(&ancestor_bound)?;
+            let iter = branch
+                .storage()
+                .scan_rev::<TransactionEntry>(&ancestor_bound)?;
             for entry_result in iter {
                 if result.len() >= input.limit {
                     break;
@@ -86,9 +88,9 @@ impl Command for ListTransactions {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use serde_json::{Map, Value};
     use indoc::indoc;
+    use serde_json::{Map, Value};
+    use std::sync::Arc;
 
     use super::*;
     use crate::command::executor::transaction::ExecuteTransaction;
@@ -98,14 +100,17 @@ mod tests {
     use crate::store::storage::Storage;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     fn test_schema() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             transaction_meta:
               reasoning:
                 type: text
@@ -125,7 +130,9 @@ mod tests {
                 lifecycle:
                   initial: open
                   visible: [open]
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     fn meta(r: &str) -> Map<String, Value> {
@@ -153,7 +160,9 @@ mod tests {
 
         let cmd = ListTransactions;
         let mut state = CommandState::new(branch.storage());
-        let txs = cmd.execute(&branch, &mut state, ListTransactionsQuery::new(None, 3)).unwrap();
+        let txs = cmd
+            .execute(&branch, &mut state, ListTransactionsQuery::new(None, 3))
+            .unwrap();
         assert_eq!(txs.len(), 3);
         assert_eq!(txs[0].meta["reasoning"], "tx-4");
         assert_eq!(txs[2].meta["reasoning"], "tx-2");

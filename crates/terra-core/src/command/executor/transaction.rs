@@ -4,17 +4,17 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
+use crate::command::input::transaction::{DeleteItem, TransactionInput};
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::transaction::{DeleteItem, TransactionInput};
 use crate::domain::entity::Entity;
 use crate::domain::transaction::Transaction;
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
+use crate::domain::tx_meta::{time_from_uuid, TxMeta};
 use crate::domain::validator::DomainValidator;
-use crate::io::DbError;
 use crate::io::slug::Slug;
-use crate::io::WriteBatch;
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
+use crate::io::WriteBatch;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey, AssertionValue};
 use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey, EmbeddingValue};
@@ -23,7 +23,9 @@ use crate::store::entry::entity_change::{EntityChangeEntry, EntityChangeKey, Ent
 use crate::store::entry::managed::{ManagedEntry, ManagedKey, ManagedValue};
 use crate::store::entry::touched::{TouchedEntry, TouchedKey, TouchedValue};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey, TransactionValue};
-use crate::store::entry::transaction_log::{TransactionLogEntry, TransactionLogKey, TransactionLogValue, ChangeItem, ManagedItem};
+use crate::store::entry::transaction_log::{
+    ChangeItem, ManagedItem, TransactionLogEntry, TransactionLogKey, TransactionLogValue,
+};
 use crate::store::query::properties;
 
 /// Validates and writes a transaction to a branch.
@@ -45,7 +47,9 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<(), DbError> {
-        let reasoning = entity.meta.get("reasoning")
+        let reasoning = entity
+            .meta
+            .get("reasoning")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -72,7 +76,9 @@ impl ExecuteTransaction {
         }
 
         let change_id = Uuid::now_v7();
-        let reasoning = entity.meta.get("reasoning")
+        let reasoning = entity
+            .meta
+            .get("reasoning")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -183,12 +189,15 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<ChangeItem, DbError> {
-        let bound = EntityKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = entity.slug.clone(); });
+        let bound = EntityKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = entity.slug.clone();
+        });
         if let Some(existing) = branch.get_latest::<EntityEntry>(&bound)? {
             if !existing.value.is_deleted() {
                 return Err(DbError::Storage(format!(
-                    "entity already exists: {}", entity.slug
+                    "entity already exists: {}",
+                    entity.slug
                 )));
             }
         }
@@ -208,12 +217,24 @@ impl ExecuteTransaction {
         Self::write_touched(branch, state.batch(), tx_id, entity)?;
         let change_id = self.write_assertions(branch, state, tx_id, entity)?;
         // New entity — description from input, no existing properties.
-        Self::write_embedding(state, branch, tx_id, entity, change_id, entity.description.as_ref(), &[])?;
+        Self::write_embedding(
+            state,
+            branch,
+            tx_id,
+            entity,
+            change_id,
+            entity.description.as_ref(),
+            &[],
+        )?;
 
         Ok(ChangeItem {
             entity: entity.slug.clone(),
             change_id,
-            properties: entity.properties.iter().map(|pv| pv.property.clone()).collect(),
+            properties: entity
+                .properties
+                .iter()
+                .map(|pv| pv.property.clone())
+                .collect(),
         })
     }
 
@@ -224,11 +245,14 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         entity: &Entity,
     ) -> Result<ChangeItem, DbError> {
-        let bound = EntityKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = entity.slug.clone(); });
+        let bound = EntityKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = entity.slug.clone();
+        });
         if !branch.exists::<EntityEntry>(&bound)? {
             return Err(DbError::Storage(format!(
-                "entity not found: {}", entity.slug
+                "entity not found: {}",
+                entity.slug
             )));
         }
 
@@ -238,7 +262,8 @@ impl ExecuteTransaction {
         let existing: Vec<AssertionEntry>;
         if state.embedder().dimensions() != 0 {
             stored_desc = if entity.description.is_none() {
-                branch.get_latest::<EntityEntry>(&bound)?
+                branch
+                    .get_latest::<EntityEntry>(&bound)?
                     .and_then(|e| e.value.description)
             } else {
                 None
@@ -266,12 +291,24 @@ impl ExecuteTransaction {
 
         Self::write_touched(branch, state.batch(), tx_id, entity)?;
         let change_id = self.write_assertions(branch, state, tx_id, entity)?;
-        Self::write_embedding(state, branch, tx_id, entity, change_id, description, &existing)?;
+        Self::write_embedding(
+            state,
+            branch,
+            tx_id,
+            entity,
+            change_id,
+            description,
+            &existing,
+        )?;
 
         Ok(ChangeItem {
             entity: entity.slug.clone(),
             change_id,
-            properties: entity.properties.iter().map(|pv| pv.property.clone()).collect(),
+            properties: entity
+                .properties
+                .iter()
+                .map(|pv| pv.property.clone())
+                .collect(),
         })
     }
 
@@ -282,15 +319,15 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         managed: &crate::domain::managed::Managed,
     ) -> Result<(), DbError> {
-        let bound = ManagedKey::bound()
-            .with_prefix(|k| {
-                k.branch = branch.id().clone();
-                k.type_name = managed.type_name.clone();
-                k.item = managed.slug.clone();
-            });
+        let bound = ManagedKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.type_name = managed.type_name.clone();
+            k.item = managed.slug.clone();
+        });
         if branch.exists::<ManagedEntry>(&bound)? {
             return Err(DbError::Storage(format!(
-                "managed item already exists: {}/{}", managed.type_name, managed.slug
+                "managed item already exists: {}/{}",
+                managed.type_name, managed.slug
             )));
         }
 
@@ -318,16 +355,17 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         managed: &crate::domain::managed::Managed,
     ) -> Result<(), DbError> {
-        let bound = ManagedKey::bound()
-            .with_prefix(|k| {
-                k.branch = branch.id().clone();
-                k.type_name = managed.type_name.clone();
-                k.item = managed.slug.clone();
-            });
-        let existing = branch.get_latest::<ManagedEntry>(&bound)?
-            .ok_or_else(|| DbError::Storage(format!(
-                "managed item not found: {}/{}", managed.type_name, managed.slug
-            )))?;
+        let bound = ManagedKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.type_name = managed.type_name.clone();
+            k.item = managed.slug.clone();
+        });
+        let existing = branch.get_latest::<ManagedEntry>(&bound)?.ok_or_else(|| {
+            DbError::Storage(format!(
+                "managed item not found: {}/{}",
+                managed.type_name, managed.slug
+            ))
+        })?;
 
         // Merge fields: start with existing, overlay with input.
         // Null values in input remove the field.
@@ -367,11 +405,14 @@ impl ExecuteTransaction {
         tx_id: Uuid,
         item: &DeleteItem,
     ) -> Result<ChangeItem, DbError> {
-        let bound = EntityKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = item.entity.clone(); });
+        let bound = EntityKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = item.entity.clone();
+        });
         if !branch.exists::<EntityEntry>(&bound)? {
             return Err(DbError::Storage(format!(
-                "entity not found: {}", item.entity
+                "entity not found: {}",
+                item.entity
             )));
         }
 
@@ -435,12 +476,12 @@ impl ExecuteTransaction {
             })?;
         }
 
-        Self::write_touched(branch, state.batch(), tx_id, &Entity::new(
-            item.entity.clone(),
-            None,
-            vec![],
-            serde_json::Map::new(),
-        ))?;
+        Self::write_touched(
+            branch,
+            state.batch(),
+            tx_id,
+            &Entity::new(item.entity.clone(), None, vec![], serde_json::Map::new()),
+        )?;
 
         Ok(ChangeItem {
             entity: item.entity.clone(),
@@ -454,9 +495,15 @@ impl Command for ExecuteTransaction {
     type Input = TransactionInput;
     type Output = Transaction<TxMeta>;
 
-    fn execute(&self, branch: &BranchContext, state: &mut CommandState, input: Self::Input) -> Result<Self::Output, DbError> {
+    fn execute(
+        &self,
+        branch: &BranchContext,
+        state: &mut CommandState,
+        input: Self::Input,
+    ) -> Result<Self::Output, DbError> {
         // Validate everything before touching storage.
-        self.validator.check_transaction(&Transaction::new(input.meta.clone()))?;
+        self.validator
+            .check_transaction(&Transaction::new(input.meta.clone()))?;
         for entity in &input.create_entities {
             self.validator.check_entity_create(entity)?;
         }
@@ -477,7 +524,8 @@ impl Command for ExecuteTransaction {
         for entity in &input.create_entities {
             if !seen_entity_slugs.insert(&entity.slug) {
                 return Err(DbError::Storage(format!(
-                    "duplicate entity in transaction: {}", entity.slug
+                    "duplicate entity in transaction: {}",
+                    entity.slug
                 )));
             }
             created_items.push(self.create_entity(branch, state, tx_id, entity)?);
@@ -487,7 +535,8 @@ impl Command for ExecuteTransaction {
         for entity in &input.update_entities {
             if !seen_entity_slugs.insert(&entity.slug) {
                 return Err(DbError::Storage(format!(
-                    "duplicate entity in transaction: {}", entity.slug
+                    "duplicate entity in transaction: {}",
+                    entity.slug
                 )));
             }
             updated_items.push(self.update_entity(branch, state, tx_id, entity)?);
@@ -497,7 +546,8 @@ impl Command for ExecuteTransaction {
         for item in &input.delete_entities {
             if !seen_entity_slugs.insert(&item.entity) {
                 return Err(DbError::Storage(format!(
-                    "duplicate entity in transaction: {}", item.entity
+                    "duplicate entity in transaction: {}",
+                    item.entity
                 )));
             }
             deleted_items.push(self.delete_entity(branch, state, tx_id, item)?);
@@ -508,7 +558,8 @@ impl Command for ExecuteTransaction {
         for managed in &input.create_managed {
             if !seen_managed_slugs.insert((&managed.type_name, &managed.slug)) {
                 return Err(DbError::Storage(format!(
-                    "duplicate managed item in transaction: {}/{}", managed.type_name, managed.slug
+                    "duplicate managed item in transaction: {}/{}",
+                    managed.type_name, managed.slug
                 )));
             }
             self.create_managed_item(branch, state.batch(), tx_id, managed)?;
@@ -522,7 +573,8 @@ impl Command for ExecuteTransaction {
         for managed in &input.update_managed {
             if !seen_managed_slugs.insert((&managed.type_name, &managed.slug)) {
                 return Err(DbError::Storage(format!(
-                    "duplicate managed item in transaction: {}/{}", managed.type_name, managed.slug
+                    "duplicate managed item in transaction: {}/{}",
+                    managed.type_name, managed.slug
                 )));
             }
             self.update_managed_item(branch, state.batch(), tx_id, managed)?;
@@ -541,7 +593,9 @@ impl Command for ExecuteTransaction {
                     tx_id,
                     entity: item.entity.clone(),
                 },
-                value: TouchedValue { reasoning: item.reasoning.clone() },
+                value: TouchedValue {
+                    reasoning: item.reasoning.clone(),
+                },
             })?;
             touched_slugs.push(item.entity.clone());
         }
@@ -564,7 +618,9 @@ impl Command for ExecuteTransaction {
                 branch: branch.id().clone(),
                 tx_id,
             },
-            value: TransactionValue { meta: input.meta.clone() },
+            value: TransactionValue {
+                meta: input.meta.clone(),
+            },
         })?;
 
         Ok(Transaction {
@@ -581,7 +637,6 @@ impl Command for ExecuteTransaction {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use super::*;
     use crate::config::ProjectConfig;
     use crate::domain::entity::PropertyValue;
@@ -589,20 +644,24 @@ mod tests {
     use crate::store::query::similarity;
     use crate::store::storage::Storage;
     use serde_json::{Map, Value};
+    use std::sync::Arc;
 
-    use indoc::indoc;
     use crate::command::input::transaction::TouchItem;
     use crate::config::DataSchema;
+    use indoc::indoc;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     fn test_schema() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             transaction_meta:
               reasoning:
                 type: text
@@ -620,7 +679,9 @@ mod tests {
                   initial: open
                   states: [open, closed]
                   visible: [open]
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     fn cmd() -> ExecuteTransaction {
@@ -640,17 +701,22 @@ mod tests {
     }
 
     fn entity_bound(branch: &BranchContext, slug: &str) -> crate::io::KeyBound<EntityKey> {
-        EntityKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = slug.parse().unwrap(); })
+        EntityKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = slug.parse().unwrap();
+        })
     }
 
-    fn managed_bound(branch: &BranchContext, type_name: &str, slug: &str) -> crate::io::KeyBound<ManagedKey> {
-        ManagedKey::bound()
-            .with_prefix(|k| {
-                k.branch = branch.id().clone();
-                k.type_name = type_name.parse().unwrap();
-                k.item = slug.parse().unwrap();
-            })
+    fn managed_bound(
+        branch: &BranchContext,
+        type_name: &str,
+        slug: &str,
+    ) -> crate::io::KeyBound<ManagedKey> {
+        ManagedKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.type_name = type_name.parse().unwrap();
+            k.item = slug.parse().unwrap();
+        })
     }
 
     /// Execute a transaction and commit immediately (test convenience).
@@ -670,18 +736,23 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("introduce alice"))
-            .create_entity(Entity::new(
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("introduce alice")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
         assert_eq!(result.meta["reasoning"], "introduce alice");
         assert_eq!(result.context.branch.as_str(), "main");
 
-        let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice")).unwrap().unwrap();
+        let entry = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.key.entity.as_str(), "alice");
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
     }
@@ -692,24 +763,30 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("first"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("first")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("First")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
         let cmd = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("second"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Duplicate")),
-                vec![],
-                Map::new(),
-            ))
-        ).unwrap_err();
+        let err = cmd
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("second")).create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("Duplicate")),
+                    vec![],
+                    Map::new(),
+                )),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 
@@ -729,22 +806,28 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("batch"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Person A")),
-                vec![],
-                Map::new(),
-            ))
-            .create_entity(Entity::new(
-                "bob".parse().unwrap(),
-                Some(serde_json::json!("Person B")),
-                vec![],
-                Map::new(),
-            )));
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("batch"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("Person A")),
+                    vec![],
+                    Map::new(),
+                ))
+                .create_entity(Entity::new(
+                    "bob".parse().unwrap(),
+                    Some(serde_json::json!("Person B")),
+                    vec![],
+                    Map::new(),
+                )),
+        );
 
         for name in ["alice", "bob"] {
-            let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, name)).unwrap().unwrap();
+            let entry = branch
+                .get_latest::<EntityEntry>(&entity_bound(&branch, name))
+                .unwrap()
+                .unwrap();
             assert_eq!(entry.key.entity.as_str(), name);
             assert_eq!(entry.key.tx_id, result.context.tx_id);
         }
@@ -759,13 +842,15 @@ mod tests {
         let prefix = entity_bound(&branch, "alice");
         assert!(!branch.exists::<EntityEntry>(&prefix).unwrap());
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
         assert!(branch.exists::<EntityEntry>(&prefix).unwrap());
     }
@@ -776,29 +861,45 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("create with props"))
-            .create_entity(Entity::new(
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("create with props")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
-                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
-                    PropertyValue { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                    PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(30),
+                        context: (),
+                    },
+                    PropertyValue {
+                        property: "city".parse().unwrap(),
+                        value: serde_json::json!("London"),
+                        context: (),
+                    },
                 ],
                 entity_meta("initial observation"),
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice")).unwrap().unwrap();
+        let entry = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.description, Some(serde_json::json!("A person")));
 
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let alice_slug: crate::io::Slug = "alice".parse().unwrap();
-        let bound = AssertionKey::bound()
-            .with_prefix(|k| {
-                k.branch = branch.id().clone();
-                k.entity = alice_slug.clone();
-                k.prop = age_slug.clone();
-            });
-        let found = branch.storage().get_latest::<AssertionEntry>(&bound).unwrap().unwrap();
+        let bound = AssertionKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = alice_slug.clone();
+            k.prop = age_slug.clone();
+        });
+        let found = branch
+            .storage()
+            .get_latest::<AssertionEntry>(&bound)
+            .unwrap()
+            .unwrap();
         assert_eq!(found.value.value, serde_json::json!(30));
         assert_eq!(found.key.entity, alice_slug);
         assert_eq!(found.key.tx_id, result.context.tx_id);
@@ -808,9 +909,14 @@ mod tests {
         assert_eq!(change.value.entity, alice_slug.as_str());
     }
 
-    fn storage_get_exact(branch: &BranchContext, change_id: Uuid) -> Result<EntityChangeEntry, DbError> {
+    fn storage_get_exact(
+        branch: &BranchContext,
+        change_id: Uuid,
+    ) -> Result<EntityChangeEntry, DbError> {
         let key = EntityChangeKey { change_id };
-        branch.storage().get::<EntityChangeEntry>(&key)?
+        branch
+            .storage()
+            .get::<EntityChangeEntry>(&key)?
             .ok_or_else(|| DbError::Storage("entity change not found".into()))
     }
 
@@ -822,33 +928,42 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
-        let result = exec(&branch, TransactionInput::new(meta("update"))
-            .update_entity(Entity::new(
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("update")).update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
-                vec![
-                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                ],
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
                 entity_meta("age observed"),
-            )));
+            )),
+        );
 
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let alice_slug: crate::io::Slug = "alice".parse().unwrap();
-        let bound = AssertionKey::bound()
-            .with_prefix(|k| {
-                k.branch = branch.id().clone();
-                k.entity = alice_slug.clone();
-                k.prop = age_slug.clone();
-            });
-        let found = branch.storage().get_latest::<AssertionEntry>(&bound).unwrap().unwrap();
+        let bound = AssertionKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = alice_slug.clone();
+            k.prop = age_slug.clone();
+        });
+        let found = branch
+            .storage()
+            .get_latest::<AssertionEntry>(&bound)
+            .unwrap()
+            .unwrap();
         assert_eq!(found.value.value, serde_json::json!(25));
         assert_eq!(found.key.tx_id, result.context.tx_id);
     }
@@ -861,14 +976,18 @@ mod tests {
 
         let cmd = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("update missing"))
-            .update_entity(Entity::new(
-                "ghost".parse().unwrap(),
-                None,
-                vec![],
-                Map::new(),
-            ))
-        ).unwrap_err();
+        let err = cmd
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("update missing")).update_entity(Entity::new(
+                    "ghost".parse().unwrap(),
+                    None,
+                    vec![],
+                    Map::new(),
+                )),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("entity not found: ghost"));
     }
 
@@ -878,24 +997,34 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Original")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
-        exec(&branch, TransactionInput::new(meta("update desc"))
-            .update_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("update desc")).update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Updated description")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice")).unwrap().unwrap();
-        assert_eq!(entry.value.description, Some(serde_json::json!("Updated description")));
+        let entry = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            entry.value.description,
+            Some(serde_json::json!("Updated description"))
+        );
     }
 
     // --- Create managed ---
@@ -909,16 +1038,20 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
 
-        exec(&branch, TransactionInput::new(meta("create task"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create task")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.slug, "task-1");
         assert_eq!(entry.value.state, Some("open".into()));
         assert_eq!(entry.value.fields["goal"], "explore");
@@ -933,25 +1066,33 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("first"));
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields.clone(),
-            )));
+            )),
+        );
 
         let cmd = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("duplicate"))
-            .create_managed(Managed::new(
-                "task".parse().unwrap(),
-                "task-1".parse().unwrap(),
-                Some("open".into()),
-                fields,
-            ))
-        ).unwrap_err();
-        assert!(err.to_string().contains("managed item already exists: task/task-1"));
+        let err = cmd
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("duplicate")).create_managed(Managed::new(
+                    "task".parse().unwrap(),
+                    "task-1".parse().unwrap(),
+                    Some("open".into()),
+                    fields,
+                )),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("managed item already exists: task/task-1"));
     }
 
     // --- Update managed ---
@@ -965,28 +1106,34 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            )));
+            )),
+        );
 
         let mut updated_fields = Map::new();
         updated_fields.insert("goal".into(), serde_json::json!("explore deeply"));
         updated_fields.insert("notes".into(), serde_json::json!("found something"));
 
-        exec(&branch, TransactionInput::new(meta("update"))
-            .update_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("update")).update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 updated_fields,
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.fields["goal"], "explore deeply");
         assert_eq!(entry.value.fields["notes"], "found something");
     }
@@ -999,15 +1146,21 @@ mod tests {
 
         let cmd = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = cmd.execute(&branch, &mut state, TransactionInput::new(meta("update missing"))
-            .update_managed(Managed::new(
-                "task".parse().unwrap(),
-                "ghost".parse().unwrap(),
-                Some("open".into()),
-                Map::new(),
-            ))
-        ).unwrap_err();
-        assert!(err.to_string().contains("managed item not found: task/ghost"));
+        let err = cmd
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("update missing")).update_managed(Managed::new(
+                    "task".parse().unwrap(),
+                    "ghost".parse().unwrap(),
+                    Some("open".into()),
+                    Map::new(),
+                )),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("managed item not found: task/ghost"));
     }
 
     #[test]
@@ -1020,28 +1173,34 @@ mod tests {
         fields.insert("goal".into(), serde_json::json!("explore"));
         fields.insert("notes".into(), serde_json::json!("initial notes"));
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            )));
+            )),
+        );
 
         // Update only notes — goal should be preserved.
         let mut update_fields = Map::new();
         update_fields.insert("notes".into(), serde_json::json!("updated notes"));
 
-        exec(&branch, TransactionInput::new(meta("partial update"))
-            .update_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("partial update")).update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 update_fields,
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.fields["goal"], "explore");
         assert_eq!(entry.value.fields["notes"], "updated notes");
     }
@@ -1056,28 +1215,34 @@ mod tests {
         fields.insert("goal".into(), serde_json::json!("explore"));
         fields.insert("notes".into(), serde_json::json!("some notes"));
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            )));
+            )),
+        );
 
         // Send null for notes — should be removed.
         let mut update_fields = Map::new();
         update_fields.insert("notes".into(), serde_json::Value::Null);
 
-        exec(&branch, TransactionInput::new(meta("remove notes"))
-            .update_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("remove notes")).update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 update_fields,
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.fields["goal"], "explore");
         assert!(!entry.value.fields.contains_key("notes"));
     }
@@ -1091,25 +1256,31 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            )));
+            )),
+        );
 
         // Update state only, no fields.
-        exec(&branch, TransactionInput::new(meta("close"))
-            .update_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("close")).update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("closed".into()),
                 Map::new(),
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.state.as_deref(), Some("closed"));
         assert_eq!(entry.value.fields["goal"], "explore");
     }
@@ -1123,28 +1294,34 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("explore"));
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 Some("open".into()),
                 fields,
-            )));
+            )),
+        );
 
         // Update fields only, state = None → carry forward.
         let mut update_fields = Map::new();
         update_fields.insert("notes".into(), serde_json::json!("found it"));
 
-        exec(&branch, TransactionInput::new(meta("add notes"))
-            .update_managed(Managed::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("add notes")).update_managed(Managed::new(
                 "task".parse().unwrap(),
                 "task-1".parse().unwrap(),
                 None,
                 update_fields,
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(entry.value.state.as_deref(), Some("open"));
         assert_eq!(entry.value.fields["notes"], "found it");
         assert_eq!(entry.value.fields["goal"], "explore");
@@ -1158,70 +1335,87 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("setup"))
-            .create_entity(Entity::new(
-                "server".parse().unwrap(),
-                Some(serde_json::json!("Production server")),
-                vec![],
-                Map::new(),
-            ))
-            .create_managed(Managed::new(
-                "task".parse().unwrap(),
-                "task-1".parse().unwrap(),
-                Some("open".into()),
-                {
-                    let mut f = Map::new();
-                    f.insert("goal".into(), serde_json::json!("monitor"));
-                    f
-                },
-            )));
+        exec(
+            &branch,
+            TransactionInput::new(meta("setup"))
+                .create_entity(Entity::new(
+                    "server".parse().unwrap(),
+                    Some(serde_json::json!("Production server")),
+                    vec![],
+                    Map::new(),
+                ))
+                .create_managed(Managed::new(
+                    "task".parse().unwrap(),
+                    "task-1".parse().unwrap(),
+                    Some("open".into()),
+                    {
+                        let mut f = Map::new();
+                        f.insert("goal".into(), serde_json::json!("monitor"));
+                        f
+                    },
+                )),
+        );
 
         let mut new_fields = Map::new();
         new_fields.insert("goal".into(), serde_json::json!("investigate"));
 
-        let result = exec(&branch, TransactionInput::new(meta("mixed"))
-            .create_entity(Entity::new(
-                "db-node".parse().unwrap(),
-                Some(serde_json::json!("Database node")),
-                vec![
-                    PropertyValue { property: "status".parse().unwrap(), value: serde_json::json!("healthy"), context: () },
-                ],
-                entity_meta("initial check"),
-            ))
-            .update_entity(Entity::new(
-                "server".parse().unwrap(),
-                None,
-                vec![
-                    PropertyValue { property: "status".parse().unwrap(), value: serde_json::json!("degraded"), context: () },
-                ],
-                entity_meta("health check failed"),
-            ))
-            .create_managed(Managed::new(
-                "task".parse().unwrap(),
-                "task-2".parse().unwrap(),
-                Some("open".into()),
-                new_fields,
-            ))
-            .update_managed(Managed::new(
-                "task".parse().unwrap(),
-                "task-1".parse().unwrap(),
-                Some("open".into()),
-                {
-                    let mut f = Map::new();
-                    f.insert("goal".into(), serde_json::json!("escalate"));
-                    f
-                },
-            )));
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("mixed"))
+                .create_entity(Entity::new(
+                    "db-node".parse().unwrap(),
+                    Some(serde_json::json!("Database node")),
+                    vec![PropertyValue {
+                        property: "status".parse().unwrap(),
+                        value: serde_json::json!("healthy"),
+                        context: (),
+                    }],
+                    entity_meta("initial check"),
+                ))
+                .update_entity(Entity::new(
+                    "server".parse().unwrap(),
+                    None,
+                    vec![PropertyValue {
+                        property: "status".parse().unwrap(),
+                        value: serde_json::json!("degraded"),
+                        context: (),
+                    }],
+                    entity_meta("health check failed"),
+                ))
+                .create_managed(Managed::new(
+                    "task".parse().unwrap(),
+                    "task-2".parse().unwrap(),
+                    Some("open".into()),
+                    new_fields,
+                ))
+                .update_managed(Managed::new(
+                    "task".parse().unwrap(),
+                    "task-1".parse().unwrap(),
+                    Some("open".into()),
+                    {
+                        let mut f = Map::new();
+                        f.insert("goal".into(), serde_json::json!("escalate"));
+                        f
+                    },
+                )),
+        );
 
-        let db_node = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "db-node")).unwrap().unwrap();
+        let db_node = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "db-node"))
+            .unwrap()
+            .unwrap();
         assert_eq!(db_node.key.tx_id, result.context.tx_id);
 
-        let task2 = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-2"))
-            .unwrap().unwrap();
+        let task2 = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-2"))
+            .unwrap()
+            .unwrap();
         assert_eq!(task2.key.tx_id, result.context.tx_id);
 
-        let task1 = branch.get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
-            .unwrap().unwrap();
+        let task1 = branch
+            .get_latest::<ManagedEntry>(&managed_bound(&branch, "task", "task-1"))
+            .unwrap()
+            .unwrap();
         assert_eq!(task1.value.fields["goal"], "escalate");
     }
 
@@ -1233,36 +1427,62 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
-        let result = exec(&branch, TransactionInput::new(meta("observe"))
-            .update_entity(Entity::new(
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("observe")).update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![
-                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
-                    PropertyValue { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                    PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(30),
+                        context: (),
+                    },
+                    PropertyValue {
+                        property: "city".parse().unwrap(),
+                        value: serde_json::json!("London"),
+                        context: (),
+                    },
                 ],
                 entity_meta("census data"),
-            )));
+            )),
+        );
 
         let alice_slug: crate::io::Slug = "alice".parse().unwrap();
         let age_slug: crate::io::Slug = "age".parse().unwrap();
         let city_slug: crate::io::Slug = "city".parse().unwrap();
 
-        let age_bound = AssertionKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = alice_slug.clone(); k.prop = age_slug.clone(); });
-        let city_bound = AssertionKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = alice_slug.clone(); k.prop = city_slug.clone(); });
+        let age_bound = AssertionKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = alice_slug.clone();
+            k.prop = age_slug.clone();
+        });
+        let city_bound = AssertionKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = alice_slug.clone();
+            k.prop = city_slug.clone();
+        });
 
-        let age_entry = branch.storage().get_latest::<AssertionEntry>(&age_bound).unwrap().unwrap();
-        let city_entry = branch.storage().get_latest::<AssertionEntry>(&city_bound).unwrap().unwrap();
+        let age_entry = branch
+            .storage()
+            .get_latest::<AssertionEntry>(&age_bound)
+            .unwrap()
+            .unwrap();
+        let city_entry = branch
+            .storage()
+            .get_latest::<AssertionEntry>(&city_bound)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(age_entry.value.change_id, city_entry.value.change_id);
 
@@ -1280,13 +1500,15 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 entity_meta("first sighting"),
-            )));
+            )),
+        );
 
         let key = TouchedKey {
             branch: branch.id().clone(),
@@ -1303,23 +1525,29 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
-        let result = exec(&branch, TransactionInput::new(meta("update"))
-            .update_entity(Entity::new(
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("update")).update_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
-                vec![
-                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
-                ],
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(30),
+                    context: (),
+                }],
                 entity_meta("observed age"),
-            )));
+            )),
+        );
 
         let key = TouchedKey {
             branch: branch.id().clone(),
@@ -1336,19 +1564,22 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("batch"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Person A")),
-                vec![],
-                entity_meta("introduce alice"),
-            ))
-            .create_entity(Entity::new(
-                "bob".parse().unwrap(),
-                Some(serde_json::json!("Person B")),
-                vec![],
-                entity_meta("introduce bob"),
-            )));
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("batch"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("Person A")),
+                    vec![],
+                    entity_meta("introduce alice"),
+                ))
+                .create_entity(Entity::new(
+                    "bob".parse().unwrap(),
+                    Some(serde_json::json!("Person B")),
+                    vec![],
+                    entity_meta("introduce bob"),
+                )),
+        );
 
         for (slug, expected) in [("alice", "introduce alice"), ("bob", "introduce bob")] {
             let key = TouchedKey {
@@ -1369,14 +1600,17 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("investigate"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("A person")),
-                vec![],
-                entity_meta("auto reasoning"),
-            ))
-            .touch(TouchItem::new("alice".parse().unwrap(), "primary suspect")));
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("investigate"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![],
+                    entity_meta("auto reasoning"),
+                ))
+                .touch(TouchItem::new("alice".parse().unwrap(), "primary suspect")),
+        );
 
         let key = TouchedKey {
             branch: branch.id().clone(),
@@ -1395,8 +1629,11 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("observe"))
-            .touch(TouchItem::new("server".parse().unwrap(), "checked health")));
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("observe"))
+                .touch(TouchItem::new("server".parse().unwrap(), "checked health")),
+        );
 
         let key = TouchedKey {
             branch: branch.id().clone(),
@@ -1411,10 +1648,10 @@ mod tests {
 
     mod embedding_tests {
         use super::*;
-        use std::sync::Mutex;
         use crate::embed::Embedder;
-        use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
         use crate::io::storage_key::StorageKey;
+        use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
+        use std::sync::Mutex;
 
         /// Deterministic test embedder — returns a fixed vector based on text length.
         struct TestEmbedder {
@@ -1423,7 +1660,9 @@ mod tests {
 
         impl TestEmbedder {
             fn new() -> Self {
-                Self { calls: Mutex::new(Vec::new()) }
+                Self {
+                    calls: Mutex::new(Vec::new()),
+                }
             }
 
             fn call_count(&self) -> usize {
@@ -1431,7 +1670,12 @@ mod tests {
             }
 
             fn last_text(&self) -> String {
-                self.calls.lock().unwrap().last().cloned().unwrap_or_default()
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .cloned()
+                    .unwrap_or_default()
             }
         }
 
@@ -1466,22 +1710,28 @@ mod tests {
             let storage = Storage::open(dir.path(), test_config()).unwrap();
             let branch = BranchContext::main(storage);
 
-            exec(&branch, TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
+            exec(
+                &branch,
+                TransactionInput::new(meta("create")).create_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
-                    vec![
-                        PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
-                    ],
+                    vec![PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(30),
+                        context: (),
+                    }],
                     entity_meta("initial"),
-                )));
+                )),
+            );
 
-            let bound = EmbeddingKey::bound()
-                .with_prefix(|k| {
-                    k.branch = branch.id().clone();
-                    k.entity = "alice".parse().unwrap();
-                });
-            let found = branch.storage().get_latest::<EmbeddingEntry>(&bound).unwrap();
+            let bound = EmbeddingKey::bound().with_prefix(|k| {
+                k.branch = branch.id().clone();
+                k.entity = "alice".parse().unwrap();
+            });
+            let found = branch
+                .storage()
+                .get_latest::<EmbeddingEntry>(&bound)
+                .unwrap();
             assert!(found.is_none());
         }
 
@@ -1492,25 +1742,32 @@ mod tests {
             let branch = BranchContext::main(storage);
             let embedder = Arc::new(TestEmbedder::new());
 
-            let result = exec_with_embedder(&branch, embedder.clone(),
-                TransactionInput::new(meta("create"))
-                    .create_entity(Entity::new(
-                        "alice".parse().unwrap(),
-                        Some(serde_json::json!("A person")),
-                        vec![
-                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
-                        ],
-                        entity_meta("initial"),
-                    )));
+            let result = exec_with_embedder(
+                &branch,
+                embedder.clone(),
+                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(30),
+                        context: (),
+                    }],
+                    entity_meta("initial"),
+                )),
+            );
 
             assert!(embedder.call_count() > 0);
 
-            let bound = EmbeddingKey::bound()
-                .with_prefix(|k| {
-                    k.branch = branch.id().clone();
-                    k.entity = "alice".parse().unwrap();
-                });
-            let found = branch.storage().get_latest::<EmbeddingEntry>(&bound).unwrap().unwrap();
+            let bound = EmbeddingKey::bound().with_prefix(|k| {
+                k.branch = branch.id().clone();
+                k.entity = "alice".parse().unwrap();
+            });
+            let found = branch
+                .storage()
+                .get_latest::<EmbeddingEntry>(&bound)
+                .unwrap()
+                .unwrap();
             assert_eq!(found.key.tx_id, result.context.tx_id);
             assert_eq!(found.value.embedding.len(), 4);
         }
@@ -1522,34 +1779,43 @@ mod tests {
             let branch = BranchContext::main(storage);
             let embedder = Arc::new(TestEmbedder::new());
 
-            exec_with_embedder(&branch, embedder.clone(),
-                TransactionInput::new(meta("create"))
-                    .create_entity(Entity::new(
-                        "alice".parse().unwrap(),
-                        Some(serde_json::json!("A person")),
-                        vec![],
-                        Map::new(),
-                    )));
+            exec_with_embedder(
+                &branch,
+                embedder.clone(),
+                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![],
+                    Map::new(),
+                )),
+            );
 
-            let result = exec_with_embedder(&branch, embedder.clone(),
-                TransactionInput::new(meta("update"))
-                    .update_entity(Entity::new(
-                        "alice".parse().unwrap(),
-                        None,
-                        vec![
-                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                        ],
-                        entity_meta("birthday"),
-                    )));
+            let result = exec_with_embedder(
+                &branch,
+                embedder.clone(),
+                TransactionInput::new(meta("update")).update_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    None,
+                    vec![PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(25),
+                        context: (),
+                    }],
+                    entity_meta("birthday"),
+                )),
+            );
 
             assert!(embedder.call_count() >= 2);
 
-            let bound = EmbeddingKey::bound()
-                .with_prefix(|k| {
-                    k.branch = branch.id().clone();
-                    k.entity = "alice".parse().unwrap();
-                });
-            let found = branch.storage().get_latest::<EmbeddingEntry>(&bound).unwrap().unwrap();
+            let bound = EmbeddingKey::bound().with_prefix(|k| {
+                k.branch = branch.id().clone();
+                k.entity = "alice".parse().unwrap();
+            });
+            let found = branch
+                .storage()
+                .get_latest::<EmbeddingEntry>(&bound)
+                .unwrap()
+                .unwrap();
             assert_eq!(found.key.tx_id, result.context.tx_id);
         }
 
@@ -1560,17 +1826,27 @@ mod tests {
             let branch = BranchContext::main(storage);
             let embedder = Arc::new(TestEmbedder::new());
 
-            exec_with_embedder(&branch, embedder.clone(),
-                TransactionInput::new(meta("create"))
-                    .create_entity(Entity::new(
-                        "server".parse().unwrap(),
-                        Some(serde_json::json!("Production server")),
-                        vec![
-                            PropertyValue { property: "status".parse().unwrap(), value: serde_json::json!("healthy"), context: () },
-                            PropertyValue { property: "zone".parse().unwrap(), value: serde_json::json!("us-east"), context: () },
-                        ],
-                        entity_meta("initial"),
-                    )));
+            exec_with_embedder(
+                &branch,
+                embedder.clone(),
+                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                    "server".parse().unwrap(),
+                    Some(serde_json::json!("Production server")),
+                    vec![
+                        PropertyValue {
+                            property: "status".parse().unwrap(),
+                            value: serde_json::json!("healthy"),
+                            context: (),
+                        },
+                        PropertyValue {
+                            property: "zone".parse().unwrap(),
+                            value: serde_json::json!("us-east"),
+                            context: (),
+                        },
+                    ],
+                    entity_meta("initial"),
+                )),
+            );
 
             let text = embedder.last_text();
             assert!(text.contains("server"));
@@ -1586,24 +1862,31 @@ mod tests {
             let branch = BranchContext::main(storage);
             let embedder = Arc::new(TestEmbedder::new());
 
-            exec_with_embedder(&branch, embedder.clone(),
+            exec_with_embedder(
+                &branch,
+                embedder.clone(),
                 TransactionInput::new(meta("create"))
                     .create_entity(Entity::new(
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("A person")),
-                        vec![
-                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () },
-                        ],
+                        vec![PropertyValue {
+                            property: "age".parse().unwrap(),
+                            value: serde_json::json!(30),
+                            context: (),
+                        }],
                         entity_meta("initial"),
                     ))
                     .create_entity(Entity::new(
                         "bob".parse().unwrap(),
                         Some(serde_json::json!("Another person")),
-                        vec![
-                            PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                        ],
+                        vec![PropertyValue {
+                            property: "age".parse().unwrap(),
+                            value: serde_json::json!(25),
+                            context: (),
+                        }],
                         entity_meta("initial"),
-                    )));
+                    )),
+            );
 
             // Query with a vector similar to what TestEmbedder produces.
             let query = vec![50.0, 25.0, 5.0, 1.0];
@@ -1624,14 +1907,16 @@ mod tests {
             let embedder = Arc::new(TestEmbedder::new());
 
             for name in ["alice", "bob", "charlie"] {
-                exec_with_embedder(&branch, embedder.clone(),
-                    TransactionInput::new(meta("create"))
-                        .create_entity(Entity::new(
-                            name.parse().unwrap(),
-                            Some(serde_json::json!("person")),
-                            vec![],
-                            Map::new(),
-                        )));
+                exec_with_embedder(
+                    &branch,
+                    embedder.clone(),
+                    TransactionInput::new(meta("create")).create_entity(Entity::new(
+                        name.parse().unwrap(),
+                        Some(serde_json::json!("person")),
+                        vec![],
+                        Map::new(),
+                    )),
+                );
             }
 
             let query = vec![10.0, 5.0, 1.0, 1.0];
@@ -1646,14 +1931,16 @@ mod tests {
             let branch = BranchContext::main(storage);
             let embedder = Arc::new(TestEmbedder::new());
 
-            exec_with_embedder(&branch, embedder.clone(),
-                TransactionInput::new(meta("create"))
-                    .create_entity(Entity::new(
-                        "alice".parse().unwrap(),
-                        Some(serde_json::json!("A person")),
-                        vec![],
-                        Map::new(),
-                    )));
+            exec_with_embedder(
+                &branch,
+                embedder.clone(),
+                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("A person")),
+                    vec![],
+                    Map::new(),
+                )),
+            );
 
             // Orthogonal query — should have low similarity.
             let query = vec![0.0, 0.0, 0.0, 0.0];
@@ -1671,24 +1958,34 @@ mod tests {
         let branch = BranchContext::main(storage.clone());
 
         // Step 1: create two entities.
-        let tx1 = exec(&branch, TransactionInput::new(meta("setup"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Person A")),
-                vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
-                entity_meta("census"),
-            ))
-            .create_entity(Entity::new(
-                "bob".parse().unwrap(),
-                Some(serde_json::json!("Person B")),
-                vec![],
-                Map::new(),
-            )));
+        let tx1 = exec(
+            &branch,
+            TransactionInput::new(meta("setup"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("Person A")),
+                    vec![PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(30),
+                        context: (),
+                    }],
+                    entity_meta("census"),
+                ))
+                .create_entity(Entity::new(
+                    "bob".parse().unwrap(),
+                    Some(serde_json::json!("Person B")),
+                    vec![],
+                    Map::new(),
+                )),
+        );
 
         // Verify tx1 log.
-        let log1 = storage.get::<TransactionLogEntry>(
-            &TransactionLogKey { tx_id: tx1.context.tx_id }
-        ).unwrap().unwrap();
+        let log1 = storage
+            .get::<TransactionLogEntry>(&TransactionLogKey {
+                tx_id: tx1.context.tx_id,
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(log1.value.branch, "main");
         assert_eq!(log1.value.created.len(), 2);
         assert_eq!(log1.value.created[0].entity, "alice");
@@ -1701,19 +1998,32 @@ mod tests {
         assert!(log1.value.deleted.is_empty());
 
         // Step 2: update + touch + delete in one transaction.
-        let tx2 = exec(&branch, TransactionInput::new(meta("mixed ops"))
-            .update_entity(Entity::new(
-                "alice".parse().unwrap(),
-                None,
-                vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(31), context: () }],
-                entity_meta("birthday"),
-            ))
-            .delete_entity(DeleteItem::new("bob".parse().unwrap(), serde_json::json!("no longer relevant")))
-            .touch(TouchItem::new("alice".parse().unwrap(), "still relevant")));
+        let tx2 = exec(
+            &branch,
+            TransactionInput::new(meta("mixed ops"))
+                .update_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    None,
+                    vec![PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(31),
+                        context: (),
+                    }],
+                    entity_meta("birthday"),
+                ))
+                .delete_entity(DeleteItem::new(
+                    "bob".parse().unwrap(),
+                    serde_json::json!("no longer relevant"),
+                ))
+                .touch(TouchItem::new("alice".parse().unwrap(), "still relevant")),
+        );
 
-        let log2 = storage.get::<TransactionLogEntry>(
-            &TransactionLogKey { tx_id: tx2.context.tx_id }
-        ).unwrap().unwrap();
+        let log2 = storage
+            .get::<TransactionLogEntry>(&TransactionLogKey {
+                tx_id: tx2.context.tx_id,
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(log2.value.branch, "main");
         assert!(log2.value.created.is_empty());
         assert_eq!(log2.value.updated.len(), 1);
@@ -1734,21 +2044,28 @@ mod tests {
 
         let c = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("First")),
-                vec![],
-                Map::new(),
-            ))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Second")),
-                vec![],
-                Map::new(),
-            ))
-        ).unwrap_err();
-        assert!(err.to_string().contains("duplicate entity in transaction: alice"));
+        let err = c
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("dup"))
+                    .create_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("First")),
+                        vec![],
+                        Map::new(),
+                    ))
+                    .create_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("Second")),
+                        vec![],
+                        Map::new(),
+                    )),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("duplicate entity in transaction: alice"));
     }
 
     #[test]
@@ -1762,21 +2079,28 @@ mod tests {
 
         let c = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup"))
-            .create_managed(Managed::new(
-                "task".parse().unwrap(),
-                "task-1".parse().unwrap(),
-                Some("open".into()),
-                fields.clone(),
-            ))
-            .create_managed(Managed::new(
-                "task".parse().unwrap(),
-                "task-1".parse().unwrap(),
-                Some("open".into()),
-                fields,
-            ))
-        ).unwrap_err();
-        assert!(err.to_string().contains("duplicate managed item in transaction: task/task-1"));
+        let err = c
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("dup"))
+                    .create_managed(Managed::new(
+                        "task".parse().unwrap(),
+                        "task-1".parse().unwrap(),
+                        Some("open".into()),
+                        fields.clone(),
+                    ))
+                    .create_managed(Managed::new(
+                        "task".parse().unwrap(),
+                        "task-1".parse().unwrap(),
+                        Some("open".into()),
+                        fields,
+                    )),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("duplicate managed item in transaction: task/task-1"));
     }
 
     #[test]
@@ -1785,19 +2109,22 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        let result = exec(&branch, TransactionInput::new(meta("two entities"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Person A")),
-                vec![],
-                Map::new(),
-            ))
-            .create_entity(Entity::new(
-                "bob".parse().unwrap(),
-                Some(serde_json::json!("Person B")),
-                vec![],
-                Map::new(),
-            )));
+        let result = exec(
+            &branch,
+            TransactionInput::new(meta("two entities"))
+                .create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("Person A")),
+                    vec![],
+                    Map::new(),
+                ))
+                .create_entity(Entity::new(
+                    "bob".parse().unwrap(),
+                    Some(serde_json::json!("Person B")),
+                    vec![],
+                    Map::new(),
+                )),
+        );
 
         assert_eq!(result.meta["reasoning"], "two entities");
     }
@@ -1808,39 +2135,48 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
         let c = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup update"))
-            .update_entity(Entity::new(
-                "alice".parse().unwrap(),
-                None,
-                vec![PropertyValue {
-                    property: "age".parse().unwrap(),
-                    value: serde_json::json!(25),
-                    context: (),
-                }],
-                entity_meta("first"),
-            ))
-            .update_entity(Entity::new(
-                "alice".parse().unwrap(),
-                None,
-                vec![PropertyValue {
-                    property: "age".parse().unwrap(),
-                    value: serde_json::json!(26),
-                    context: (),
-                }],
-                entity_meta("second"),
-            ))
-        ).unwrap_err();
-        assert!(err.to_string().contains("duplicate entity in transaction: alice"));
+        let err = c
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("dup update"))
+                    .update_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        None,
+                        vec![PropertyValue {
+                            property: "age".parse().unwrap(),
+                            value: serde_json::json!(25),
+                            context: (),
+                        }],
+                        entity_meta("first"),
+                    ))
+                    .update_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        None,
+                        vec![PropertyValue {
+                            property: "age".parse().unwrap(),
+                            value: serde_json::json!(26),
+                            context: (),
+                        }],
+                        entity_meta("second"),
+                    )),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("duplicate entity in transaction: alice"));
     }
 
     #[test]
@@ -1849,21 +2185,36 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
         let c = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("dup delete"))
-            .delete_entity(DeleteItem::new("alice".parse().unwrap(), serde_json::json!("reason 1")))
-            .delete_entity(DeleteItem::new("alice".parse().unwrap(), serde_json::json!("reason 2")))
-        ).unwrap_err();
-        assert!(err.to_string().contains("duplicate entity in transaction: alice"));
+        let err = c
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("dup delete"))
+                    .delete_entity(DeleteItem::new(
+                        "alice".parse().unwrap(),
+                        serde_json::json!("reason 1"),
+                    ))
+                    .delete_entity(DeleteItem::new(
+                        "alice".parse().unwrap(),
+                        serde_json::json!("reason 2"),
+                    )),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("duplicate entity in transaction: alice"));
     }
 
     // --- Re-create after deletion ---
@@ -1874,8 +2225,9 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Original Alice")),
                 vec![PropertyValue {
@@ -1884,17 +2236,21 @@ mod tests {
                     context: (),
                 }],
                 entity_meta("initial"),
-            )));
+            )),
+        );
 
-        exec(&branch, TransactionInput::new(meta("delete"))
-            .delete_entity(DeleteItem::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("delete")).delete_entity(DeleteItem::new(
                 "alice".parse().unwrap(),
                 serde_json::json!("no longer relevant"),
-            )));
+            )),
+        );
 
         // Re-create with same slug, different data.
-        exec(&branch, TransactionInput::new(meta("recreate"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("recreate")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("New Alice")),
                 vec![PropertyValue {
@@ -1903,12 +2259,18 @@ mod tests {
                     context: (),
                 }],
                 entity_meta("reborn"),
-            )));
+            )),
+        );
 
-        let entry = branch.get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
-            .unwrap().unwrap();
+        let entry = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap()
+            .unwrap();
         assert!(!entry.value.is_deleted());
-        assert_eq!(entry.value.description, Some(serde_json::json!("New Alice")));
+        assert_eq!(
+            entry.value.description,
+            Some(serde_json::json!("New Alice"))
+        );
     }
 
     #[test]
@@ -1917,25 +2279,38 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
                 vec![
-                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                    PropertyValue { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                    PropertyValue {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(25),
+                        context: (),
+                    },
+                    PropertyValue {
+                        property: "city".parse().unwrap(),
+                        value: serde_json::json!("London"),
+                        context: (),
+                    },
                 ],
                 entity_meta("initial"),
-            )));
+            )),
+        );
 
-        exec(&branch, TransactionInput::new(meta("delete"))
-            .delete_entity(DeleteItem::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("delete")).delete_entity(DeleteItem::new(
                 "alice".parse().unwrap(),
                 serde_json::json!("removed"),
-            )));
+            )),
+        );
 
-        exec(&branch, TransactionInput::new(meta("recreate"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("recreate")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("New Alice")),
                 vec![PropertyValue {
@@ -1944,7 +2319,8 @@ mod tests {
                     context: (),
                 }],
                 entity_meta("fresh start"),
-            )));
+            )),
+        );
 
         let props = properties::properties(&branch, &"alice".parse().unwrap(), None).unwrap();
         assert_eq!(props.len(), 1);
@@ -1958,21 +2334,27 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
-                vec![
-                    PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                ],
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
                 entity_meta("initial"),
-            )));
+            )),
+        );
 
-        exec(&branch, TransactionInput::new(meta("delete"))
-            .delete_entity(DeleteItem::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("delete")).delete_entity(DeleteItem::new(
                 "alice".parse().unwrap(),
                 serde_json::json!("removed"),
-            )));
+            )),
+        );
 
         let props = properties::properties(&branch, &"alice".parse().unwrap(), None).unwrap();
         assert!(props.is_empty());
@@ -1984,24 +2366,30 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
-        exec(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
                 vec![],
                 Map::new(),
-            )));
+            )),
+        );
 
         let c = cmd();
         let mut state = CommandState::new(branch.storage());
-        let err = c.execute(&branch, &mut state, TransactionInput::new(meta("duplicate"))
-            .create_entity(Entity::new(
-                "alice".parse().unwrap(),
-                Some(serde_json::json!("Duplicate")),
-                vec![],
-                Map::new(),
-            ))
-        ).unwrap_err();
+        let err = c
+            .execute(
+                &branch,
+                &mut state,
+                TransactionInput::new(meta("duplicate")).create_entity(Entity::new(
+                    "alice".parse().unwrap(),
+                    Some(serde_json::json!("Duplicate")),
+                    vec![],
+                    Map::new(),
+                )),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("already exists"));
     }
 }

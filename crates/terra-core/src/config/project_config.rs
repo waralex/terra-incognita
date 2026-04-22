@@ -101,8 +101,8 @@ impl ProjectConfig {
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
     use super::*;
+    use indoc::indoc;
     use std::fs;
 
     #[test]
@@ -110,7 +110,8 @@ mod tests {
         let config = ProjectConfig::from_yaml(indoc! {"
             data_dir: ./data
             schema_path: ./schema.yaml
-        "}).unwrap();
+        "})
+        .unwrap();
         assert_eq!(config.data_dir, PathBuf::from("./data"));
         assert_eq!(config.schema_path, PathBuf::from("./schema.yaml"));
         assert_eq!(config.max_branch_depth, 8);
@@ -141,13 +142,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let schema_path = dir.path().join("schema.yaml");
-        fs::write(&schema_path, indoc! {"
+        fs::write(
+            &schema_path,
+            indoc! {"
             transaction_meta:
               reasoning:
                 type: text
                 required: true
             managed_types: {}
-        "}).unwrap();
+        "},
+        )
+        .unwrap();
 
         // Relative paths resolve from config file's parent directory.
         let config_yaml = "data_dir: ./data\nschema_path: schema.yaml";

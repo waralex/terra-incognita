@@ -153,22 +153,34 @@ mod tests {
 
     #[test]
     fn uppercase_rejected() {
-        assert!(matches!("Person".parse::<Slug>(), Err(SlugError::InvalidChar('P'))));
+        assert!(matches!(
+            "Person".parse::<Slug>(),
+            Err(SlugError::InvalidChar('P'))
+        ));
     }
 
     #[test]
     fn spaces_rejected() {
-        assert!(matches!("my entity".parse::<Slug>(), Err(SlugError::InvalidChar(' '))));
+        assert!(matches!(
+            "my entity".parse::<Slug>(),
+            Err(SlugError::InvalidChar(' '))
+        ));
     }
 
     #[test]
     fn leading_hyphen_rejected() {
-        assert!(matches!("-person".parse::<Slug>(), Err(SlugError::LeadingOrTrailingHyphen)));
+        assert!(matches!(
+            "-person".parse::<Slug>(),
+            Err(SlugError::LeadingOrTrailingHyphen)
+        ));
     }
 
     #[test]
     fn trailing_hyphen_rejected() {
-        assert!(matches!("person-".parse::<Slug>(), Err(SlugError::LeadingOrTrailingHyphen)));
+        assert!(matches!(
+            "person-".parse::<Slug>(),
+            Err(SlugError::LeadingOrTrailingHyphen)
+        ));
     }
 
     #[test]

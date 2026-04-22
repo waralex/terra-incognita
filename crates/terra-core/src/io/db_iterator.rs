@@ -2,7 +2,7 @@
 
 use std::marker::PhantomData;
 
-use rocksdb::{DBIteratorWithThreadMode, DB, Direction, IteratorMode};
+use rocksdb::{DBIteratorWithThreadMode, Direction, IteratorMode, DB};
 
 use crate::io::db_item::DbItem;
 use crate::io::key_prefix::KeyPrefix;
@@ -47,7 +47,8 @@ impl<'a, T: DbItem> DbIterator<'a, T> {
             Direction::Forward => prefix.encode_lower_bound(),
             Direction::Reverse => prefix.encode_upper_bound(),
         };
-        self.inner.set_mode(IteratorMode::From(&point, self.direction));
+        self.inner
+            .set_mode(IteratorMode::From(&point, self.direction));
     }
 }
 
@@ -59,8 +60,7 @@ impl<T: DbItem> Iterator for DbIterator<'_, T> {
             Ok(kv) => kv,
             Err(e) => return Some(Err(DbError::Storage(e.to_string()))),
         };
-        if key_bytes.as_ref() < self.lower.as_slice()
-            || key_bytes.as_ref() > self.upper.as_slice()
+        if key_bytes.as_ref() < self.lower.as_slice() || key_bytes.as_ref() > self.upper.as_slice()
         {
             return None;
         }

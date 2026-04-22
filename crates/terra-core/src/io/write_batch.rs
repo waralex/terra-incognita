@@ -29,7 +29,9 @@ impl WriteBatch {
 
     /// Add an item to the batch.
     pub fn put<T: DbItem>(&mut self, item: &T) -> Result<(), DbError> {
-        let cf = self.db.cf_handle(T::cf())
+        let cf = self
+            .db
+            .cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
         let key = item.key().encode();
         let value = item.value().encode()?;

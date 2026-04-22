@@ -10,10 +10,10 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::io::{DbItem, DbError};
 use crate::io::slug::Slug;
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::io::{DbError, DbItem};
 
 const CF_ENTITY_CHANGES: &str = "entity_changes";
 
@@ -102,6 +102,9 @@ mod tests {
 
         let found = db.get::<EntityChangeEntry>(&entry.key).unwrap().unwrap();
         assert_eq!(found.key.change_id, entry.key.change_id);
-        assert_eq!(found.value.meta["reasoning"], serde_json::json!("census data"));
+        assert_eq!(
+            found.value.meta["reasoning"],
+            serde_json::json!("census data")
+        );
     }
 }

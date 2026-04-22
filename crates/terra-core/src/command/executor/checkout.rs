@@ -3,15 +3,15 @@
 
 use uuid::Uuid;
 
-use crate::command::Command;
-use crate::command::CommandState;
 use crate::command::executor::transaction::ExecuteTransaction;
 use crate::command::input::checkout::CheckoutInput;
+use crate::command::Command;
+use crate::command::CommandState;
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::TxMeta;
 use crate::domain::validator::DomainValidator;
-use crate::io::DbError;
 use crate::io::slug::Slug;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::branch::{BranchEntry, BranchKey, BranchValue};
 
@@ -42,30 +42,39 @@ impl Command for ExecuteCheckout {
     type Input = CheckoutInput;
     type Output = CheckoutOutput;
 
-    fn execute(&self, parent: &BranchContext, state: &mut CommandState, input: Self::Input) -> Result<Self::Output, DbError> {
+    fn execute(
+        &self,
+        parent: &BranchContext,
+        state: &mut CommandState,
+        input: Self::Input,
+    ) -> Result<Self::Output, DbError> {
         // 1. Validate branch meta.
         self.validator.check_branch(&input.meta)?;
 
         // 2. Resolve branch point.
         let created_from_tx = match input.created_from_tx {
             Some(tx_id) => tx_id,
-            None => parent.head_tx()?
-                .ok_or_else(|| DbError::Storage(
-                    format!("no transactions on branch: {}", parent.id())
-                ))?,
+            None => parent.head_tx()?.ok_or_else(|| {
+                DbError::Storage(format!("no transactions on branch: {}", parent.id()))
+            })?,
         };
 
         // 3. Check slug uniqueness.
-        let key = BranchKey { branch: input.slug.clone() };
+        let key = BranchKey {
+            branch: input.slug.clone(),
+        };
         if parent.storage().get::<BranchEntry>(&key)?.is_some() {
-            return Err(DbError::Storage(
-                format!("branch already exists: {}", input.slug)
-            ));
+            return Err(DbError::Storage(format!(
+                "branch already exists: {}",
+                input.slug
+            )));
         }
 
         // 4. Write BranchEntry to shared batch.
         let entry = BranchEntry {
-            key: BranchKey { branch: input.slug.clone() },
+            key: BranchKey {
+                branch: input.slug.clone(),
+            },
             value: BranchValue {
                 slug: input.slug.to_string(),
                 meta: input.meta,
@@ -92,9 +101,9 @@ impl Command for ExecuteCheckout {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use serde_json::{Map, Value};
     use indoc::indoc;
+    use serde_json::{Map, Value};
+    use std::sync::Arc;
 
     use super::*;
     use crate::command::input::transaction::TransactionInput;
@@ -105,14 +114,17 @@ mod tests {
     use crate::store::storage::Storage;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     fn test_schema() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             transaction_meta:
               reasoning:
                 type: text
@@ -125,7 +137,9 @@ mod tests {
               reasoning:
                 type: text
                 required: true
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     fn validator() -> DomainValidator {
@@ -141,14 +155,22 @@ mod tests {
     fn commit_tx(branch: &BranchContext, reasoning: &str) -> Transaction<TxMeta> {
         let cmd = ExecuteTransaction::new(validator());
         let mut state = CommandState::new(branch.storage());
-        let result = cmd.execute(branch, &mut state, TransactionInput::new(tx_meta(reasoning))).unwrap();
+        let result = cmd
+            .execute(
+                branch,
+                &mut state,
+                TransactionInput::new(tx_meta(reasoning)),
+            )
+            .unwrap();
         state.commit().unwrap();
         result
     }
 
     fn entity_bound(branch: &BranchContext, slug: &str) -> crate::io::KeyBound<EntityKey> {
-        EntityKey::bound()
-            .with_prefix(|k| { k.branch = branch.id().clone(); k.entity = slug.parse().unwrap(); })
+        EntityKey::bound().with_prefix(|k| {
+            k.branch = branch.id().clone();
+            k.entity = slug.parse().unwrap();
+        })
     }
 
     // --- Tests ---
@@ -162,19 +184,27 @@ mod tests {
 
         let cmd = ExecuteCheckout::new(validator());
         let mut state = CommandState::new(&storage);
-        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
-            "feature".parse().unwrap(),
-            tx_meta("explore feature"),
-            None,
-            TransactionInput::new(tx_meta("first on branch")),
-        )).unwrap();
+        let result = cmd
+            .execute(
+                &main,
+                &mut state,
+                CheckoutInput::new(
+                    "feature".parse().unwrap(),
+                    tx_meta("explore feature"),
+                    None,
+                    TransactionInput::new(tx_meta("first on branch")),
+                ),
+            )
+            .unwrap();
         state.commit().unwrap();
 
         assert_eq!(result.branch.as_str(), "feature");
         assert_eq!(result.transaction.context.branch.as_str(), "feature");
 
         // BranchEntry was written.
-        let key = BranchKey { branch: "feature".parse().unwrap() };
+        let key = BranchKey {
+            branch: "feature".parse().unwrap(),
+        };
         let entry = storage.get::<BranchEntry>(&key).unwrap().unwrap();
         assert_eq!(entry.value.slug, "feature");
         assert_eq!(entry.value.parent_branch_slug, "main");
@@ -194,29 +224,40 @@ mod tests {
 
         let cmd = ExecuteCheckout::new(validator());
         let mut state = CommandState::new(&storage);
-        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
-            "feature".parse().unwrap(),
-            tx_meta("explore"),
-            None,
-            TransactionInput::new(tx_meta("create entity on branch"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![],
-                    Map::new(),
-                )),
-        )).unwrap();
+        let result = cmd
+            .execute(
+                &main,
+                &mut state,
+                CheckoutInput::new(
+                    "feature".parse().unwrap(),
+                    tx_meta("explore"),
+                    None,
+                    TransactionInput::new(tx_meta("create entity on branch")).create_entity(
+                        Entity::new(
+                            "alice".parse().unwrap(),
+                            Some(serde_json::json!("A person")),
+                            vec![],
+                            Map::new(),
+                        ),
+                    ),
+                ),
+            )
+            .unwrap();
         state.commit().unwrap();
 
         assert_eq!(result.transaction.context.branch.as_str(), "feature");
 
         // Entity exists on the new branch.
         let child = storage.branch("feature".parse().unwrap()).unwrap();
-        let entry = child.get_latest::<EntityEntry>(&entity_bound(&child, "alice")).unwrap();
+        let entry = child
+            .get_latest::<EntityEntry>(&entity_bound(&child, "alice"))
+            .unwrap();
         assert!(entry.is_some());
 
         // Entity does NOT exist on main.
-        let entry = main.get_latest::<EntityEntry>(&entity_bound(&main, "alice")).unwrap();
+        let entry = main
+            .get_latest::<EntityEntry>(&entity_bound(&main, "alice"))
+            .unwrap();
         assert!(entry.is_none());
     }
 
@@ -230,21 +271,32 @@ mod tests {
         let cmd = ExecuteCheckout::new(validator());
 
         let mut state = CommandState::new(&storage);
-        cmd.execute(&main, &mut state, CheckoutInput::new(
-            "feature".parse().unwrap(),
-            tx_meta("first"),
-            None,
-            TransactionInput::new(tx_meta("init")),
-        )).unwrap();
+        cmd.execute(
+            &main,
+            &mut state,
+            CheckoutInput::new(
+                "feature".parse().unwrap(),
+                tx_meta("first"),
+                None,
+                TransactionInput::new(tx_meta("init")),
+            ),
+        )
+        .unwrap();
         state.commit().unwrap();
 
         let mut state2 = CommandState::new(&storage);
-        let err = cmd.execute(&main, &mut state2, CheckoutInput::new(
-            "feature".parse().unwrap(),
-            tx_meta("second"),
-            None,
-            TransactionInput::new(tx_meta("init")),
-        )).unwrap_err();
+        let err = cmd
+            .execute(
+                &main,
+                &mut state2,
+                CheckoutInput::new(
+                    "feature".parse().unwrap(),
+                    tx_meta("second"),
+                    None,
+                    TransactionInput::new(tx_meta("init")),
+                ),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("branch already exists: feature"));
     }
 
@@ -258,12 +310,18 @@ mod tests {
 
         let cmd = ExecuteCheckout::new(validator());
         let mut state = CommandState::new(&storage);
-        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
-            "from-first".parse().unwrap(),
-            tx_meta("branch from first tx"),
-            Some(tx1.context.tx_id),
-            TransactionInput::new(tx_meta("init")),
-        )).unwrap();
+        let result = cmd
+            .execute(
+                &main,
+                &mut state,
+                CheckoutInput::new(
+                    "from-first".parse().unwrap(),
+                    tx_meta("branch from first tx"),
+                    Some(tx1.context.tx_id),
+                    TransactionInput::new(tx_meta("init")),
+                ),
+            )
+            .unwrap();
         state.commit().unwrap();
 
         assert_eq!(result.created_from_tx, tx1.context.tx_id);
@@ -279,12 +337,18 @@ mod tests {
 
         let cmd = ExecuteCheckout::new(validator());
         let mut state = CommandState::new(&storage);
-        let result = cmd.execute(&main, &mut state, CheckoutInput::new(
-            "from-head".parse().unwrap(),
-            tx_meta("branch from head"),
-            None,
-            TransactionInput::new(tx_meta("init")),
-        )).unwrap();
+        let result = cmd
+            .execute(
+                &main,
+                &mut state,
+                CheckoutInput::new(
+                    "from-head".parse().unwrap(),
+                    tx_meta("branch from head"),
+                    None,
+                    TransactionInput::new(tx_meta("init")),
+                ),
+            )
+            .unwrap();
         state.commit().unwrap();
 
         assert_eq!(result.created_from_tx, tx2.context.tx_id);
@@ -299,12 +363,18 @@ mod tests {
 
         let cmd = ExecuteCheckout::new(validator());
         let mut state = CommandState::new(&storage);
-        let err = cmd.execute(&main, &mut state, CheckoutInput::new(
-            "bad".parse().unwrap(),
-            Map::new(),
-            None,
-            TransactionInput::new(tx_meta("init")),
-        )).unwrap_err();
+        let err = cmd
+            .execute(
+                &main,
+                &mut state,
+                CheckoutInput::new(
+                    "bad".parse().unwrap(),
+                    Map::new(),
+                    None,
+                    TransactionInput::new(tx_meta("init")),
+                ),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("missing required field"));
     }
 
@@ -316,12 +386,18 @@ mod tests {
 
         let cmd = ExecuteCheckout::new(validator());
         let mut state = CommandState::new(&storage);
-        let err = cmd.execute(&main, &mut state, CheckoutInput::new(
-            "orphan".parse().unwrap(),
-            tx_meta("no parent tx"),
-            None,
-            TransactionInput::new(tx_meta("init")),
-        )).unwrap_err();
+        let err = cmd
+            .execute(
+                &main,
+                &mut state,
+                CheckoutInput::new(
+                    "orphan".parse().unwrap(),
+                    tx_meta("no parent tx"),
+                    None,
+                    TransactionInput::new(tx_meta("init")),
+                ),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("no transactions on branch: main"));
     }
 }

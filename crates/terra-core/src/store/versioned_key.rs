@@ -318,10 +318,7 @@ mod tests {
 
     #[test]
     fn upper_bound_includes_tx_id() {
-        let prefix = SlugMiddleKeyPrefix::new(
-            "main".parse().unwrap(),
-            "entity".parse().unwrap(),
-        );
+        let prefix = SlugMiddleKeyPrefix::new("main".parse().unwrap(), "entity".parse().unwrap());
         let upper = prefix.encode_upper_bound();
         // encode() = 32 bytes, upper_bound = 32 + 16 + 1 separator = 49
         assert_eq!(upper.len(), SlugMiddleKey::SIZE + 1);
@@ -339,10 +336,7 @@ mod tests {
 
     #[test]
     fn default_prefix_has_max_tx_id() {
-        let prefix = SlugMiddleKeyPrefix::new(
-            "main".parse().unwrap(),
-            "entity".parse().unwrap(),
-        );
+        let prefix = SlugMiddleKeyPrefix::new("main".parse().unwrap(), "entity".parse().unwrap());
         assert_eq!(prefix.tx_id, Uuid::max());
     }
 
@@ -438,10 +432,8 @@ mod tests {
 
     #[test]
     fn prefix_tx_id_mutation() {
-        let mut prefix = SlugMiddleKeyPrefix::new(
-            "main".parse().unwrap(),
-            "my-entity".parse().unwrap(),
-        );
+        let mut prefix =
+            SlugMiddleKeyPrefix::new("main".parse().unwrap(), "my-entity".parse().unwrap());
         let tx_id = Uuid::from_u128(42);
         prefix.tx_id = tx_id;
 
@@ -450,10 +442,8 @@ mod tests {
 
     #[test]
     fn prefix_branch_mutation() {
-        let mut prefix = SlugMiddleKeyPrefix::new(
-            "main".parse().unwrap(),
-            "entity-1".parse().unwrap(),
-        );
+        let mut prefix =
+            SlugMiddleKeyPrefix::new("main".parse().unwrap(), "entity-1".parse().unwrap());
         let original_encode = prefix.encode();
         prefix.branch = "child".parse().unwrap();
 

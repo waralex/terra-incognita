@@ -2,15 +2,15 @@
 
 use uuid::Uuid;
 
+use crate::command::input::get_transaction::GetTransactionQuery;
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::get_transaction::GetTransactionQuery;
 use crate::domain::entity::{Entity, PropertyValue};
 use crate::domain::managed::Managed;
 use crate::domain::transaction::{DeletedEntity, TouchedEntity, TransactionDetail};
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
-use crate::io::DbError;
+use crate::domain::tx_meta::{time_from_uuid, TxMeta};
 use crate::io::slug::Slug;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey};
 use crate::store::entry::entity::{EntityEntry, EntityKey};
@@ -35,33 +35,36 @@ impl Command for GetTransaction {
     ) -> Result<Self::Output, DbError> {
         let tx_id = match input.tx_id {
             Some(id) => id,
-            None => branch.head_tx()?.ok_or_else(|| {
-                DbError::Storage("no transactions on this branch".into())
-            })?,
+            None => branch
+                .head_tx()?
+                .ok_or_else(|| DbError::Storage("no transactions on this branch".into()))?,
         };
 
         // Load transaction log (global, not branch-scoped — cross-branch by design).
-        let log = branch.storage().get::<TransactionLogEntry>(
-            &TransactionLogKey { tx_id },
-        )?.ok_or_else(|| {
-            DbError::Storage(format!("transaction not found: {tx_id}"))
-        })?;
+        let log = branch
+            .storage()
+            .get::<TransactionLogEntry>(&TransactionLogKey { tx_id })?
+            .ok_or_else(|| DbError::Storage(format!("transaction not found: {tx_id}")))?;
 
         let log_branch = log.value.branch.clone();
 
         if input.only_current_branch && log_branch != *branch.id() {
             return Err(DbError::Storage(format!(
                 "transaction {} belongs to branch \"{}\", not current branch \"{}\"",
-                tx_id, log_branch, branch.id()
+                tx_id,
+                log_branch,
+                branch.id()
             )));
         }
 
         // Load transaction metadata (branch-scoped).
-        let tx_entry = branch.storage().get::<TransactionEntry>(
-            &TransactionKey { branch: log_branch.clone(), tx_id },
-        )?.ok_or_else(|| {
-            DbError::Storage(format!("transaction entry not found: {tx_id}"))
-        })?;
+        let tx_entry = branch
+            .storage()
+            .get::<TransactionEntry>(&TransactionKey {
+                branch: log_branch.clone(),
+                tx_id,
+            })?
+            .ok_or_else(|| DbError::Storage(format!("transaction entry not found: {tx_id}")))?;
 
         let tx_meta = TxMeta {
             tx_id,
@@ -71,33 +74,55 @@ impl Command for GetTransaction {
         };
 
         // Reconstruct created entities.
-        let created = log.value.created.iter()
+        let created = log
+            .value
+            .created
+            .iter()
             .map(|item| self.reconstruct_entity(branch, &log_branch, tx_id, item))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Reconstruct updated entities.
-        let updated = log.value.updated.iter()
+        let updated = log
+            .value
+            .updated
+            .iter()
             .map(|item| self.reconstruct_entity(branch, &log_branch, tx_id, item))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Reconstruct deleted entities.
-        let deleted = log.value.deleted.iter()
+        let deleted = log
+            .value
+            .deleted
+            .iter()
             .map(|item| self.reconstruct_deleted(branch, &log_branch, tx_id, item))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Reconstruct touched entities.
-        let touched = log.value.touched.iter()
+        let touched = log
+            .value
+            .touched
+            .iter()
             .map(|slug| self.reconstruct_touched(branch, &log_branch, tx_id, slug))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Reconstruct created managed items.
-        let created_managed = log.value.created_managed.iter()
-            .map(|item| self.reconstruct_managed(branch, &log_branch, tx_id, &item.type_name, &item.slug))
+        let created_managed = log
+            .value
+            .created_managed
+            .iter()
+            .map(|item| {
+                self.reconstruct_managed(branch, &log_branch, tx_id, &item.type_name, &item.slug)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         // Reconstruct updated managed items.
-        let updated_managed = log.value.updated_managed.iter()
-            .map(|item| self.reconstruct_managed(branch, &log_branch, tx_id, &item.type_name, &item.slug))
+        let updated_managed = log
+            .value
+            .updated_managed
+            .iter()
+            .map(|item| {
+                self.reconstruct_managed(branch, &log_branch, tx_id, &item.type_name, &item.slug)
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(TransactionDetail {
@@ -127,32 +152,32 @@ impl GetTransaction {
         let meta = if item.change_id.is_nil() {
             serde_json::Map::new()
         } else {
-            branch.storage().get::<EntityChangeEntry>(
-                &EntityChangeKey { change_id: item.change_id },
-            )?.map(|c| c.value.meta).unwrap_or_default()
+            branch
+                .storage()
+                .get::<EntityChangeEntry>(&EntityChangeKey {
+                    change_id: item.change_id,
+                })?
+                .map(|c| c.value.meta)
+                .unwrap_or_default()
         };
 
         // Load entity record at this tx for description.
-        let entity_entry = branch.storage().get::<EntityEntry>(
-            &EntityKey {
-                branch: log_branch.clone(),
-                entity: item.entity.clone(),
-                tx_id,
-            },
-        )?;
+        let entity_entry = branch.storage().get::<EntityEntry>(&EntityKey {
+            branch: log_branch.clone(),
+            entity: item.entity.clone(),
+            tx_id,
+        })?;
         let description = entity_entry.and_then(|e| e.value.description);
 
         // Load assertions for the properties changed in this tx.
         let mut properties = Vec::new();
         for prop_slug in &item.properties {
-            let assertion = branch.storage().get::<AssertionEntry>(
-                &AssertionKey {
-                    branch: log_branch.clone(),
-                    entity: item.entity.clone(),
-                    prop: prop_slug.clone(),
-                    tx_id,
-                },
-            )?;
+            let assertion = branch.storage().get::<AssertionEntry>(&AssertionKey {
+                branch: log_branch.clone(),
+                entity: item.entity.clone(),
+                prop: prop_slug.clone(),
+                tx_id,
+            })?;
             if let Some(a) = assertion {
                 properties.push(PropertyValue {
                     property: prop_slug.clone(),
@@ -193,12 +218,17 @@ impl GetTransaction {
         let meta = if item.change_id.is_nil() {
             serde_json::Map::new()
         } else {
-            branch.storage().get::<EntityChangeEntry>(
-                &EntityChangeKey { change_id: item.change_id },
-            )?.map(|c| c.value.meta).unwrap_or_default()
+            branch
+                .storage()
+                .get::<EntityChangeEntry>(&EntityChangeKey {
+                    change_id: item.change_id,
+                })?
+                .map(|c| c.value.meta)
+                .unwrap_or_default()
         };
 
-        let reasoning = meta.get("reasoning")
+        let reasoning = meta
+            .get("reasoning")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
 
@@ -223,17 +253,13 @@ impl GetTransaction {
         tx_id: Uuid,
         slug: &Slug,
     ) -> Result<TouchedEntity, DbError> {
-        let touched = branch.storage().get::<TouchedEntry>(
-            &TouchedKey {
-                branch: log_branch.clone(),
-                tx_id,
-                entity: slug.clone(),
-            },
-        )?;
+        let touched = branch.storage().get::<TouchedEntry>(&TouchedKey {
+            branch: log_branch.clone(),
+            tx_id,
+            entity: slug.clone(),
+        })?;
 
-        let reasoning = touched
-            .map(|t| t.value.reasoning)
-            .unwrap_or_default();
+        let reasoning = touched.map(|t| t.value.reasoning).unwrap_or_default();
 
         Ok(TouchedEntity {
             slug: slug.clone(),
@@ -250,14 +276,12 @@ impl GetTransaction {
         type_name: &Slug,
         slug: &Slug,
     ) -> Result<Managed<TxMeta>, DbError> {
-        let entry = branch.storage().get::<ManagedEntry>(
-            &ManagedKey {
-                branch: log_branch.clone(),
-                type_name: type_name.clone(),
-                item: slug.clone(),
-                tx_id,
-            },
-        )?;
+        let entry = branch.storage().get::<ManagedEntry>(&ManagedKey {
+            branch: log_branch.clone(),
+            type_name: type_name.clone(),
+            item: slug.clone(),
+            tx_id,
+        })?;
 
         match entry {
             Some(e) => Ok(Managed {
@@ -340,10 +364,7 @@ mod tests {
         m
     }
 
-    fn exec_tx(
-        branch: &BranchContext,
-        input: TransactionInput,
-    ) -> Transaction<TxMeta> {
+    fn exec_tx(branch: &BranchContext, input: TransactionInput) -> Transaction<TxMeta> {
         let cmd = ExecuteTransaction::new(DomainValidator::new(test_schema()));
         let mut state = CommandState::new(branch.storage());
         let result = cmd.execute(branch, &mut state, input).unwrap();
@@ -351,13 +372,11 @@ mod tests {
         result
     }
 
-    fn get_tx(
-        branch: &BranchContext,
-        tx_id: Option<Uuid>,
-    ) -> TransactionDetail {
+    fn get_tx(branch: &BranchContext, tx_id: Option<Uuid>) -> TransactionDetail {
         let cmd = GetTransaction;
         let mut state = CommandState::new(branch.storage());
-        cmd.execute(branch, &mut state, GetTransactionQuery::new(tx_id)).unwrap()
+        cmd.execute(branch, &mut state, GetTransactionQuery::new(tx_id))
+            .unwrap()
     }
 
     #[test]
@@ -369,17 +388,16 @@ mod tests {
         exec_tx(&branch, TransactionInput::new(meta("first")));
         let tx2 = exec_tx(
             &branch,
-            TransactionInput::new(meta("second"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("second")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         let detail = get_tx(&branch, None);
@@ -388,7 +406,10 @@ mod tests {
         assert_eq!(detail.created.len(), 1);
         assert_eq!(detail.created[0].slug.as_str(), "alice");
         assert_eq!(detail.created[0].properties[0].value, serde_json::json!(25));
-        assert_eq!(detail.created[0].description, Some(serde_json::json!("A person")));
+        assert_eq!(
+            detail.created[0].description,
+            Some(serde_json::json!("A person"))
+        );
     }
 
     #[test]
@@ -399,32 +420,30 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         let tx2 = exec_tx(
             &branch,
-            TransactionInput::new(meta("update"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(26),
-                        context: (),
-                    }],
-                    meta("birthday"),
-                )),
+            TransactionInput::new(meta("update")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                meta("birthday"),
+            )),
         );
 
         let detail = get_tx(&branch, Some(tx2.context.tx_id));
@@ -461,13 +480,12 @@ mod tests {
 
         let tx = exec_tx(
             &branch,
-            TransactionInput::new(meta("manage"))
-                .create_managed(ManagedDomain::new(
-                    "task".parse().unwrap(),
-                    "task-1".parse().unwrap(),
-                    Some("open".into()),
-                    fields,
-                )),
+            TransactionInput::new(meta("manage")).create_managed(ManagedDomain::new(
+                "task".parse().unwrap(),
+                "task-1".parse().unwrap(),
+                Some("open".into()),
+                fields,
+            )),
         );
 
         let detail = get_tx(&branch, Some(tx.context.tx_id));
@@ -486,22 +504,20 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![],
-                    Map::new(),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![],
+                Map::new(),
+            )),
         );
 
         let tx = exec_tx(
             &branch,
-            TransactionInput::new(meta("remove"))
-                .delete_entity(DeleteItem::new(
-                    "alice".parse().unwrap(),
-                    serde_json::json!("no longer relevant"),
-                )),
+            TransactionInput::new(meta("remove")).delete_entity(DeleteItem::new(
+                "alice".parse().unwrap(),
+                serde_json::json!("no longer relevant"),
+            )),
         );
 
         let detail = get_tx(&branch, Some(tx.context.tx_id));
@@ -520,15 +536,15 @@ mod tests {
 
         let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
         let mut cs = CommandState::new(&storage);
-        let checkout_result = checkout_cmd.execute(
-            &main,
-            &mut cs,
-            CheckoutInput::new(
-                "feature".parse().unwrap(),
-                meta("explore"),
-                None,
-                TransactionInput::new(meta("on feature"))
-                    .create_entity(Entity::new(
+        let checkout_result = checkout_cmd
+            .execute(
+                &main,
+                &mut cs,
+                CheckoutInput::new(
+                    "feature".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("on feature")).create_entity(Entity::new(
                         "bob".parse().unwrap(),
                         Some(serde_json::json!("A person")),
                         vec![PV {
@@ -538,8 +554,9 @@ mod tests {
                         }],
                         meta("setup"),
                     )),
-            ),
-        ).unwrap();
+                ),
+            )
+            .unwrap();
         cs.commit().unwrap();
 
         let child_tx_id = checkout_result.transaction.context.tx_id;
@@ -561,15 +578,18 @@ mod tests {
 
         let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
         let mut cs = CommandState::new(&storage);
-        let checkout_result = checkout_cmd.execute(
-            &main, &mut cs,
-            CheckoutInput::new(
-                "feature".parse().unwrap(),
-                meta("explore"),
-                None,
-                TransactionInput::new(meta("on feature")),
-            ),
-        ).unwrap();
+        let checkout_result = checkout_cmd
+            .execute(
+                &main,
+                &mut cs,
+                CheckoutInput::new(
+                    "feature".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("on feature")),
+                ),
+            )
+            .unwrap();
         cs.commit().unwrap();
 
         let child_tx_id = checkout_result.transaction.context.tx_id;
@@ -581,10 +601,13 @@ mod tests {
         // With only_current_branch — rejects.
         let cmd = GetTransaction;
         let mut state = CommandState::new(&storage);
-        let err = cmd.execute(
-            &main, &mut state,
-            GetTransactionQuery::new(Some(child_tx_id)).only_current_branch(),
-        ).unwrap_err();
+        let err = cmd
+            .execute(
+                &main,
+                &mut state,
+                GetTransactionQuery::new(Some(child_tx_id)).only_current_branch(),
+            )
+            .unwrap_err();
         assert!(err.to_string().contains("belongs to branch"));
         assert!(err.to_string().contains("feature"));
     }

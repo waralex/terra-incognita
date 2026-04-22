@@ -1,8 +1,8 @@
 //! FindSimilarEntities — multi-vector semantic entity search with full entity loading.
 
+use crate::command::input::similar_entities::SimilarEntitiesQuery;
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::similar_entities::SimilarEntitiesQuery;
 use crate::domain::entity::SimilarEntity;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
@@ -30,14 +30,17 @@ impl Command for FindSimilarEntities {
             .queries
             .iter()
             .map(|v| {
-                let text = serde_yaml::to_string(v)
-                    .map_err(|e| DbError::Storage(e.to_string()))?;
+                let text = serde_yaml::to_string(v).map_err(|e| DbError::Storage(e.to_string()))?;
                 embedder.embed(&text)
             })
             .collect::<Result<_, _>>()?;
 
         let matches = similarity::similar_entities_multi(
-            branch, &embeddings, input.limit, input.min_similarity, input.at_tx,
+            branch,
+            &embeddings,
+            input.limit,
+            input.min_similarity,
+            input.at_tx,
         )?;
 
         let at_tx = input.at_tx;
@@ -185,11 +188,7 @@ mod tests {
         let results = find(
             &branch,
             embedder,
-            SimilarEntitiesQuery::new(
-                vec![serde_json::json!("auth middleware")],
-                10,
-                0.0,
-            ),
+            SimilarEntitiesQuery::new(vec![serde_json::json!("auth middleware")], 10, 0.0),
         );
 
         assert_eq!(results.len(), 1);
@@ -197,7 +196,10 @@ mod tests {
         assert!(results[0].similarity > 0.0);
         assert_eq!(results[0].matched_query, 0);
         assert_eq!(results[0].entity.properties.len(), 1);
-        assert_eq!(results[0].entity.description, Some(serde_json::json!("auth service")));
+        assert_eq!(
+            results[0].entity.description,
+            Some(serde_json::json!("auth service"))
+        );
     }
 
     #[test]

@@ -18,7 +18,10 @@ pub struct GetTransactionQuery {
 
 impl GetTransactionQuery {
     pub fn new(tx_id: Option<Uuid>) -> Self {
-        Self { tx_id, only_current_branch: false }
+        Self {
+            tx_id,
+            only_current_branch: false,
+        }
     }
 
     pub fn only_current_branch(mut self) -> Self {

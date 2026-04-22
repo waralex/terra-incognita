@@ -34,7 +34,10 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let server_config = ServerConfig::load();
-    info!("project config: {}", server_config.project_config_path.display());
+    info!(
+        "project config: {}",
+        server_config.project_config_path.display()
+    );
     info!("port: {}", server_config.port);
 
     let project = ProjectConfig::load(&server_config.project_config_path)
@@ -76,8 +79,8 @@ fn create_embedder(config: &ServerConfig) -> Arc<dyn Embedder> {
     #[cfg(feature = "onnx")]
     if let Some(ref dir) = config.embed_model_dir {
         info!("loading ONNX embedder from {}", dir.display());
-        let embedder = terra_core::embed::OnnxEmbedder::from_dir(dir)
-            .expect("failed to load ONNX embedder");
+        let embedder =
+            terra_core::embed::OnnxEmbedder::from_dir(dir).expect("failed to load ONNX embedder");
         info!("ONNX embedder ready ({}d)", embedder.dimensions());
         return Arc::new(embedder);
     }

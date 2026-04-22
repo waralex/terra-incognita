@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::config::ProjectConfig;
-use crate::io::{DbError, DbItem, TerraDb, WriteBatch};
 use crate::io::slug::Slug;
+use crate::io::{DbError, DbItem, TerraDb, WriteBatch};
 use crate::store::branch_context::BranchContext;
 
 use crate::store::entry::assertion::AssertionEntry;
@@ -99,7 +99,11 @@ impl Storage {
         self.db.batch()
     }
 
-    fn open_impl(path: &Path, read_only: bool, config: Arc<ProjectConfig>) -> Result<Self, DbError> {
+    fn open_impl(
+        path: &Path,
+        read_only: bool,
+        config: Arc<ProjectConfig>,
+    ) -> Result<Self, DbError> {
         let mut builder = TerraDb::builder(path)
             .with::<AssertionEntry>()
             .with::<EmbeddingEntry>()
@@ -114,7 +118,10 @@ impl Storage {
         if read_only {
             builder = builder.read_only();
         }
-        Ok(Self { db: builder.open()?, config })
+        Ok(Self {
+            db: builder.open()?,
+            config,
+        })
     }
 }
 
@@ -124,10 +131,12 @@ mod tests {
     use crate::store::branch_context::main_branch_slug;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     #[test]

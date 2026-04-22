@@ -72,9 +72,9 @@ impl DbItem for ManagedEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
-    use crate::io::TerraDb;
     use crate::io::slug::Slug;
+    use crate::io::TerraDb;
+    use uuid::Uuid;
 
     #[test]
     fn roundtrip() {

@@ -39,17 +39,26 @@ mod inner {
             let tokenizer = Tokenizer::from_file(&tokenizer_path)
                 .map_err(|e| DbError::Storage(format!("tokenizer error: {}", e)))?;
 
-            Ok(Self { session: Mutex::new(session), tokenizer })
+            Ok(Self {
+                session: Mutex::new(session),
+                tokenizer,
+            })
         }
     }
 
     impl Embedder for OnnxEmbedder {
         fn embed(&self, text: &str) -> Result<Vec<f32>, DbError> {
-            let encoding = self.tokenizer.encode(text, true)
+            let encoding = self
+                .tokenizer
+                .encode(text, true)
                 .map_err(|e| DbError::Storage(format!("tokenize error: {}", e)))?;
 
             let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-            let attention: Vec<i64> = encoding.get_attention_mask().iter().map(|&m| m as i64).collect();
+            let attention: Vec<i64> = encoding
+                .get_attention_mask()
+                .iter()
+                .map(|&m| m as i64)
+                .collect();
             let token_types: Vec<i64> = encoding.get_type_ids().iter().map(|&t| t as i64).collect();
             let len = ids.len();
 
@@ -60,9 +69,12 @@ mod inner {
             let type_tensor = Tensor::from_array(([1, len], token_types))
                 .map_err(|e| DbError::Storage(format!("tensor error: {}", e)))?;
 
-            let mut session = self.session.lock()
+            let mut session = self
+                .session
+                .lock()
                 .map_err(|e| DbError::Storage(format!("session lock error: {}", e)))?;
-            let outputs = session.run(ort::inputs![ids_tensor, mask_tensor, type_tensor])
+            let outputs = session
+                .run(ort::inputs![ids_tensor, mask_tensor, type_tensor])
                 .map_err(|e| DbError::Storage(format!("ort run error: {}", e)))?;
 
             // Output shape: (1, tokens, 384). Extract then release the lock.

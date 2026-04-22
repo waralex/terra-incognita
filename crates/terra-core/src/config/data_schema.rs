@@ -121,16 +121,10 @@ pub enum ConfigError {
     Yaml(#[from] serde_yaml::Error),
 
     #[error("managed type \"{type_name}\": {message}")]
-    Lifecycle {
-        type_name: String,
-        message: String,
-    },
+    Lifecycle { type_name: String, message: String },
 
     #[error("managed type \"{type_name}\": field \"{field}\" conflicts with reserved lifecycle field \"state\"")]
-    ReservedField {
-        type_name: String,
-        field: String,
-    },
+    ReservedField { type_name: String, field: String },
 }
 
 impl DataSchema {
@@ -208,8 +202,8 @@ impl DataSchema {
 
 #[cfg(test)]
 mod tests {
-    use indoc::indoc;
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn parse_full_config() {
@@ -234,12 +228,16 @@ mod tests {
                 lifecycle:
                   initial: open
                   visible: [open]
-        "}).unwrap();
+        "})
+        .unwrap();
 
         assert_eq!(config.transaction_meta.len(), 3);
         assert!(config.transaction_meta["reasoning"].required);
         assert!(!config.transaction_meta["question"].required);
-        assert_eq!(config.transaction_meta["reasoning"].field_type, FieldType::Text);
+        assert_eq!(
+            config.transaction_meta["reasoning"].field_type,
+            FieldType::Text
+        );
 
         let task = &config.managed_types["task"];
         assert_eq!(task.fields.len(), 5);
@@ -260,11 +258,15 @@ mod tests {
                 required: true
               confidence:
                 type: json
-        "}).unwrap();
+        "})
+        .unwrap();
 
         assert_eq!(config.entity_change_meta.len(), 2);
         assert!(config.entity_change_meta["reasoning"].required);
-        assert_eq!(config.entity_change_meta["reasoning"].field_type, FieldType::Text);
+        assert_eq!(
+            config.entity_change_meta["reasoning"].field_type,
+            FieldType::Text
+        );
         assert!(!config.entity_change_meta["confidence"].required);
     }
 
@@ -286,7 +288,8 @@ mod tests {
                 required: true
               purpose:
                 type: text
-        "}).unwrap();
+        "})
+        .unwrap();
 
         assert_eq!(config.branch_meta.len(), 2);
         assert!(config.branch_meta["reasoning"].required);
@@ -302,7 +305,8 @@ mod tests {
                 fields:
                   content: { type: text, required: true }
                   tags: { type: json }
-        "}).unwrap();
+        "})
+        .unwrap();
         let note = &config.managed_types["note"];
         assert!(note.lifecycle.is_none());
         assert_eq!(note.fields.len(), 2);
@@ -318,7 +322,8 @@ mod tests {
                 lifecycle:
                   initial: draft
                   visible: [draft, in_review]
-        "}).unwrap();
+        "})
+        .unwrap();
         let lc = config.managed_types["review"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.initial, "draft");
         assert_eq!(lc.visible, vec!["draft", "in_review"]);
@@ -333,7 +338,8 @@ mod tests {
                   data: { type: json }
                 lifecycle:
                   initial: new
-        "}).unwrap();
+        "})
+        .unwrap();
         let lc = config.managed_types["process"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.initial, "new");
         assert!(lc.visible.is_empty());
@@ -348,7 +354,8 @@ mod tests {
                   x: { type: text }
                 lifecycle:
                   initial: ""
-        "#}).unwrap_err();
+        "#})
+        .unwrap_err();
         assert!(err.to_string().contains("initial state is empty"));
     }
 
@@ -361,7 +368,8 @@ mod tests {
                   state: { type: text }
                 lifecycle:
                   initial: open
-        "}).unwrap_err();
+        "})
+        .unwrap_err();
         assert!(err.to_string().contains("reserved lifecycle field"));
     }
 
@@ -372,7 +380,8 @@ mod tests {
               ok:
                 fields:
                   state: { type: text }
-        "}).unwrap();
+        "})
+        .unwrap();
         assert!(config.managed_types["ok"].fields.contains_key("state"));
     }
 
@@ -382,7 +391,8 @@ mod tests {
             transaction_meta:
               data:
                 required: true
-        "}).unwrap();
+        "})
+        .unwrap();
         assert_eq!(config.transaction_meta["data"].field_type, FieldType::Json);
     }
 
@@ -396,7 +406,8 @@ mod tests {
                 lifecycle:
                   initial: open
                   visible: [open]
-        "}).unwrap();
+        "})
+        .unwrap();
         let lc = config.managed_types["task"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.states, vec!["open"]);
     }
@@ -411,7 +422,8 @@ mod tests {
                 lifecycle:
                   initial: open
                   visible: [open, in_progress]
-        "}).unwrap();
+        "})
+        .unwrap();
         let lc = config.managed_types["task"].lifecycle.as_ref().unwrap();
         assert!(lc.states.contains(&"open".to_string()));
         assert!(lc.states.contains(&"in_progress".to_string()));
@@ -428,7 +440,8 @@ mod tests {
                   initial: open
                   states: [open, closed, archived]
                   visible: [open]
-        "}).unwrap();
+        "})
+        .unwrap();
         let lc = config.managed_types["task"].lifecycle.as_ref().unwrap();
         assert_eq!(lc.states, vec!["open", "closed", "archived"]);
     }
@@ -443,8 +456,11 @@ mod tests {
                 lifecycle:
                   initial: draft
                   states: [open, closed]
-        "}).unwrap_err();
-        assert!(err.to_string().contains("initial state \"draft\" is not in states"));
+        "})
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("initial state \"draft\" is not in states"));
     }
 
     #[test]
@@ -458,7 +474,10 @@ mod tests {
                   initial: open
                   states: [open, closed]
                   visible: [open, pending]
-        "}).unwrap_err();
-        assert!(err.to_string().contains("visible state \"pending\" is not in states"));
+        "})
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("visible state \"pending\" is not in states"));
     }
 }

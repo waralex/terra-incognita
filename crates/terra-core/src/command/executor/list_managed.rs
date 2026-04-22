@@ -5,15 +5,15 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use crate::command::input::list_managed::ListManagedQuery;
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::list_managed::ListManagedQuery;
 use crate::config::{DataSchema, ManagedTypeDef};
 use crate::domain::managed::Managed;
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
-use crate::io::DbError;
+use crate::domain::tx_meta::{time_from_uuid, TxMeta};
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::managed::{ManagedEntry, ManagedKey};
 
@@ -38,11 +38,10 @@ fn collect_managed(
     seen_items: &mut HashSet<Slug>,
     result: &mut Vec<Managed<TxMeta>>,
 ) -> Result<(), DbError> {
-    let mut bound = ManagedKey::bound()
-        .with_prefix(|k| {
-            k.branch = on_branch.clone();
-            k.type_name = type_slug.clone();
-        });
+    let mut bound = ManagedKey::bound().with_prefix(|k| {
+        k.branch = on_branch.clone();
+        k.type_name = type_slug.clone();
+    });
     if let Some(tx) = at_tx {
         bound = bound.with_upper(|k| k.tx_id = tx);
     }
@@ -59,24 +58,22 @@ fn collect_managed(
         let item_slug = entry.key.item.clone();
 
         if seen_items.contains(&item_slug) {
-            let skip = ManagedKey::bound()
-                .with_prefix(|k| {
-                    k.branch = on_branch.clone();
-                    k.type_name = type_slug.clone();
-                    k.item = item_slug.clone();
-                    k.tx_id = Uuid::max();
-                });
+            let skip = ManagedKey::bound().with_prefix(|k| {
+                k.branch = on_branch.clone();
+                k.type_name = type_slug.clone();
+                k.item = item_slug.clone();
+                k.tx_id = Uuid::max();
+            });
             iter.seek(&skip);
             continue;
         }
         seen_items.insert(item_slug.clone());
 
-        let mut item_bound = ManagedKey::bound()
-            .with_prefix(|k| {
-                k.branch = on_branch.clone();
-                k.type_name = type_slug.clone();
-                k.item = item_slug.clone();
-            });
+        let mut item_bound = ManagedKey::bound().with_prefix(|k| {
+            k.branch = on_branch.clone();
+            k.type_name = type_slug.clone();
+            k.item = item_slug.clone();
+        });
         if let Some(tx) = at_tx {
             item_bound = item_bound.with_upper(|k| k.tx_id = tx);
         }
@@ -103,13 +100,12 @@ fn collect_managed(
             },
         });
 
-        let skip = ManagedKey::bound()
-            .with_prefix(|k| {
-                k.branch = on_branch.clone();
-                k.type_name = type_slug.clone();
-                k.item = entry.key.item.clone();
-                k.tx_id = Uuid::max();
-            });
+        let skip = ManagedKey::bound().with_prefix(|k| {
+            k.branch = on_branch.clone();
+            k.type_name = type_slug.clone();
+            k.item = entry.key.item.clone();
+            k.tx_id = Uuid::max();
+        });
         iter.seek(&skip);
     }
 
@@ -145,7 +141,8 @@ impl Command for ListManaged {
         let mut result = Vec::new();
 
         for (type_name, type_def) in &self.schema.managed_types {
-            let type_slug: Slug = type_name.parse()
+            let type_slug: Slug = type_name
+                .parse()
                 .map_err(|e: crate::io::slug::SlugError| DbError::Storage(e.to_string()))?;
 
             let mut seen_items = HashSet::new();
@@ -170,9 +167,9 @@ impl Command for ListManaged {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use serde_json::{Map, Value};
     use indoc::indoc;
+    use serde_json::{Map, Value};
+    use std::sync::Arc;
 
     use super::*;
     use crate::command::executor::transaction::ExecuteTransaction;
@@ -182,14 +179,17 @@ mod tests {
     use crate::store::storage::Storage;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     fn test_schema() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             transaction_meta:
               reasoning:
                 type: text
@@ -210,7 +210,9 @@ mod tests {
                   initial: open
                   states: [open, closed]
                   visible: [open]
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     fn meta(r: &str) -> Map<String, Value> {
@@ -235,23 +237,28 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("open task"));
 
-        exec_tx(&branch, TransactionInput::new(meta("setup"))
-            .create_managed(crate::domain::managed::Managed::new(
-                "task".parse().unwrap(),
-                "task-open".parse().unwrap(),
-                Some("open".into()),
-                fields.clone(),
-            ))
-            .create_managed(crate::domain::managed::Managed::new(
-                "task".parse().unwrap(),
-                "task-closed".parse().unwrap(),
-                Some("closed".into()),
-                fields,
-            )));
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("setup"))
+                .create_managed(crate::domain::managed::Managed::new(
+                    "task".parse().unwrap(),
+                    "task-open".parse().unwrap(),
+                    Some("open".into()),
+                    fields.clone(),
+                ))
+                .create_managed(crate::domain::managed::Managed::new(
+                    "task".parse().unwrap(),
+                    "task-closed".parse().unwrap(),
+                    Some("closed".into()),
+                    fields,
+                )),
+        );
 
         let cmd = ListManaged::new(test_schema());
         let mut state = CommandState::new(branch.storage());
-        let managed = cmd.execute(&branch, &mut state, ListManagedQuery::new(None)).unwrap();
+        let managed = cmd
+            .execute(&branch, &mut state, ListManagedQuery::new(None))
+            .unwrap();
         assert_eq!(managed.len(), 1);
         assert_eq!(managed[0].slug.as_str(), "task-open");
     }
@@ -265,41 +272,54 @@ mod tests {
         let mut fields = Map::new();
         fields.insert("goal".into(), serde_json::json!("parent task"));
 
-        exec_tx(&main, TransactionInput::new(meta("setup"))
-            .create_managed(crate::domain::managed::Managed::new(
-                "task".parse().unwrap(),
-                "task-from-main".parse().unwrap(),
-                Some("open".into()),
-                fields,
-            )));
+        exec_tx(
+            &main,
+            TransactionInput::new(meta("setup")).create_managed(
+                crate::domain::managed::Managed::new(
+                    "task".parse().unwrap(),
+                    "task-from-main".parse().unwrap(),
+                    Some("open".into()),
+                    fields,
+                ),
+            ),
+        );
 
         // Checkout child branch.
         let checkout_cmd = crate::command::executor::checkout::ExecuteCheckout::new(
             DomainValidator::new(test_schema()),
         );
         let mut cs = CommandState::new(&storage);
-        checkout_cmd.execute(&main, &mut cs, crate::command::input::checkout::CheckoutInput::new(
-            "child".parse().unwrap(),
-            meta("explore"),
-            None,
-            TransactionInput::new(meta("child task"))
-                .create_managed(crate::domain::managed::Managed::new(
-                    "task".parse().unwrap(),
-                    "task-from-child".parse().unwrap(),
-                    Some("open".into()),
-                    {
-                        let mut f = Map::new();
-                        f.insert("goal".into(), serde_json::json!("child task"));
-                        f
-                    },
-                )),
-        )).unwrap();
+        checkout_cmd
+            .execute(
+                &main,
+                &mut cs,
+                crate::command::input::checkout::CheckoutInput::new(
+                    "child".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("child task")).create_managed(
+                        crate::domain::managed::Managed::new(
+                            "task".parse().unwrap(),
+                            "task-from-child".parse().unwrap(),
+                            Some("open".into()),
+                            {
+                                let mut f = Map::new();
+                                f.insert("goal".into(), serde_json::json!("child task"));
+                                f
+                            },
+                        ),
+                    ),
+                ),
+            )
+            .unwrap();
         cs.commit().unwrap();
 
         let child = storage.branch("child".parse().unwrap()).unwrap();
         let cmd = ListManaged::new(test_schema());
         let mut state = CommandState::new(child.storage());
-        let managed = cmd.execute(&child, &mut state, ListManagedQuery::new(None)).unwrap();
+        let managed = cmd
+            .execute(&child, &mut state, ListManagedQuery::new(None))
+            .unwrap();
 
         assert_eq!(managed.len(), 2);
         let slugs: Vec<&str> = managed.iter().map(|m| m.slug.as_str()).collect();

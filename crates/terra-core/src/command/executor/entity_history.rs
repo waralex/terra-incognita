@@ -6,14 +6,14 @@ use uuid::Uuid;
 
 use crate::command::Command;
 
-use crate::command::CommandState;
 use crate::command::input::entity_history::EntityHistoryQuery;
+use crate::command::CommandState;
 use crate::domain::entity::Entity;
 use crate::domain::entity_history::EntityHistoryEntry;
 use crate::domain::tx_meta::TxMeta;
-use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::assertion::{AssertionEntry, AssertionKey};
 use crate::store::entry::entity::{EntityEntry, EntityKey};
@@ -116,11 +116,10 @@ fn collect_assertion_txs(
     at_tx: Option<Uuid>,
     tx_changes: &mut BTreeMap<Uuid, Vec<Slug>>,
 ) -> Result<(), DbError> {
-    let mut bound = AssertionKey::bound()
-        .with_prefix(|k| {
-            k.branch = on_branch.clone();
-            k.entity = entity.clone();
-        });
+    let mut bound = AssertionKey::bound().with_prefix(|k| {
+        k.branch = on_branch.clone();
+        k.entity = entity.clone();
+    });
     if let Some(prop) = property_filter {
         bound = bound.with_prefix(|k| k.prop = prop.clone());
     }
@@ -153,11 +152,10 @@ fn collect_entity_txs(
     at_tx: Option<Uuid>,
     tx_changes: &mut BTreeMap<Uuid, Vec<Slug>>,
 ) -> Result<(), DbError> {
-    let mut bound = EntityKey::bound()
-        .with_prefix(|k| {
-            k.branch = on_branch.clone();
-            k.entity = entity.clone();
-        });
+    let mut bound = EntityKey::bound().with_prefix(|k| {
+        k.branch = on_branch.clone();
+        k.entity = entity.clone();
+    });
     if let Some(tx) = at_tx {
         bound = bound.with_upper(|k| k.tx_id = tx);
     }
@@ -178,8 +176,8 @@ fn build_history_entry(
     tx_id: Uuid,
     changed_props: Vec<Slug>,
 ) -> Result<EntityHistoryEntry, DbError> {
-    let entity = entity_snapshot::entity_snapshot(branch, slug, Some(tx_id))?
-        .unwrap_or_else(|| Entity {
+    let entity =
+        entity_snapshot::entity_snapshot(branch, slug, Some(tx_id))?.unwrap_or_else(|| Entity {
             slug: slug.clone(),
             description: None,
             properties: vec![],
@@ -193,9 +191,7 @@ fn build_history_entry(
         });
 
     let tx_entry = load_transaction_meta(branch, tx_id)?;
-    let transaction_meta = tx_entry
-        .map(|e| e.value.meta)
-        .unwrap_or_default();
+    let transaction_meta = tx_entry.map(|e| e.value.meta).unwrap_or_default();
 
     Ok(EntityHistoryEntry {
         entity,
@@ -288,10 +284,7 @@ mod tests {
         result
     }
 
-    fn query(
-        branch: &BranchContext,
-        input: EntityHistoryQuery,
-    ) -> Vec<EntityHistoryEntry> {
+    fn query(branch: &BranchContext, input: EntityHistoryQuery) -> Vec<EntityHistoryEntry> {
         let cmd = ListEntityHistory;
         let mut state = CommandState::new(branch.storage());
         cmd.execute(branch, &mut state, input).unwrap()
@@ -305,39 +298,43 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create alice"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create alice")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update alice"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(26),
-                        context: (),
-                    }],
-                    meta("birthday"),
-                )),
+            TransactionInput::new(meta("update alice")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                meta("birthday"),
+            )),
         );
 
-        let history = query(&branch, EntityHistoryQuery::new("alice".parse().unwrap(), 10));
+        let history = query(
+            &branch,
+            EntityHistoryQuery::new("alice".parse().unwrap(), 10),
+        );
         assert_eq!(history.len(), 2);
 
         // Most recent first.
-        assert_eq!(history[0].changed_properties, vec!["age".parse::<Slug>().unwrap()]);
+        assert_eq!(
+            history[0].changed_properties,
+            vec!["age".parse::<Slug>().unwrap()]
+        );
         assert_eq!(history[0].entity.properties[0].value, serde_json::json!(26));
         assert_eq!(history[0].transaction_meta["reasoning"], "update alice");
 
@@ -354,31 +351,32 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update desc"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A great person")),
-                    vec![],
-                    meta("better description"),
-                )),
+            TransactionInput::new(meta("update desc")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A great person")),
+                vec![],
+                meta("better description"),
+            )),
         );
 
-        let history = query(&branch, EntityHistoryQuery::new("alice".parse().unwrap(), 10));
+        let history = query(
+            &branch,
+            EntityHistoryQuery::new("alice".parse().unwrap(), 10),
+        );
         assert_eq!(history.len(), 2);
         // Description-only change has empty changed_properties.
         assert!(history[0].changed_properties.is_empty());
@@ -396,46 +394,51 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![
-                        PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                        PV { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
-                    ],
-                    meta("initial"),
-                )),
-        );
-
-        exec(
-            &branch,
-            TransactionInput::new(meta("update age"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![
+                    PV {
                         property: "age".parse().unwrap(),
-                        value: serde_json::json!(26),
+                        value: serde_json::json!(25),
                         context: (),
-                    }],
-                    meta("birthday"),
-                )),
+                    },
+                    PV {
+                        property: "city".parse().unwrap(),
+                        value: serde_json::json!("London"),
+                        context: (),
+                    },
+                ],
+                meta("initial"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update city"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "city".parse().unwrap(),
-                        value: serde_json::json!("Paris"),
-                        context: (),
-                    }],
-                    meta("moved"),
-                )),
+            TransactionInput::new(meta("update age")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                meta("birthday"),
+            )),
+        );
+
+        exec(
+            &branch,
+            TransactionInput::new(meta("update city")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "city".parse().unwrap(),
+                    value: serde_json::json!("Paris"),
+                    context: (),
+                }],
+                meta("moved"),
+            )),
         );
 
         let history = query(
@@ -445,10 +448,9 @@ mod tests {
         );
         // Only create + update-age, not update-city.
         assert_eq!(history.len(), 2);
-        assert!(history.iter().all(|e| e
-            .changed_properties
+        assert!(history
             .iter()
-            .all(|p| p.as_str() == "age")));
+            .all(|e| e.changed_properties.iter().all(|p| p.as_str() == "age")));
 
         // Full snapshot still shows ALL properties at that point.
         assert_eq!(history[0].entity.properties.len(), 2);
@@ -462,54 +464,50 @@ mod tests {
 
         let tx1 = exec(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 1"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(26),
-                        context: (),
-                    }],
-                    meta("birthday 1"),
-                )),
+            TransactionInput::new(meta("update 1")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                meta("birthday 1"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 2"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(27),
-                        context: (),
-                    }],
-                    meta("birthday 2"),
-                )),
+            TransactionInput::new(meta("update 2")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(27),
+                    context: (),
+                }],
+                meta("birthday 2"),
+            )),
         );
 
         // at_tx = tx1 → should only see the creation.
         let history = query(
             &branch,
-            EntityHistoryQuery::new("alice".parse().unwrap(), 10)
-                .with_at_tx(tx1.context.tx_id),
+            EntityHistoryQuery::new("alice".parse().unwrap(), 10).with_at_tx(tx1.context.tx_id),
         );
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].entity.properties[0].value, serde_json::json!(25));
@@ -523,47 +521,44 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         let tx2 = exec(
             &branch,
-            TransactionInput::new(meta("update 1"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(26),
-                        context: (),
-                    }],
-                    meta("birthday 1"),
-                )),
+            TransactionInput::new(meta("update 1")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                meta("birthday 1"),
+            )),
         );
 
         let tx3 = exec(
             &branch,
-            TransactionInput::new(meta("update 2"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(27),
-                        context: (),
-                    }],
-                    meta("birthday 2"),
-                )),
+            TransactionInput::new(meta("update 2")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(27),
+                    context: (),
+                }],
+                meta("birthday 2"),
+            )),
         );
 
         // Range: tx2..=tx3 → should see update 1 and update 2, not create.
@@ -585,17 +580,16 @@ mod tests {
 
         exec(
             &main,
-            TransactionInput::new(meta("create on main"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create on main")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         let checkout_cmd = ExecuteCheckout::new(validator());
@@ -608,24 +602,26 @@ mod tests {
                     "child".parse().unwrap(),
                     meta("explore"),
                     None,
-                    TransactionInput::new(meta("update on child"))
-                        .update_entity(Entity::new(
-                            "alice".parse().unwrap(),
-                            None,
-                            vec![PV {
-                                property: "age".parse().unwrap(),
-                                value: serde_json::json!(30),
-                                context: (),
-                            }],
-                            meta("changed on child"),
-                        )),
+                    TransactionInput::new(meta("update on child")).update_entity(Entity::new(
+                        "alice".parse().unwrap(),
+                        None,
+                        vec![PV {
+                            property: "age".parse().unwrap(),
+                            value: serde_json::json!(30),
+                            context: (),
+                        }],
+                        meta("changed on child"),
+                    )),
                 ),
             )
             .unwrap();
         cs.commit().unwrap();
 
         let child = storage.branch("child".parse().unwrap()).unwrap();
-        let history = query(&child, EntityHistoryQuery::new("alice".parse().unwrap(), 10));
+        let history = query(
+            &child,
+            EntityHistoryQuery::new("alice".parse().unwrap(), 10),
+        );
 
         // Should see both: update on child + create on main.
         assert_eq!(history.len(), 2);
@@ -643,40 +639,44 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("delete age"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::Value::Null,
-                        context: (),
-                    }],
-                    meta("retract age"),
-                )),
+            TransactionInput::new(meta("delete age")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::Value::Null,
+                    context: (),
+                }],
+                meta("retract age"),
+            )),
         );
 
-        let history = query(&branch, EntityHistoryQuery::new("alice".parse().unwrap(), 10));
+        let history = query(
+            &branch,
+            EntityHistoryQuery::new("alice".parse().unwrap(), 10),
+        );
         assert_eq!(history.len(), 2);
         // After delete, snapshot should not contain the deleted property.
         assert!(history[0].entity.properties.is_empty());
         // But changed_properties still lists what changed.
-        assert_eq!(history[0].changed_properties, vec!["age".parse::<Slug>().unwrap()]);
+        assert_eq!(
+            history[0].changed_properties,
+            vec!["age".parse::<Slug>().unwrap()]
+        );
     }
 
     #[test]
@@ -703,50 +703,50 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(25),
-                        context: (),
-                    }],
-                    meta("initial"),
-                )),
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                meta("initial"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 1"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(26),
-                        context: (),
-                    }],
-                    meta("birthday"),
-                )),
+            TransactionInput::new(meta("update 1")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(26),
+                    context: (),
+                }],
+                meta("birthday"),
+            )),
         );
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 2"))
-                .update_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    None,
-                    vec![PV {
-                        property: "age".parse().unwrap(),
-                        value: serde_json::json!(27),
-                        context: (),
-                    }],
-                    meta("another birthday"),
-                )),
+            TransactionInput::new(meta("update 2")).update_entity(Entity::new(
+                "alice".parse().unwrap(),
+                None,
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(27),
+                    context: (),
+                }],
+                meta("another birthday"),
+            )),
         );
 
-        let history = query(&branch, EntityHistoryQuery::new("alice".parse().unwrap(), 2));
+        let history = query(
+            &branch,
+            EntityHistoryQuery::new("alice".parse().unwrap(), 2),
+        );
         assert_eq!(history.len(), 2);
         // Most recent first.
         assert_eq!(history[0].entity.properties[0].value, serde_json::json!(27));

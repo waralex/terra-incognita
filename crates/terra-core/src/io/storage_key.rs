@@ -214,8 +214,8 @@ pub(crate) use storage_key;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::io::slug::Slug;
+    use uuid::Uuid;
 
     storage_key! {
         pub(crate) struct TestKey {
@@ -353,8 +353,14 @@ mod tests {
     fn slug_keys_sort_by_hash() {
         let s1: Slug = "alpha".parse().unwrap();
         let s2: Slug = "beta".parse().unwrap();
-        let k1 = SlugKey { branch_id: Uuid::nil(), name: s1 };
-        let k2 = SlugKey { branch_id: Uuid::nil(), name: s2 };
+        let k1 = SlugKey {
+            branch_id: Uuid::nil(),
+            name: s1,
+        };
+        let k2 = SlugKey {
+            branch_id: Uuid::nil(),
+            name: s2,
+        };
         // Sort order is by hash, not by slug string
         let e1 = k1.encode();
         let e2 = k2.encode();

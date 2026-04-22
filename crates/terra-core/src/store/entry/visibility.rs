@@ -6,10 +6,9 @@
 //! `item_kind` is a UUID identifying the namespace (same as in slug index).
 //! Reads walk the ancestry chain, latest tx_id wins.
 
-
-use crate::io::{DbItem, DbError};
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::io::{DbError, DbItem};
 
 const CF_VISIBILITY: &str = "visibility";
 
@@ -71,9 +70,9 @@ impl DbItem for VisibilityEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::io::slug::Slug;
     use crate::io::TerraDb;
+    use uuid::Uuid;
 
     fn open_db(dir: &tempfile::TempDir) -> TerraDb {
         TerraDb::builder(dir.path())

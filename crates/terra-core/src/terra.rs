@@ -74,18 +74,19 @@ impl Terra {
     ) -> Result<Self, DbError> {
         let storage = Storage::open(path, config)?;
         let validator = DomainValidator::new(schema.clone());
-        Ok(Self { storage, validator, schema, embedder })
+        Ok(Self {
+            storage,
+            validator,
+            schema,
+            embedder,
+        })
     }
 
     /// Execute a command on the given branch.
     ///
     /// Resolves the branch slug, creates a CommandState, delegates to
     /// `Executable::execute_on`, and commits the batch atomically.
-    pub fn execute<E: Executable>(
-        &self,
-        branch: &Slug,
-        input: E,
-    ) -> Result<E::Output, DbError> {
+    pub fn execute<E: Executable>(&self, branch: &Slug, input: E) -> Result<E::Output, DbError> {
         let ctx = self.resolve_branch(branch)?;
         let mut state = CommandState::with_embedder(&self.storage, self.embedder.clone());
         let output = input.execute_on(self, &ctx, &mut state)?;
@@ -118,8 +119,7 @@ impl Executable for TransactionInput {
         branch: &BranchContext,
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
-        ExecuteTransaction::new(terra.validator.clone())
-            .execute(branch, state, self)
+        ExecuteTransaction::new(terra.validator.clone()).execute(branch, state, self)
     }
 }
 
@@ -132,8 +132,7 @@ impl Executable for CheckoutInput {
         branch: &BranchContext,
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
-        ExecuteCheckout::new(terra.validator.clone())
-            .execute(branch, state, self)
+        ExecuteCheckout::new(terra.validator.clone()).execute(branch, state, self)
     }
 }
 
@@ -198,8 +197,7 @@ impl Executable for ListManagedQuery {
         branch: &BranchContext,
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
-        ListManaged::new(terra.schema.clone())
-            .execute(branch, state, self)
+        ListManaged::new(terra.schema.clone()).execute(branch, state, self)
     }
 }
 
@@ -293,10 +291,10 @@ mod tests {
         let terra = open_terra(dir.path());
         let main = main_branch_slug();
 
-        let tx = terra.execute(
-            &main,
-            TransactionInput::new(meta("create entity"))
-                .create_entity(Entity::new(
+        let tx = terra
+            .execute(
+                &main,
+                TransactionInput::new(meta("create entity")).create_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PV {
@@ -306,14 +304,14 @@ mod tests {
                     }],
                     meta("initial"),
                 )),
-        ).unwrap();
+            )
+            .unwrap();
 
         assert_eq!(tx.context.branch, main);
 
-        let entities = terra.execute(
-            &main,
-            TouchedEntitiesQuery::new(None, 10),
-        ).unwrap();
+        let entities = terra
+            .execute(&main, TouchedEntitiesQuery::new(None, 10))
+            .unwrap();
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].slug.as_str(), "alice");
         assert_eq!(entities[0].properties[0].value, serde_json::json!(25));
@@ -325,13 +323,16 @@ mod tests {
         let terra = open_terra(dir.path());
         let main = main_branch_slug();
 
-        terra.execute(&main, TransactionInput::new(meta("first"))).unwrap();
-        terra.execute(&main, TransactionInput::new(meta("second"))).unwrap();
+        terra
+            .execute(&main, TransactionInput::new(meta("first")))
+            .unwrap();
+        terra
+            .execute(&main, TransactionInput::new(meta("second")))
+            .unwrap();
 
-        let txs = terra.execute(
-            &main,
-            ListTransactionsQuery::new(None, 10),
-        ).unwrap();
+        let txs = terra
+            .execute(&main, ListTransactionsQuery::new(None, 10))
+            .unwrap();
 
         assert_eq!(txs.len(), 2);
         assert_eq!(txs[0].meta["reasoning"], "second");
@@ -344,34 +345,34 @@ mod tests {
         let terra = open_terra(dir.path());
         let main = main_branch_slug();
 
-        terra.execute(
-            &main,
-            TransactionInput::new(meta("seed"))
-                .create_entity(Entity::new(
+        terra
+            .execute(
+                &main,
+                TransactionInput::new(meta("seed")).create_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![],
                     Map::new(),
                 )),
-        ).unwrap();
+            )
+            .unwrap();
 
-        let checkout = terra.execute(
-            &main,
-            CheckoutInput::new(
-                "feature".parse().unwrap(),
-                meta("explore"),
-                None,
-                TransactionInput::new(meta("first on branch")),
-            ),
-        ).unwrap();
+        let checkout = terra
+            .execute(
+                &main,
+                CheckoutInput::new(
+                    "feature".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("first on branch")),
+                ),
+            )
+            .unwrap();
 
         assert_eq!(checkout.branch.as_str(), "feature");
 
         let branch_slug: Slug = "feature".parse().unwrap();
-        let branch = terra.execute(
-            &branch_slug,
-            GetBranchQuery::new(),
-        ).unwrap();
+        let branch = terra.execute(&branch_slug, GetBranchQuery::new()).unwrap();
         assert_eq!(branch.slug.as_str(), "feature");
         assert_eq!(branch.parent.as_str(), "main");
     }
@@ -382,7 +383,9 @@ mod tests {
 
     impl TestEmbedder {
         fn new() -> Self {
-            Self { calls: Mutex::new(Vec::new()) }
+            Self {
+                calls: Mutex::new(Vec::new()),
+            }
         }
     }
 
@@ -402,18 +405,13 @@ mod tests {
     fn execute_similar_entities() {
         let dir = tempfile::tempdir().unwrap();
         let embedder: Arc<dyn Embedder> = Arc::new(TestEmbedder::new());
-        let terra = Terra::open(
-            dir.path(),
-            test_config(),
-            test_schema(),
-            embedder,
-        ).unwrap();
+        let terra = Terra::open(dir.path(), test_config(), test_schema(), embedder).unwrap();
         let main = main_branch_slug();
 
-        terra.execute(
-            &main,
-            TransactionInput::new(meta("init"))
-                .create_entity(Entity::new(
+        terra
+            .execute(
+                &main,
+                TransactionInput::new(meta("init")).create_entity(Entity::new(
                     "auth-service".parse().unwrap(),
                     Some(serde_json::json!("auth service")),
                     vec![PV {
@@ -423,16 +421,15 @@ mod tests {
                     }],
                     meta("setup"),
                 )),
-        ).unwrap();
+            )
+            .unwrap();
 
-        let results = terra.execute(
-            &main,
-            SimilarEntitiesQuery::new(
-                vec![serde_json::json!("auth middleware")],
-                10,
-                0.0,
-            ),
-        ).unwrap();
+        let results = terra
+            .execute(
+                &main,
+                SimilarEntitiesQuery::new(vec![serde_json::json!("auth middleware")], 10, 0.0),
+            )
+            .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].entity.slug.as_str(), "auth-service");
@@ -446,16 +443,14 @@ mod tests {
         let terra = open_terra(dir.path());
         let main = main_branch_slug();
 
-        let txs = terra.execute(
-            &main,
-            ListTransactionsQuery::new(None, 10),
-        ).unwrap();
+        let txs = terra
+            .execute(&main, ListTransactionsQuery::new(None, 10))
+            .unwrap();
         assert!(txs.is_empty());
 
-        let entities = terra.execute(
-            &main,
-            TouchedEntitiesQuery::new(None, 10),
-        ).unwrap();
+        let entities = terra
+            .execute(&main, TouchedEntitiesQuery::new(None, 10))
+            .unwrap();
         assert!(entities.is_empty());
     }
 }

@@ -17,7 +17,10 @@ pub struct TouchItem {
 
 impl TouchItem {
     pub fn new(entity: Slug, reasoning: impl Into<String>) -> Self {
-        Self { entity, reasoning: reasoning.into() }
+        Self {
+            entity,
+            reasoning: reasoning.into(),
+        }
     }
 }
 
@@ -140,7 +143,11 @@ mod tests {
             .update_entity(Entity::new(
                 "bob".parse().unwrap(),
                 None,
-                vec![PropertyValue { property: "age".parse().unwrap(), value: serde_json::json!(30), context: () }],
+                vec![PropertyValue {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(30),
+                    context: (),
+                }],
                 Map::new(),
             ));
 
@@ -190,7 +197,11 @@ mod tests {
             .update_entity(Entity::new(
                 "server".parse().unwrap(),
                 None,
-                vec![PropertyValue { property: "status".parse().unwrap(), value: serde_json::json!("down"), context: () }],
+                vec![PropertyValue {
+                    property: "status".parse().unwrap(),
+                    value: serde_json::json!("down"),
+                    context: (),
+                }],
                 Map::new(),
             ))
             .create_managed(Managed::new(

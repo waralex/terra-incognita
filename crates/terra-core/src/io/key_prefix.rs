@@ -130,7 +130,10 @@ pub struct KeyBound<K: StorageKey> {
 impl<K: StorageKey> KeyBound<K> {
     /// Full range: all keys from nil to max.
     pub fn new() -> Self {
-        Self { lower: K::nil(), upper: K::max() }
+        Self {
+            lower: K::nil(),
+            upper: K::max(),
+        }
     }
 
     /// Apply `f` to both lower and upper (set a shared prefix field).
@@ -178,17 +181,27 @@ impl<K: StorageKey> KeyPrefix for KeyBound<K> {
 mod tests {
     use super::*;
     use crate::io::slug::Slug;
-    use crate::io::storage_key::{StorageKey, KeyError};
+    use crate::io::storage_key::{KeyError, StorageKey};
 
     #[derive(Debug, Clone)]
     pub struct TestKey48;
     impl StorageKey for TestKey48 {
         const SIZE: usize = 48;
-        fn encode(&self) -> Vec<u8> { vec![0; 48] }
-        fn encode_fixed(&self) -> Vec<u8> { vec![0; 48] }
-        fn decode(_: &[u8]) -> Result<Self, KeyError> { Ok(Self) }
-        fn nil() -> Self { Self }
-        fn max() -> Self { Self }
+        fn encode(&self) -> Vec<u8> {
+            vec![0; 48]
+        }
+        fn encode_fixed(&self) -> Vec<u8> {
+            vec![0; 48]
+        }
+        fn decode(_: &[u8]) -> Result<Self, KeyError> {
+            Ok(Self)
+        }
+        fn nil() -> Self {
+            Self
+        }
+        fn max() -> Self {
+            Self
+        }
     }
 
     prefix_key! {
@@ -222,7 +235,9 @@ mod tests {
     #[test]
     fn encode_deterministic() {
         let slug: Slug = "main".parse().unwrap();
-        let p1 = TestBranchPrefix { branch: slug.clone() };
+        let p1 = TestBranchPrefix {
+            branch: slug.clone(),
+        };
         let p2 = TestBranchPrefix { branch: slug };
         assert_eq!(p1.encode(), p2.encode());
     }
@@ -291,8 +306,7 @@ mod tests {
     #[test]
     fn key_bound_with_prefix() {
         let branch = uuid::Uuid::from_u128(42);
-        let bound = KeyBound::<BoundTestKey>::new()
-            .with_prefix(|k| k.branch_id = branch);
+        let bound = KeyBound::<BoundTestKey>::new().with_prefix(|k| k.branch_id = branch);
         let lower = bound.encode_lower_bound();
         let upper = bound.encode_upper_bound();
         // Both share the same branch prefix

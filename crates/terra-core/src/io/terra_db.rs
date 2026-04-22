@@ -112,7 +112,9 @@ impl TerraDb {
 
     /// Get an item by its typed key.
     pub fn get<T: DbItem>(&self, key: &T::Key) -> Result<Option<T>, DbError> {
-        let cf = self.db.cf_handle(T::cf())
+        let cf = self
+            .db
+            .cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
         let key_bytes = key.encode();
         match self.db.get_cf(cf, &key_bytes) {
@@ -133,7 +135,9 @@ impl TerraDb {
         &'a self,
         prefix: &impl KeyPrefix<Key = T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
-        let cf = self.db.cf_handle(T::cf())
+        let cf = self
+            .db
+            .cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
         let lower = prefix.encode_lower_bound();
         let upper = prefix.encode_upper_bound();
@@ -151,7 +155,9 @@ impl TerraDb {
         &'a self,
         prefix: &impl KeyPrefix<Key = T::Key>,
     ) -> Result<DbIterator<'a, T>, DbError> {
-        let cf = self.db.cf_handle(T::cf())
+        let cf = self
+            .db
+            .cf_handle(T::cf())
             .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
         let lower = prefix.encode_lower_bound();
         let upper = prefix.encode_upper_bound();
@@ -166,7 +172,11 @@ impl TerraDb {
         WriteBatch::new(Arc::clone(&self.db))
     }
 
-    fn open_internal(path: &Path, mode: AccessMode, cf_names: &BTreeSet<String>) -> Result<Self, DbError> {
+    fn open_internal(
+        path: &Path,
+        mode: AccessMode,
+        cf_names: &BTreeSet<String>,
+    ) -> Result<Self, DbError> {
         let mut opts = Options::default();
         opts.create_if_missing(mode == AccessMode::ReadWrite);
         opts.create_missing_column_families(mode == AccessMode::ReadWrite);
@@ -200,27 +210,41 @@ mod tests {
     use super::*;
 
     use crate::io::storage_key::KeyError;
-    use crate::io::storage_value::StorageValue;
     use crate::io::storage_key::StorageKey;
+    use crate::io::storage_value::StorageValue;
 
     #[derive(Debug, Clone)]
     struct TestKey;
 
     impl StorageKey for TestKey {
         const SIZE: usize = 0;
-        fn encode(&self) -> Vec<u8> { vec![] }
-        fn encode_fixed(&self) -> Vec<u8> { vec![] }
-        fn decode(_bytes: &[u8]) -> Result<Self, KeyError> { Ok(TestKey) }
-        fn nil() -> Self { TestKey }
-        fn max() -> Self { TestKey }
+        fn encode(&self) -> Vec<u8> {
+            vec![]
+        }
+        fn encode_fixed(&self) -> Vec<u8> {
+            vec![]
+        }
+        fn decode(_bytes: &[u8]) -> Result<Self, KeyError> {
+            Ok(TestKey)
+        }
+        fn nil() -> Self {
+            TestKey
+        }
+        fn max() -> Self {
+            TestKey
+        }
     }
 
     #[derive(Debug, Clone)]
     struct TestValue;
 
     impl StorageValue for TestValue {
-        fn encode(&self) -> Result<Vec<u8>, DbError> { Ok(vec![]) }
-        fn decode(_bytes: &[u8]) -> Result<Self, DbError> { Ok(TestValue) }
+        fn encode(&self) -> Result<Vec<u8>, DbError> {
+            Ok(vec![])
+        }
+        fn decode(_bytes: &[u8]) -> Result<Self, DbError> {
+            Ok(TestValue)
+        }
     }
 
     struct TestItem;
@@ -229,10 +253,18 @@ mod tests {
         type Key = TestKey;
         type Value = TestValue;
 
-        fn cf() -> &'static str { "test_cf" }
-        fn key(&self) -> &TestKey { &TestKey }
-        fn value(&self) -> &TestValue { &TestValue }
-        fn from_parts(_key: TestKey, _value: TestValue) -> Self { TestItem }
+        fn cf() -> &'static str {
+            "test_cf"
+        }
+        fn key(&self) -> &TestKey {
+            &TestKey
+        }
+        fn value(&self) -> &TestValue {
+            &TestValue
+        }
+        fn from_parts(_key: TestKey, _value: TestValue) -> Self {
+            TestItem
+        }
     }
 
     #[test]
@@ -280,14 +312,18 @@ mod tests {
     }
 
     mod scan_tests {
-        use uuid::Uuid;
-        use crate::io::TerraDb;
         use crate::io::slug::Slug;
+        use crate::io::TerraDb;
         use crate::store::entry::entity::{EntityEntry, EntityKey, EntityKeyPrefix, EntityValue};
+        use uuid::Uuid;
 
         fn write_entity(db: &TerraDb, branch: Slug, entity: Slug, tx_id: Uuid) {
             let entry = EntityEntry {
-                key: EntityKey { branch, entity, tx_id },
+                key: EntityKey {
+                    branch,
+                    entity,
+                    tx_id,
+                },
                 value: EntityValue::default(),
             };
             let mut batch = db.batch();
@@ -295,7 +331,9 @@ mod tests {
             batch.commit().unwrap();
         }
 
-        fn s(val: &str) -> Slug { val.parse().unwrap() }
+        fn s(val: &str) -> Slug {
+            val.parse().unwrap()
+        }
 
         #[test]
         fn scan_forward() {
@@ -316,7 +354,8 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let prefix = EntityKeyPrefix::new(branch, entity);
-            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+            let items: Vec<EntityEntry> = db
+                .scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();
@@ -346,7 +385,8 @@ mod tests {
             write_entity(&db, branch.clone(), entity.clone(), tx3);
 
             let prefix = EntityKeyPrefix::new(branch, entity);
-            let items: Vec<EntityEntry> = db.scan_rev::<EntityEntry>(&prefix)
+            let items: Vec<EntityEntry> = db
+                .scan_rev::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();
@@ -374,7 +414,8 @@ mod tests {
             write_entity(&db, branch.clone(), e2, tx);
 
             let prefix = EntityKeyPrefix::new(branch, e1);
-            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+            let items: Vec<EntityEntry> = db
+                .scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();
@@ -395,7 +436,8 @@ mod tests {
             let entity = s("nonexistent");
 
             let prefix = EntityKeyPrefix::new(branch, entity);
-            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+            let items: Vec<EntityEntry> = db
+                .scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();
@@ -423,7 +465,8 @@ mod tests {
 
             let bound = Uuid::from_u128(25);
             let prefix = EntityKeyPrefix::new(branch, entity);
-            let items: Vec<EntityEntry> = db.scan::<EntityEntry>(&prefix)
+            let items: Vec<EntityEntry> = db
+                .scan::<EntityEntry>(&prefix)
                 .unwrap()
                 .filter_map(|r| {
                     let e = r.ok()?;
@@ -456,7 +499,8 @@ mod tests {
 
             let bound = Uuid::from_u128(25);
             let prefix = EntityKeyPrefix::new(branch, entity);
-            let latest = db.scan_rev::<EntityEntry>(&prefix)
+            let latest = db
+                .scan_rev::<EntityEntry>(&prefix)
                 .unwrap()
                 .filter_map(|r| r.ok())
                 .find(|e| e.key.tx_id <= bound);

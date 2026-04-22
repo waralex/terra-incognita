@@ -1,8 +1,8 @@
 //! Command dispatch — routes a request envelope to the right executor via Terra.
 
+use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::http::header::CONTENT_TYPE;
 use terra_core::command::input::get_branch::GetBranchQuery;
 use terra_core::command::input::get_transaction::GetTransactionQuery;
 use terra_core::command::input::list_managed::ListManagedQuery;
@@ -14,8 +14,8 @@ use terra_core::Terra;
 
 use crate::dto::convert;
 use crate::dto::request::{
-    CheckoutReq, CommandEnvelope, GetTransactionReq, ListManagedReq,
-    ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
+    CheckoutReq, CommandEnvelope, GetTransactionReq, ListManagedReq, ListTransactionsReq,
+    SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
 };
 use crate::dto::response::ErrorRes;
 use crate::error::classify;
@@ -66,7 +66,14 @@ fn cmd_transaction(
 ) -> Response {
     let req: TransactionReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let input = match convert::transaction_req_to_input(req) {
         Ok(v) => v,
@@ -86,7 +93,14 @@ fn cmd_checkout(
 ) -> Response {
     let req: CheckoutReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let input = match convert::checkout_req_to_input(req) {
         Ok(v) => v,
@@ -106,7 +120,14 @@ fn cmd_list_transactions(
 ) -> Response {
     let req: ListTransactionsReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let input = ListTransactionsQuery::new(req.at_tx, req.limit);
     match terra.execute(branch, input) {
@@ -126,7 +147,14 @@ fn cmd_touched_entities(
 ) -> Response {
     let req: TouchedEntitiesReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let input = TouchedEntitiesQuery::new(req.at_tx, req.limit);
     match terra.execute(branch, input) {
@@ -153,7 +181,14 @@ fn cmd_list_managed(
 ) -> Response {
     let req: ListManagedReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let input = ListManagedQuery::new(req.at_tx);
     match terra.execute(branch, input) {
@@ -173,7 +208,14 @@ fn cmd_get_transaction(
 ) -> Response {
     let req: GetTransactionReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let input = GetTransactionQuery::new(req.tx_id);
     match terra.execute(branch, input) {
@@ -190,7 +232,14 @@ fn cmd_similar_entities(
 ) -> Response {
     let req: SimilarEntitiesReq = match serde_json::from_value(body) {
         Ok(v) => v,
-        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e.to_string()),
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
     };
     let mut input = SimilarEntitiesQuery::new(req.queries, req.limit, req.min_similarity);
     if let Some(tx) = req.at_tx {
@@ -212,7 +261,12 @@ fn ok_response(format: ContentFormat, body: &impl serde::Serialize) -> Response 
             bytes,
         )
             .into_response(),
-        Err(e) => error_response(format, StatusCode::INTERNAL_SERVER_ERROR, "serialize_error", &e),
+        Err(e) => error_response(
+            format,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "serialize_error",
+            &e,
+        ),
     }
 }
 
@@ -231,9 +285,9 @@ fn error_response(
         error: message.to_string(),
         kind: kind.to_string(),
     };
-    let bytes = format.serialize(&body).unwrap_or_else(|_| {
-        serde_json::to_vec(&body).unwrap_or_default()
-    });
+    let bytes = format
+        .serialize(&body)
+        .unwrap_or_else(|_| serde_json::to_vec(&body).unwrap_or_default());
     (status, [(CONTENT_TYPE, format.content_type())], bytes).into_response()
 }
 
@@ -286,13 +340,11 @@ mod tests {
         let bytes = serde_json::to_vec(&body).unwrap();
         let response = handle(terra, &bytes, ContentFormat::Json);
         let status = response.status();
-        let body_bytes = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async {
-                axum::body::to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .unwrap()
-            });
+        let body_bytes = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+        });
         let value: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         (status, value)
     }
@@ -302,17 +354,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "transaction",
-            "branch": "main",
-            "meta": { "reasoning": "create entity" },
-            "create": [{
-                "slug": "alice",
-                "description": "A person",
-                "properties": [{ "property": "age", "value": 25 }],
-                "meta": { "reasoning": "initial" }
-            }]
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "branch": "main",
+                "meta": { "reasoning": "create entity" },
+                "create": [{
+                    "slug": "alice",
+                    "description": "A person",
+                    "properties": [{ "property": "age", "value": 25 }],
+                    "meta": { "reasoning": "initial" }
+                }]
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["meta"]["reasoning"], "create entity");
@@ -325,19 +380,28 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        dispatch_json(&terra, json!({
-            "command": "transaction",
-            "meta": { "reasoning": "first" }
-        }));
-        dispatch_json(&terra, json!({
-            "command": "transaction",
-            "meta": { "reasoning": "second" }
-        }));
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "first" }
+            }),
+        );
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "second" }
+            }),
+        );
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "transactions.list",
-            "limit": 10
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "transactions.list",
+                "limit": 10
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         let arr = res.as_array().unwrap();
@@ -351,21 +415,27 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        dispatch_json(&terra, json!({
-            "command": "transaction",
-            "meta": { "reasoning": "create" },
-            "create": [{
-                "slug": "bob",
-                "description": "B person",
-                "properties": [{ "property": "city", "value": "Berlin" }],
-                "meta": { "reasoning": "initial" }
-            }]
-        }));
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "create" },
+                "create": [{
+                    "slug": "bob",
+                    "description": "B person",
+                    "properties": [{ "property": "city", "value": "Berlin" }],
+                    "meta": { "reasoning": "initial" }
+                }]
+            }),
+        );
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "entities.touched",
-            "limit": 10
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entities.touched",
+                "limit": 10
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         let arr = res.as_array().unwrap();
@@ -380,29 +450,38 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        dispatch_json(&terra, json!({
-            "command": "transaction",
-            "meta": { "reasoning": "seed" }
-        }));
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "seed" }
+            }),
+        );
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "checkout",
-            "branch": "main",
-            "slug": "feature",
-            "meta": { "reasoning": "explore" },
-            "transaction": {
-                "meta": { "reasoning": "first on branch" }
-            }
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "checkout",
+                "branch": "main",
+                "slug": "feature",
+                "meta": { "reasoning": "explore" },
+                "transaction": {
+                    "meta": { "reasoning": "first on branch" }
+                }
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["branch"], "feature");
         assert!(res["created_from_tx"].is_string());
 
-        let (status, branch) = dispatch_json(&terra, json!({
-            "command": "branch.get",
-            "branch": "feature"
-        }));
+        let (status, branch) = dispatch_json(
+            &terra,
+            json!({
+                "command": "branch.get",
+                "branch": "feature"
+            }),
+        );
         assert_eq!(status, StatusCode::OK);
         assert_eq!(branch["slug"], "feature");
         assert_eq!(branch["parent"], "main");
@@ -413,9 +492,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "branch.get"
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "branch.get"
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["slug"], "main");
@@ -427,9 +509,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "nonexistent"
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "nonexistent"
+            }),
+        );
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(res["kind"], "unknown_command");
@@ -440,11 +525,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "transaction",
-            "branch": "INVALID SLUG!!!",
-            "meta": { "reasoning": "test" }
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "branch": "INVALID SLUG!!!",
+                "meta": { "reasoning": "test" }
+            }),
+        );
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(res["kind"], "invalid_slug");
@@ -455,10 +543,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "transaction",
-            "meta": {}
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": {}
+            }),
+        );
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(res["kind"], "validation_error");
@@ -469,9 +560,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "branch.get"
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "branch.get"
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["slug"], "main");
@@ -482,20 +576,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let terra = open_terra(dir.path());
 
-        dispatch_json(&terra, json!({
-            "command": "transaction",
-            "meta": { "reasoning": "create" },
-            "create": [{
-                "slug": "alice",
-                "description": "A person",
-                "properties": [{ "property": "age", "value": 25 }],
-                "meta": { "reasoning": "initial" }
-            }]
-        }));
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "create" },
+                "create": [{
+                    "slug": "alice",
+                    "description": "A person",
+                    "properties": [{ "property": "age", "value": 25 }],
+                    "meta": { "reasoning": "initial" }
+                }]
+            }),
+        );
 
-        let (status, res) = dispatch_json(&terra, json!({
-            "command": "transaction.get"
-        }));
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction.get"
+            }),
+        );
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["meta"]["reasoning"], "create");

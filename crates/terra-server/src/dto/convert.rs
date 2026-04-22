@@ -10,13 +10,10 @@ use terra_core::domain::transaction::{Transaction, TransactionDetail};
 use terra_core::domain::tx_meta::TxMeta;
 use terra_core::io::slug::Slug;
 
-use crate::dto::request::{
-    CheckoutReq, EntityReq, ManagedReq, TransactionReq,
-};
+use crate::dto::request::{CheckoutReq, EntityReq, ManagedReq, TransactionReq};
 use crate::dto::response::{
-    BranchRes, CheckoutRes, DeletedEntityRes, EntityRes, ManagedRes,
-    PropertyValueRes, SimilarEntityRes, TouchedEntityRes, TransactionDetailRes,
-    TransactionRes, TxMetaRes,
+    BranchRes, CheckoutRes, DeletedEntityRes, EntityRes, ManagedRes, PropertyValueRes,
+    SimilarEntityRes, TouchedEntityRes, TransactionDetailRes, TransactionRes, TxMetaRes,
 };
 
 // --- Request → Domain ---
@@ -51,7 +48,12 @@ pub fn transaction_req_to_input(req: TransactionReq) -> Result<TransactionInput,
 pub fn checkout_req_to_input(req: CheckoutReq) -> Result<CheckoutInput, String> {
     let slug = parse_slug(&req.slug)?;
     let transaction = transaction_req_to_input(req.transaction)?;
-    Ok(CheckoutInput::new(slug, req.meta, req.created_from_tx, transaction))
+    Ok(CheckoutInput::new(
+        slug,
+        req.meta,
+        req.created_from_tx,
+        transaction,
+    ))
 }
 
 fn entity_req_to_domain(req: EntityReq) -> Result<Entity, String> {
@@ -139,18 +141,34 @@ pub fn transaction_detail_to_res(detail: TransactionDetail) -> TransactionDetail
         context: tx_meta_to_res(detail.context),
         created: detail.created.into_iter().map(entity_to_res).collect(),
         updated: detail.updated.into_iter().map(entity_to_res).collect(),
-        deleted: detail.deleted.into_iter().map(|d| DeletedEntityRes {
-            slug: d.slug.to_string(),
-            meta: d.meta,
-            reasoning: d.reasoning,
-            context: tx_meta_to_res(d.context),
-        }).collect(),
-        touched: detail.touched.into_iter().map(|t| TouchedEntityRes {
-            slug: t.slug.to_string(),
-            reasoning: t.reasoning,
-        }).collect(),
-        created_managed: detail.created_managed.into_iter().map(managed_to_res).collect(),
-        updated_managed: detail.updated_managed.into_iter().map(managed_to_res).collect(),
+        deleted: detail
+            .deleted
+            .into_iter()
+            .map(|d| DeletedEntityRes {
+                slug: d.slug.to_string(),
+                meta: d.meta,
+                reasoning: d.reasoning,
+                context: tx_meta_to_res(d.context),
+            })
+            .collect(),
+        touched: detail
+            .touched
+            .into_iter()
+            .map(|t| TouchedEntityRes {
+                slug: t.slug.to_string(),
+                reasoning: t.reasoning,
+            })
+            .collect(),
+        created_managed: detail
+            .created_managed
+            .into_iter()
+            .map(managed_to_res)
+            .collect(),
+        updated_managed: detail
+            .updated_managed
+            .into_iter()
+            .map(managed_to_res)
+            .collect(),
     }
 }
 

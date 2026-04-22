@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::io::{DbItem, DbError};
 use crate::io::storage_value::StorageValue;
+use crate::io::{DbError, DbItem};
 use crate::store::versioned_key::versioned_key;
 
 const CF_ENTITY_MAIN: &str = "entity_main";
@@ -73,9 +73,9 @@ impl DbItem for EntityEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
-    use crate::io::TerraDb;
     use crate::io::slug::Slug;
+    use crate::io::TerraDb;
+    use uuid::Uuid;
 
     #[test]
     fn roundtrip() {

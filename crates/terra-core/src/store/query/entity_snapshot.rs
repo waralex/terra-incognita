@@ -3,10 +3,10 @@
 use uuid::Uuid;
 
 use crate::domain::entity::{Entity, PropertyValue};
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
-use crate::io::DbError;
+use crate::domain::tx_meta::{time_from_uuid, TxMeta};
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::query::properties;
@@ -19,8 +19,7 @@ pub fn entity_snapshot(
     slug: &Slug,
     at_tx: Option<Uuid>,
 ) -> Result<Option<Entity<TxMeta>>, DbError> {
-    let mut bound = EntityKey::bound()
-        .with_prefix(|k| k.entity = slug.clone());
+    let mut bound = EntityKey::bound().with_prefix(|k| k.entity = slug.clone());
     if let Some(tx) = at_tx {
         bound = bound.with_upper(|k| k.tx_id = tx);
     }

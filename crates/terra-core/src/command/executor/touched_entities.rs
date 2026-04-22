@@ -4,14 +4,14 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
+use crate::command::input::touched_entities::TouchedEntitiesQuery;
 use crate::command::Command;
 use crate::command::CommandState;
-use crate::command::input::touched_entities::TouchedEntitiesQuery;
 use crate::domain::entity::Entity;
 use crate::domain::tx_meta::TxMeta;
-use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::touched::{TouchedEntry, TouchedKey};
 use crate::store::query::entity_snapshot;
@@ -50,7 +50,14 @@ impl ListTouchedEntities {
         let mut result = Vec::new();
 
         // Current branch.
-        Self::scan_touched_on_branch(branch.storage(), branch.id(), at_tx, limit, &mut seen, &mut result)?;
+        Self::scan_touched_on_branch(
+            branch.storage(),
+            branch.id(),
+            at_tx,
+            limit,
+            &mut seen,
+            &mut result,
+        )?;
 
         // Ancestry.
         for ancestor in branch.ancestry() {
@@ -114,29 +121,32 @@ impl ListTouchedEntities {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use serde_json::{Map, Value};
     use indoc::indoc;
+    use serde_json::{Map, Value};
+    use std::sync::Arc;
 
     use super::*;
     use crate::command::executor::checkout::ExecuteCheckout;
     use crate::command::executor::transaction::ExecuteTransaction;
     use crate::command::input::checkout::CheckoutInput;
-    use crate::command::input::transaction::{TransactionInput, TouchItem};
+    use crate::command::input::transaction::{TouchItem, TransactionInput};
     use crate::config::{DataSchema, ProjectConfig};
     use crate::domain::entity::PropertyValue as PV;
     use crate::domain::validator::DomainValidator;
     use crate::store::storage::Storage;
 
     fn test_config() -> Arc<ProjectConfig> {
-        Arc::new(ProjectConfig::builder()
-            .data_dir("./data".into())
-            .schema_path("./schema.yaml".into())
-            .build())
+        Arc::new(
+            ProjectConfig::builder()
+                .data_dir("./data".into())
+                .schema_path("./schema.yaml".into())
+                .build(),
+        )
     }
 
     fn test_schema() -> Arc<DataSchema> {
-        Arc::new(DataSchema::from_yaml(indoc! {"
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
             transaction_meta:
               reasoning:
                 type: text
@@ -156,7 +166,9 @@ mod tests {
                 lifecycle:
                   initial: open
                   visible: [open]
-        "}).unwrap())
+        "})
+            .unwrap(),
+        )
     }
 
     fn meta(r: &str) -> Map<String, Value> {
@@ -175,7 +187,8 @@ mod tests {
     fn query(branch: &BranchContext, limit: usize) -> Vec<Entity<TxMeta>> {
         let cmd = ListTouchedEntities;
         let mut state = CommandState::new(branch.storage());
-        cmd.execute(branch, &mut state, TouchedEntitiesQuery::new(None, limit)).unwrap()
+        cmd.execute(branch, &mut state, TouchedEntitiesQuery::new(None, limit))
+            .unwrap()
     }
 
     #[test]
@@ -184,15 +197,19 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = storage.main_branch();
 
-        exec_tx(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
-                vec![
-                    PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                ],
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
                 meta("initial"),
-            )));
+            )),
+        );
 
         let entities = query(&branch, 10);
         assert_eq!(entities.len(), 1);
@@ -208,13 +225,15 @@ mod tests {
         let branch = storage.main_branch();
 
         for name in ["alice", "bob", "charlie"] {
-            exec_tx(&branch, TransactionInput::new(meta("create"))
-                .create_entity(Entity::new(
+            exec_tx(
+                &branch,
+                TransactionInput::new(meta("create")).create_entity(Entity::new(
                     name.parse().unwrap(),
                     Some(serde_json::json!("person")),
                     vec![],
                     Map::new(),
-                )));
+                )),
+            );
         }
 
         let entities = query(&branch, 2);
@@ -229,18 +248,25 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = storage.main_branch();
 
-        exec_tx(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "server".parse().unwrap(),
                 Some(serde_json::json!("A server")),
-                vec![
-                    PV { property: "status".parse().unwrap(), value: serde_json::json!("up"), context: () },
-                ],
+                vec![PV {
+                    property: "status".parse().unwrap(),
+                    value: serde_json::json!("up"),
+                    context: (),
+                }],
                 meta("initial"),
-            )));
+            )),
+        );
 
-        exec_tx(&branch, TransactionInput::new(meta("observe"))
-            .touch(TouchItem::new("server".parse().unwrap(), "checked health")));
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("observe"))
+                .touch(TouchItem::new("server".parse().unwrap(), "checked health")),
+        );
 
         let entities = query(&branch, 10);
         assert_eq!(entities.len(), 1);
@@ -254,25 +280,35 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let main = storage.main_branch();
 
-        exec_tx(&main, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec_tx(
+            &main,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
-                vec![
-                    PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                ],
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
                 meta("initial"),
-            )));
+            )),
+        );
 
         let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
         let mut cs = CommandState::new(&storage);
-        checkout_cmd.execute(&main, &mut cs, CheckoutInput::new(
-            "child".parse().unwrap(),
-            meta("explore"),
-            None,
-            TransactionInput::new(meta("touch alice on child"))
-                .touch(TouchItem::new("alice".parse().unwrap(), "reviewing")),
-        )).unwrap();
+        checkout_cmd
+            .execute(
+                &main,
+                &mut cs,
+                CheckoutInput::new(
+                    "child".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("touch alice on child"))
+                        .touch(TouchItem::new("alice".parse().unwrap(), "reviewing")),
+                ),
+            )
+            .unwrap();
         cs.commit().unwrap();
 
         let child = storage.branch("child".parse().unwrap()).unwrap();
@@ -288,16 +324,26 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = storage.main_branch();
 
-        exec_tx(&branch, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
-                    PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                    PV { property: "city".parse().unwrap(), value: serde_json::json!("London"), context: () },
+                    PV {
+                        property: "age".parse().unwrap(),
+                        value: serde_json::json!(25),
+                        context: (),
+                    },
+                    PV {
+                        property: "city".parse().unwrap(),
+                        value: serde_json::json!("London"),
+                        context: (),
+                    },
                 ],
                 meta("census data"),
-            )));
+            )),
+        );
 
         let entities = query(&branch, 10);
         assert_eq!(entities[0].properties.len(), 2);
@@ -313,26 +359,36 @@ mod tests {
         let main = storage.main_branch();
 
         // Create entity on main.
-        exec_tx(&main, TransactionInput::new(meta("create"))
-            .create_entity(Entity::new(
+        exec_tx(
+            &main,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
-                vec![
-                    PV { property: "age".parse().unwrap(), value: serde_json::json!(25), context: () },
-                ],
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
                 meta("initial"),
-            )));
+            )),
+        );
 
         // Checkout child, touch alice.
         let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
         let mut cs = CommandState::new(&storage);
-        checkout_cmd.execute(&main, &mut cs, CheckoutInput::new(
-            "child".parse().unwrap(),
-            meta("explore"),
-            None,
-            TransactionInput::new(meta("touch alice"))
-                .touch(TouchItem::new("alice".parse().unwrap(), "reviewing")),
-        )).unwrap();
+        checkout_cmd
+            .execute(
+                &main,
+                &mut cs,
+                CheckoutInput::new(
+                    "child".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("touch alice"))
+                        .touch(TouchItem::new("alice".parse().unwrap(), "reviewing")),
+                ),
+            )
+            .unwrap();
         cs.commit().unwrap();
 
         let child = storage.branch("child".parse().unwrap()).unwrap();
@@ -352,18 +408,23 @@ mod tests {
 
         let checkout_cmd = ExecuteCheckout::new(DomainValidator::new(test_schema()));
         let mut cs = CommandState::new(&storage);
-        checkout_cmd.execute(&main, &mut cs, CheckoutInput::new(
-            "child".parse().unwrap(),
-            meta("explore"),
-            None,
-            TransactionInput::new(meta("create on child"))
-                .create_entity(Entity::new(
-                    "bob".parse().unwrap(),
-                    Some(serde_json::json!("A person")),
-                    vec![],
-                    serde_json::Map::new(),
-                )),
-        )).unwrap();
+        checkout_cmd
+            .execute(
+                &main,
+                &mut cs,
+                CheckoutInput::new(
+                    "child".parse().unwrap(),
+                    meta("explore"),
+                    None,
+                    TransactionInput::new(meta("create on child")).create_entity(Entity::new(
+                        "bob".parse().unwrap(),
+                        Some(serde_json::json!("A person")),
+                        vec![],
+                        serde_json::Map::new(),
+                    )),
+                ),
+            )
+            .unwrap();
         cs.commit().unwrap();
 
         let child = storage.branch("child".parse().unwrap()).unwrap();

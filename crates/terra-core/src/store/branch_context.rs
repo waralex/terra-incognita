@@ -17,7 +17,7 @@ use crate::store::versioned_key::VersionedKey;
 #[cfg(test)]
 use crate::domain::transaction::Transaction;
 #[cfg(test)]
-use crate::domain::tx_meta::{TxMeta, time_from_uuid};
+use crate::domain::tx_meta::{time_from_uuid, TxMeta};
 #[cfg(test)]
 use crate::store::entry::transaction::TransactionValue;
 
@@ -169,7 +169,8 @@ impl BranchContext {
         let max_depth = self.storage.config().max_branch_depth;
         if self.ancestry.len() + 1 > max_depth {
             return Err(DbError::Storage(format!(
-                "branch depth exceeds maximum of {}", max_depth
+                "branch depth exceeds maximum of {}",
+                max_depth
             )));
         }
         let mut ancestry = vec![AncestryEntry {
@@ -186,8 +187,7 @@ impl BranchContext {
 
     /// Return the tx_id of the latest transaction on this branch (not walking ancestry).
     pub fn head_tx(&self) -> Result<Option<Uuid>, DbError> {
-        let bound = TransactionKey::bound()
-            .with_prefix(|k| k.branch = self.branch.clone());
+        let bound = TransactionKey::bound().with_prefix(|k| k.branch = self.branch.clone());
         let entry = self.storage.get_latest::<TransactionEntry>(&bound)?;
         Ok(entry.map(|e| e.key.tx_id))
     }

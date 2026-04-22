@@ -8,9 +8,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::io::{DbItem, DbError};
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::io::{DbError, DbItem};
 
 const CF_TOUCHED: &str = "touched";
 
@@ -69,9 +69,9 @@ impl DbItem for TouchedEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::io::slug::Slug;
     use crate::io::TerraDb;
+    use uuid::Uuid;
 
     #[test]
     fn roundtrip() {
@@ -113,22 +113,29 @@ mod tests {
         let tx_id = Uuid::now_v7();
 
         let mut batch = db.batch();
-        for (slug, reason) in [("alice", "subject"), ("bob", "witness"), ("server", "infrastructure")] {
-            batch.put(&TouchedEntry {
-                key: TouchedKey {
-                    branch: branch.clone(),
-                    tx_id,
-                    entity: slug.parse().unwrap(),
-                },
-                value: TouchedValue { reasoning: reason.into() },
-            }).unwrap();
+        for (slug, reason) in [
+            ("alice", "subject"),
+            ("bob", "witness"),
+            ("server", "infrastructure"),
+        ] {
+            batch
+                .put(&TouchedEntry {
+                    key: TouchedKey {
+                        branch: branch.clone(),
+                        tx_id,
+                        entity: slug.parse().unwrap(),
+                    },
+                    value: TouchedValue {
+                        reasoning: reason.into(),
+                    },
+                })
+                .unwrap();
         }
         batch.commit().unwrap();
 
         // Reverse scan by branch prefix returns all three
         use crate::io::storage_key::StorageKey;
-        let bound = TouchedKey::bound()
-            .with_prefix(|k| k.branch = branch.clone());
+        let bound = TouchedKey::bound().with_prefix(|k| k.branch = branch.clone());
         let mut iter = db.scan_rev::<TouchedEntry>(&bound).unwrap();
         let mut count = 0;
         while let Some(Ok(_)) = iter.next() {

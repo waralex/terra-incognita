@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::embed::cosine_similarity;
-use crate::io::DbError;
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
+use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
 use crate::store::entry::embedding::{EmbeddingEntry, EmbeddingKey};
 
@@ -22,7 +22,13 @@ pub fn similar_entities(
     min_similarity: f32,
     at_tx: Option<Uuid>,
 ) -> Result<Vec<SimilarityMatch>, DbError> {
-    similar_entities_multi(branch, &[query_embedding.to_vec()], limit, min_similarity, at_tx)
+    similar_entities_multi(
+        branch,
+        &[query_embedding.to_vec()],
+        limit,
+        min_similarity,
+        at_tx,
+    )
 }
 
 /// Result of a multi-vector similarity search: entity slug, best score, and
@@ -66,14 +72,22 @@ pub fn similar_entities_multi(
                 .map(|(i, q)| (i, cosine_similarity(q, &emb)))
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))?;
             if best_sim >= min_similarity {
-                Some(SimilarityMatch { slug, similarity: best_sim, matched_query: best_idx })
+                Some(SimilarityMatch {
+                    slug,
+                    similarity: best_sim,
+                    matched_query: best_idx,
+                })
             } else {
                 None
             }
         })
         .collect();
 
-    scored.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| {
+        b.similarity
+            .partial_cmp(&a.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     scored.truncate(limit);
     Ok(scored)
 }
@@ -85,10 +99,9 @@ fn collect_embeddings(
     at_tx: Option<Uuid>,
     result: &mut HashMap<Slug, Vec<f32>>,
 ) -> Result<(), DbError> {
-    let entity_bound = EmbeddingKey::bound()
-        .with_prefix(|k| {
-            k.branch = on_branch.clone();
-        });
+    let entity_bound = EmbeddingKey::bound().with_prefix(|k| {
+        k.branch = on_branch.clone();
+    });
 
     let mut iter = branch.storage().scan::<EmbeddingEntry>(&entity_bound)?;
 
@@ -102,11 +115,10 @@ fn collect_embeddings(
         let entity = entry.key.entity.clone();
 
         if !result.contains_key(&entity) {
-            let mut bound = EmbeddingKey::bound()
-                .with_prefix(|k| {
-                    k.branch = on_branch.clone();
-                    k.entity = entity.clone();
-                });
+            let mut bound = EmbeddingKey::bound().with_prefix(|k| {
+                k.branch = on_branch.clone();
+                k.entity = entity.clone();
+            });
             if let Some(tx) = at_tx {
                 bound = bound.with_upper(|k| k.tx_id = tx);
             }
@@ -118,12 +130,11 @@ fn collect_embeddings(
             }
         }
 
-        let skip = EmbeddingKey::bound()
-            .with_prefix(|k| {
-                k.branch = on_branch.clone();
-                k.entity = entity.clone();
-                k.tx_id = Uuid::max();
-            });
+        let skip = EmbeddingKey::bound().with_prefix(|k| {
+            k.branch = on_branch.clone();
+            k.entity = entity.clone();
+            k.tx_id = Uuid::max();
+        });
         iter.seek(&skip);
     }
 

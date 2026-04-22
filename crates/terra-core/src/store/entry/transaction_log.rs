@@ -6,10 +6,10 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::io::{DbItem, DbError};
 use crate::io::slug::Slug;
 use crate::io::storage_key::storage_key;
 use crate::io::storage_value::StorageValue;
+use crate::io::{DbError, DbItem};
 
 const CF_TRANSACTION_LOG: &str = "transaction_log";
 

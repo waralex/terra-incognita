@@ -76,9 +76,11 @@ both assume the graph should converge toward one truth. Graphiti
 auto-invalidates contradicting facts to keep it consistent. Datomic's
 bi-temporal model still assumes a single authoritative source.
 
-terra keeps **all** assertions — including contradicting ones — and
-hands back the full distribution. Conflict resolution is explicitly the
-caller's problem. Uncertainty is data, not a bug to smooth over.
+terra keeps **all** assertions — including contradicting ones. The
+default snapshot read returns latest-wins, and `entity.history`
+replays the full timeline of claims with their sources. Conflict
+resolution is the caller's problem, and the per-assertion reasoning
+lets you reason about *sources* rather than just recency.
 
 ## What's stored
 

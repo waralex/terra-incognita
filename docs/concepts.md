@@ -351,3 +351,90 @@ Results are returned most-recently-touched first. `climbing-project`,
 so they come back at the top. Entities touched only in earlier
 transactions would appear below, with older tx_ids on their latest
 touch.
+
+## Contradicting sources
+
+Two sources asserting different values for the same property — where
+timestamps alone do not tell you which one is right — is not a
+failure mode in terra. It is the point.
+
+Scenario: in April 2026 the agent scrapes Alice's LinkedIn profile
+and learns she lives in Berlin. Two days later, in a chat message,
+Alice casually says she is in Amsterdam for the month. Both inputs
+are recent; neither source is authoritative. The agent commits them
+as they come in, each with its own reasoning:
+
+```yaml
+# tx 1 — nightly LinkedIn scrape
+meta: { reasoning: "nightly LinkedIn profile scrape" }
+update:
+  - slug: alice
+    properties: [{ property: city, value: "Berlin" }]
+    meta: { reasoning: "Alice's LinkedIn lists Berlin as current location" }
+
+# tx 2 — chat turn two days later
+meta: { reasoning: "chat turn 2026-04-22" }
+update:
+  - slug: alice
+    properties: [{ property: city, value: "Amsterdam" }]
+    meta: { reasoning: "Alice mentioned she's 'in Amsterdam for the month' today" }
+```
+
+No auto-invalidation. Both assertions live in the store with their
+own `tx_id`s and reasoning.
+
+### Snapshot: latest wins
+
+A snapshot read (`entities.touched`, `entities.similar`) returns one
+value per property — the latest committed. Alice's `city` comes back
+as `Amsterdam`, attributed to the chat transaction:
+
+```yaml
+properties:
+  - property: city
+    value: "Amsterdam"
+    context:
+      tx_id: 019588cc-0000-7000-0000-000000000002
+      branch: main
+      time: 2026-04-22T12:00:00Z
+      reasoning: "Alice mentioned she's 'in Amsterdam for the month' today"
+```
+
+A single clean answer for whoever is reading right now — but note
+that "latest" here is an artifact of commit order, not a semantic
+judgment. Had the scrape landed after the chat message, Berlin would
+have been returned instead. The snapshot does not weigh sources.
+
+### History: both claims, with provenance
+
+`entity.history` with `property: city` returns the full timeline —
+each entry carries an entity snapshot as of that transaction, the
+properties that changed in it, and the transaction's own meta:
+
+```yaml
+- properties:
+    - property: city
+      value: "Amsterdam"
+      context:
+        tx_id: 019588cc-0000-7000-0000-000000000002
+        reasoning: "Alice mentioned she's 'in Amsterdam for the month' today"
+  changed_properties: [city]
+  transaction_meta: { reasoning: "chat turn 2026-04-22" }
+
+- properties:
+    - property: city
+      value: "Berlin"
+      context:
+        tx_id: 01953568-0000-7000-0000-000000000001
+        reasoning: "Alice's LinkedIn lists Berlin as current location"
+  changed_properties: [city]
+  transaction_meta: { reasoning: "nightly LinkedIn profile scrape" }
+```
+
+Both values, both sources, each with two layers of reasoning — the
+per-assertion one ("why this specific value was written") and the
+per-transaction one ("why this batch of work was committed"). A
+caller deciding which to trust can reason about the *sources*
+(LinkedIn profile vs. direct chat message) rather than just about
+recency — which is precisely the information terra is designed to
+preserve. The store does not decide. It keeps the inputs honest.

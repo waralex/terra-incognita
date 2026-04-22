@@ -105,6 +105,8 @@ transaction can be reconstructed.
 - [HTTP API](docs/api.md) — command reference for `POST /query`.
 - [Configuration](docs/configuration.md) — `terra-server.yaml`,
   `project.yaml`, `schema.yaml` reference.
+- [Embedded usage](docs/embedded.md) — using `terra-core` as a Rust
+  library, without the HTTP server.
 
 ## Invariants
 

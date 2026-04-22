@@ -6,9 +6,7 @@ each tied to a transaction and carrying reasoning. Not a database of facts.
 Two sources can contradict each other and both remain in the system.
 Conflict resolution is the caller's responsibility, not the storage's.
 
-<!-- After pushing to GitHub, add CI badge here:
-![CI](https://github.com/<user>/<repo>/actions/workflows/ci.yml/badge.svg)
--->
+![CI](https://github.com/waralex/terra-incognita/actions/workflows/ci.yml/badge.svg)
 
 ## Status
 

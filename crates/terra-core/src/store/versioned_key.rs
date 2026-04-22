@@ -54,6 +54,10 @@ macro_rules! versioned_key {
                 pub tx_id: uuid::Uuid,
             }
 
+            // Convenience `new()` is a test-only helper; no production code
+            // constructs a `{Name}Prefix` through it.
+            #[cfg(test)]
+            #[allow(dead_code)]
             impl [< $name Prefix >] {
                 /// Create a prefix with `tx_id = Uuid::max()` (unbounded reverse scan).
                 pub fn new(branch: $crate::io::slug::Slug, $( $field: versioned_key!(@rust_type $ty), )*) -> Self {

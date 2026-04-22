@@ -79,6 +79,12 @@ impl Slug {
             SlugInner::Min | SlugInner::Max => 0,
         }
     }
+
+    /// True for the `Min` / `Max` sentinels and for an empty string value.
+    /// A normally-constructed `Slug` is never empty (parser rejects empty input).
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl FromStr for Slug {

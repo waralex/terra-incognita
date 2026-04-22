@@ -22,5 +22,5 @@ pub struct TxMeta {
 pub fn time_from_uuid(uuid: Uuid) -> Option<DateTime<Utc>> {
     let ts = uuid.get_timestamp()?;
     let (secs, nanos) = ts.to_unix();
-    DateTime::from_timestamp(secs as i64, nanos as u32)
+    DateTime::from_timestamp(secs as i64, nanos)
 }

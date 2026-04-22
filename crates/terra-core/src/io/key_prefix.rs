@@ -1,4 +1,4 @@
-//! Trait and macro for scan prefix keys.
+//! Trait for scan prefix keys.
 //!
 //! A prefix key is an address for range scans — it encodes only the fixed
 //! part (hashes for Slug fields, raw bytes for Uuid/i64/u8). No suffix,
@@ -26,96 +26,17 @@ pub trait KeyPrefix {
     fn encode_lower_bound(&self) -> Vec<u8> {
         let mut bytes = self.encode();
         let pad = Self::Key::SIZE.saturating_sub(bytes.len());
-        bytes.extend(std::iter::repeat(0x00u8).take(pad));
+        bytes.extend(std::iter::repeat_n(0x00u8, pad));
         bytes.push(crate::io::storage_key::SUFFIX_SEPARATOR);
         bytes
     }
 
     /// Encode the upper bound of the scan range.
     ///
-    /// Default: pads `encode()` with `0xFF` up to `Key::SIZE`, then appends upper sentinel.
-    fn encode_upper_bound(&self) -> Vec<u8> {
-        let mut bytes = self.encode();
-        let pad = Self::Key::SIZE.saturating_sub(bytes.len());
-        bytes.extend(std::iter::repeat(0xFFu8).take(pad));
-        bytes.push(crate::io::storage_key::SUFFIX_SEPARATOR_UPPER);
-        bytes
-    }
+    /// No default — upper-bound encoding depends on the concrete prefix
+    /// layout (e.g. whether there is a versioned `tx_id` tail).
+    fn encode_upper_bound(&self) -> Vec<u8>;
 }
-
-/// Declares a prefix key struct with fixed-size encode only.
-///
-/// Supported field types: `Uuid` (16 bytes), `Slug` (16 bytes hash),
-/// `i64` (8 bytes big-endian), `u8` (1 byte).
-///
-/// ```ignore
-/// prefix_key! {
-///     pub struct BranchPrefix for EntityKey {
-///         branch: Slug,
-///     }
-/// }
-/// // Encodes as 16 bytes: hash(branch)
-/// ```
-macro_rules! prefix_key {
-    (
-        $vis:vis struct $name:ident for $key:ty {
-            $( $field:ident : $ty:ident ),+ $(,)?
-        }
-    ) => {
-        #[derive(Debug, Clone, PartialEq, Eq)]
-        $vis struct $name {
-            $( pub $field: prefix_key!(@rust_type $ty) ),+
-        }
-
-        impl $name {
-            pub fn new($( $field: prefix_key!(@rust_type $ty) ),+) -> Self {
-                Self { $( $field ),+ }
-            }
-        }
-
-        impl $crate::io::key_prefix::KeyPrefix for $name {
-            type Key = $key;
-            const SIZE: usize = 0 $( + prefix_key!(@field_size $ty) )+;
-
-            fn encode(&self) -> Vec<u8> {
-                let mut buf = vec![0u8; Self::SIZE];
-                let mut _off: usize = 0;
-                $( prefix_key!(@encode buf, _off, self.$field, $ty); )+
-                buf
-            }
-        }
-    };
-
-    (@rust_type Uuid) => { uuid::Uuid };
-    (@rust_type i64) => { i64 };
-    (@rust_type u8) => { u8 };
-    (@rust_type Slug) => { $crate::io::slug::Slug };
-
-    (@field_size Uuid) => { 16 };
-    (@field_size i64) => { 8 };
-    (@field_size u8) => { 1 };
-    (@field_size Slug) => { 16 };
-
-    (@encode $buf:ident, $off:ident, $val:expr, Uuid) => {
-        $buf[$off..$off + 16].copy_from_slice($val.as_bytes());
-        $off += 16;
-    };
-    (@encode $buf:ident, $off:ident, $val:expr, i64) => {
-        $buf[$off..$off + 8].copy_from_slice(&$val.to_be_bytes());
-        $off += 8;
-    };
-    (@encode $buf:ident, $off:ident, $val:expr, u8) => {
-        $buf[$off] = $val;
-        $off += 1;
-    };
-    (@encode $buf:ident, $off:ident, $val:expr, Slug) => {
-        let _hash = $val.hash();
-        $buf[$off..$off + 16].copy_from_slice(_hash.as_bytes());
-        $off += 16;
-    };
-}
-
-pub(crate) use prefix_key;
 
 /// Generic scan bounds: a (lower, upper) key pair that implements `KeyPrefix`.
 ///
@@ -125,6 +46,12 @@ pub(crate) use prefix_key;
 pub struct KeyBound<K: StorageKey> {
     pub lower: K,
     pub upper: K,
+}
+
+impl<K: StorageKey> Default for KeyBound<K> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<K: StorageKey> KeyBound<K> {
@@ -204,79 +131,30 @@ mod tests {
         }
     }
 
-    prefix_key! {
-        pub struct TestBranchPrefix for TestKey48 {
-            branch: Slug,
+    /// Minimal prefix used to exercise the default `encode_lower_bound`.
+    /// `encode_upper_bound` is abstract in the trait and never exercised here.
+    struct TestBranchPrefix(Slug);
+
+    impl KeyPrefix for TestBranchPrefix {
+        type Key = TestKey48;
+        const SIZE: usize = 16;
+
+        fn encode(&self) -> Vec<u8> {
+            self.0.hash().as_bytes().to_vec()
+        }
+
+        fn encode_upper_bound(&self) -> Vec<u8> {
+            unreachable!("upper bound not tested for this prefix")
         }
     }
 
-    prefix_key! {
-        pub struct TestBranchEntityPrefix for TestKey48 {
-            branch: Slug,
-            entity: Slug,
-        }
-    }
-
     #[test]
-    fn size() {
-        assert_eq!(TestBranchPrefix::SIZE, 16);
-        assert_eq!(TestBranchEntityPrefix::SIZE, 32);
-    }
-
-    #[test]
-    fn encode_slug_is_hash_only() {
-        let prefix = TestBranchPrefix {
-            branch: "main".parse().unwrap(),
-        };
-        let bytes = prefix.encode();
-        assert_eq!(bytes.len(), 16);
-    }
-
-    #[test]
-    fn encode_deterministic() {
-        let slug: Slug = "main".parse().unwrap();
-        let p1 = TestBranchPrefix {
-            branch: slug.clone(),
-        };
-        let p2 = TestBranchPrefix { branch: slug };
-        assert_eq!(p1.encode(), p2.encode());
-    }
-
-    #[test]
-    fn lower_bound_pads_with_zeros() {
-        let prefix = TestBranchPrefix {
-            branch: "main".parse().unwrap(),
-        };
+    fn default_lower_bound_pads_with_zeros() {
+        let prefix = TestBranchPrefix("main".parse().unwrap());
         let lower = prefix.encode_lower_bound();
         assert_eq!(lower.len(), 49); // 48 + separator
         assert_eq!(&lower[..16], &prefix.encode()[..]);
         assert!(lower[16..].iter().all(|&b| b == 0x00));
-    }
-
-    #[test]
-    fn upper_bound_pads_to_key_size() {
-        let prefix = TestBranchPrefix {
-            branch: "main".parse().unwrap(),
-        };
-        let upper = prefix.encode_upper_bound();
-        assert_eq!(upper.len(), 49); // 48 + separator_upper
-        assert_eq!(&upper[..16], &prefix.encode()[..]);
-        assert!(upper[16..48].iter().all(|&b| b == 0xFF));
-        assert_eq!(upper[48], 0x01); // SUFFIX_SEPARATOR_UPPER
-    }
-
-    #[test]
-    fn full_prefix_upper_bound_equals_encode() {
-        let prefix = TestBranchEntityPrefix {
-            branch: "main".parse().unwrap(),
-            entity: "test".parse().unwrap(),
-        };
-        // SIZE(32) < Key::SIZE(48), so there's still padding
-        let upper = prefix.encode_upper_bound();
-        assert_eq!(upper.len(), 49); // 48 + separator_upper
-        assert_eq!(&upper[..32], &prefix.encode()[..]);
-        assert!(upper[32..48].iter().all(|&b| b == 0xFF));
-        assert_eq!(upper[48], 0x01); // SUFFIX_SEPARATOR_UPPER
     }
 
     // --- KeyBound tests ---

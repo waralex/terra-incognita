@@ -1,419 +1,334 @@
 # terra_incognita
 
-Append-only epistemic store with first-class uncertainty, provenance, and temporal semantics.
+Append-only epistemic store with first-class uncertainty, provenance, and
+branching. A database of claims about the world — every assertion knows
+what it is, who said it, when, and why.
 
 ## Core Philosophy
 
-A database where uncertainty is not a problem to be eliminated but a fact of reality to be
-modeled honestly. Every assertion knows what it is, where it came from, how confident we are,
-and what contradicts it.
-
-This is not a probabilistic inference engine. The system does not resolve conflicts
-automatically. It stores epistemic state and delivers it honestly — to a human, to an agent,
-to an analyst. Resolution is the caller's responsibility.
+terra stores epistemic state and delivers it honestly. It does not
+resolve conflicts automatically — multiple assertions on the same
+property coexist and are returned as a distribution. Resolution is the
+caller's responsibility.
 
 ## Fundamental Invariants
 
-These do not change. Everything else is negotiable.
-
-**Append-only.** Nothing is updated in place. Nothing is deleted except under legal force
-majeure (GDPR etc.) — and even then it is logged as a painful explicit operation, not a
-routine one.
-
-**Atomic assertions.** One assertion = one property of one entity. Each can be independently
-confirmed, contradicted, or updated.
-
-**Provenance everywhere.** Every assertion carries a source reference. No fact without origin.
-No origin without timestamp.
-
-**Open world.** Absence of an assertion does not mean the fact is false. It means we
-don't know. This is different from NULL. This is different from false.
-
-**Deletion is a new fact.** "X no longer exists as of t2" does not invalidate "X existed
-at t1". Both are true. Both stay.
-
-**Schema is explicit.** Entity types and attributes are registered explicitly before use.
-Automatic schema creation on insert is forbidden. It leads to chaos.
+- **Append-only.** Nothing is updated in place. Nothing is deleted
+  except under legal force majeure (GDPR etc.).
+- **Atomic assertions.** One assertion = one property of one entity.
+- **Provenance everywhere.** Every assertion is tied to a transaction
+  and carries reasoning.
+- **Open world.** Absence of an assertion ≠ false. It means we don't
+  know.
+- **Deletion is a new fact.** "X no longer exists after tx2" does not
+  invalidate "X existed at tx1". Both are true. Both stay.
+- **Explicit contracts for metadata.** Transaction metadata fields and
+  managed types are declared in `schema.yaml`. Entity properties are
+  open — consistency there is the caller's problem.
 
 ## Data Model
 
-Three concerns, kept separate:
+### Entities
 
-**Schema registry** — what entity types exist, what properties are allowed for each type.
-This is the contract. Strict. Explicit. Branch-local — each branch can extend the schema
-independently, inheriting from its parent at the time of branching. (v0.1 had value types
-Set/Range/Struct per property — removed in v0.2, all values are JSON.)
+Addressed by a slug (a human-readable identifier, unique within the
+branch's ancestry). Carries a description and a set of property values.
 
-**Sources** — the raw origin of knowledge. Immutable after insert. A source said what it
-said. If extraction was wrong, re-extract from the same source and replace the assertions.
-Never modify the source itself.
+No runtime entity types, no runtime property registry. Property slugs
+are free-form at write time.
 
-**Assertions** — atomic claims about entities, each tied to a transaction, carrying
-reasoning and a timestamp. The working layer. Queries go here.
+### Assertions
 
-**Relations** — connections between entities, stored as assertions. Hierarchies are dynamic
-and emerge from relations — there is no separate hierarchy structure. An entity can belong
-to multiple hierarchies simultaneously.
+An atomic claim: (entity, property) = value, with reasoning and
+provenance (tx_id + branch + change_id). Stored in the `assertions`
+CF. Multiple assertions for the same property coexist — terra does
+not auto-resolve.
 
-## Assertion Kinds (v0.1 — removed in v0.2)
+### Entity changes
 
-v0.1 had fact/hypothesis distinction. Removed in v0.2 — see "v0.2 Rewrite" section.
+A group of assertions on one entity made by a single transaction.
+Carries its own meta (validated per `entity_change_meta`), typically
+including `reasoning`. Referenced from each assertion by `change_id`.
 
-v0.2 has only assertions. Uncertainty is expressed in assertion values and reasoning,
-not in storage-level classification. One assertion per property per entity per transaction.
+### Transactions
 
-## Transactions
+The single mutation primitive. Carries its own dynamic meta (validated
+per `transaction_meta`) — transaction-level reasoning lives here.
 
-Transaction is the single mutation primitive. All writes — schema creation, property
-attachment, entity introduction, assertions, visibility changes — happen inside a
-transaction and commit atomically.
+`tx_id` is a UUID v7: globally unique **and** chronologically ordered.
+The timestamp is extracted from the tx_id on read; it is not stored
+separately.
 
-**tx_id** (UUID v7) replaces timestamps in all storage keys. UUID v7 is time-ordered
-(same byte sort as i64 timestamps) but carries identity. Enables "show me state at tx X",
-future rebase, cherry-pick.
+**Processing order** inside a transaction (enforced by the executor):
 
-**Processing order** within a transaction:
-1. `properties` — create properties
-2. `entity_types` — create types (may reference properties from step 1)
-3. `attach` — attach properties to types
-4. `hide` / `unhide` — visibility changes
-5. `introduce` — create entities with assertions
-6. `asserts` — assertions on existing/introduced entities
+1. Create entities
+2. Update entities (new assertions on existing entities)
+3. Create managed items
+4. Update managed items
+5. Delete entities (soft-delete with reasoning)
+6. Explicit touches (override auto-touches from create/update)
 
-## Branches
+### Touching
 
-Branches are the unit of isolated exploration. A branch inherits schema, entities, and
-assertions from its parent at the moment of creation (`branch_point_tx`), then evolves
-independently. No physical copying — reads walk the ancestry chain with temporal filtering.
+Explicit "this entity is relevant to this transaction" signal, with a
+reasoning string. Used by agents to mark context without changing
+anything. Touches written in the explicit bucket override auto-touches
+produced by create/update on the same slug.
 
-**Main branch** (`Uuid::nil()`) is implicit, always exists, has no record stored.
+### Deletion
 
-**Ancestry chain**: `Vec<(Uuid, Uuid)>` = `[(branch_id, branch_point_tx)]` — precomputed
-at creation. Max depth: 8. Temporal filtering uses UUID v7 byte comparison:
-`tx_id <= branch_point_tx`.
+Soft-delete: the entity is marked as deleted with reasoning, but prior
+assertions stay queryable. An entity previously deleted may be
+re-created with the same slug later.
 
-**Schema inheritance**: A child branch sees all schema items created in ancestors before
-its `branch_point_tx`. Writes always go to the current branch. Slug uniqueness is checked
-across the entire ancestry chain.
+### Managed types
 
-**BranchRecord**: `{id, slug, reasoning, created_from_tx, ancestry}`. Parent is derived
-from `created_from_tx` → transaction → `branch_id`. No separate `parent_id` field.
+Typed versioned records with optional lifecycle (e.g. `rule` with
+states `draft` / `active` / `rejected` / `promoted`). Declared in
+`schema.yaml` under `managed_types`.
 
-## Visibility
+All managed types share a single CF; the type name is part of the key.
+Declaring a new managed type in the schema makes it immediately
+writable — no code changes, no migration.
 
-Visibility controls which items are in scope on a branch. Items can be hidden or unhidden
-per branch via transactions.
+`managed.list` filters items by their type's `visible` lifecycle
+states.
 
-**Item kinds**: Entity, EntityType, Property.
+### Branches
 
-**Storage**: `branch_id(16) | tx_id(16) | item_kind(1) | item_id(16)` = 49 bytes.
-Value: `1` = hidden, `0` = visible. Default (no record) = visible.
+Git-like isolated exploration. A child branch inherits everything its
+parent had at the fork point (identified by `created_from_tx`), then
+evolves independently. Branch creation is cheap: no data duplication —
+reads walk the ancestry chain.
 
-**Read filtering**: All read commands (`ListEntityTypes`, `GetEntityType`,
-`ListProperties`, `ListEntities`, `GetEntity`) filter out hidden items.
+- Main branch is implicit (slug `"main"`), has no stored record, and
+  its ancestry is empty.
+- A non-main branch's record stores `parent_branch_slug` +
+  `created_from_tx`. Ancestry is computed at context-load time, not
+  stored as a field.
+- Max ancestry depth bounded by project config (default 8).
+- Slug uniqueness is checked across the entire ancestry chain.
 
-**Write validation**: Transactions reject references to hidden items with distinct
-errors (`EntityHidden`, `EntityTypeHidden`, `PropertyHidden`) separate from not-found.
-Error messages include a hint: "exists but is hidden — use unhide to bring it into scope".
+## Meta vs reasoning (asymmetry to remember)
 
-## Query Model
+`meta` is a schema-validated bag of fields. `reasoning` is the
+conventional field inside meta. But not every operation has meta —
+touch and delete carry `reasoning` at the operation level instead.
 
-Queries return distributions, not facts. Multiple sources may assert different values for
-the same property. The database returns all of them with their confidence and provenance.
-The caller decides what to do with the distribution.
+**Where `reasoning` lives on write:**
 
-**Context-oriented queries** are the hard unsolved problem — how to retrieve what is
-relevant to current reasoning without pulling everything. Do not design the API around
-a solution that does not exist yet. Start with simple lookups. Let the hard problem
-emerge from real usage.
+| Operation | Field |
+|---|---|
+| Transaction | `transaction.meta.reasoning` — per `transaction_meta` |
+| Entity create/update | `entity.meta.reasoning` — per `entity_change_meta` |
+| Branch checkout | `branch.meta.reasoning` — per `branch_meta` |
+| Touch | `touch.reasoning` at op level (no meta) |
+| Delete | `delete.reasoning` at op level (no meta) |
 
-## First Client: Code Companion Memory
+**Where `reasoning` appears on read (`TxMeta.reasoning`):**
 
-A code companion that uses terra_incognita as its persistent memory layer.
+- Property's `context.reasoning` → **populated** with the assertion's
+  reasoning (= the entity-change reasoning captured at write time).
+- Entity / transaction / branch / managed `context.reasoning` →
+  **always None** (skipped from serialization).
 
-Why this first:
-- Immediate feedback loop — developer feels utility daily
-- Real data, real query patterns, no synthetic benchmarks
-- Multiple natural hierarchies — filesystem, modules, dependencies, call graph
-- Provenance matters — "why do you think that?" has a real answer
-- Confidence accumulates — agent gets smarter about the codebase over time
-- Token reduction — structured context beats stuffing raw conversation history
+Transaction-level reasoning is available through the transaction's
+`meta` block, not through any `context`.
 
-## What This Is Not
+**Entity `meta` on read also depends on the command:**
 
-**Not a vector database.** Vectors compress meaning and lose structure and provenance.
+- `transaction.get` → entity `meta` is the entity-change meta recorded
+  by that transaction (includes reasoning).
+- `entities.touched` / `entities.similar` → entity `meta` is always
+  empty. A snapshot reflects current state, which is the union of
+  many entity-change metas — there is no single one to return.
+  Per-property reasoning is still available through each property's
+  `context`.
 
-**Not a probabilistic inference engine.** Bayesian revision, Markov Logic Networks,
-AGM belief revision — academically interesting, not the goal. The goal is honest
-storage, not automatic resolution.
+## Transaction input shape
 
-**Not an event sourcing system.** Similar philosophy but different semantics. Events
-are things that happened in the system. Assertions are claims about the external world.
+```rust
+pub struct TransactionInput {
+    meta: Map<String, Value>,              // transaction_meta
+    create_entities: Vec<Entity>,
+    update_entities: Vec<Entity>,
+    create_managed: Vec<Managed>,
+    update_managed: Vec<Managed>,
+    delete_entities: Vec<DeleteItem>,      // { entity, reasoning }
+    touched: Vec<TouchItem>,               // { entity, reasoning }
+}
+```
 
-**Not Datomic.** Close in spirit but Datomic assumes one authoritative source of truth.
-terra_incognita assumes multiple competing sources of partial truth.
+`Entity` carries `slug`, optional `description`, `properties:
+Vec<PropertyValue>`, and `meta: Map<String, Value>` (per
+`entity_change_meta`).
 
-## Open Problems
+There is no schema mutation in transactions. Schema lives only in
+`schema.yaml`.
 
-**Context-oriented queries.** How to retrieve what is relevant to current reasoning
-without pulling everything. The right abstractions are unclear.
+## HTTP commands
 
-**Confidence aggregation.** Multiple sources assert the same property with different
-confidence values. How to combine them? Source reliability is itself an assertion.
-Circular but tractable.
+All go to `POST /query` with a `command` field + optional `branch`
+(default `"main"`) and command-specific body fields flattened at the
+top level. JSON or YAML selected by `Content-Type`.
 
-**Hierarchical query performance.** Recursive traversal of dynamic relation-based
-hierarchies at scale. Open problem — do not optimize prematurely.
+- Writes: `transaction`, `checkout`
+- Reads: `transactions.list`, `transaction.get`, `entities.touched`,
+  `entities.similar`, `branch.get`, `managed.list`
 
-## Ownership and Concurrency
+`transaction.get` is **cross-branch by design** (like `git show <sha>`):
+a `tx_id` from any branch can be fetched regardless of the envelope's
+`branch`.
 
-Assume multi-threaded and async context. Design all long-lived types accordingly.
+Error response: `{ error: <message>, kind: <stable kind> }`. Kinds:
+`parse_error`, `invalid_slug`, `validation_error`, `unknown_command`,
+`not_found`, `conflict`, `storage_error`, `serialize_error`.
 
-**No lifetimes on long-lived types.** Structs that persist beyond a single function
-call must not carry lifetime parameters. Use `Arc<T>` for shared ownership instead
-of `&'a T`. Lifetimes are acceptable only for short-lived borrows within a function
-scope (iterators, builders, closures).
+## Storage (RocksDB)
 
-**No references for long-term storage.** Storing `&'a T` in a struct couples it to
-the lender's lifetime and makes the type unusable across threads and async boundaries.
-Use `Arc<T>` (or `Arc<Mutex<T>>` / `Arc<RwLock<T>>` when interior mutability is needed).
+### Column families (10)
 
-## Code Style
+| CF | Key | Purpose |
+|---|---|---|
+| `transactions` | `branch(16) \| tx_id(16)` | Transaction meta |
+| `transaction_log` | `tx_id(16)` | Denormalized summary of what a tx touched (global) |
+| `entity_main` | `branch(16) \| entity(16) \| tx_id(16)` | Entity records (versioned) |
+| `entity_changes` | `change_id(16)` | Entity-change meta (global, append-only) |
+| `assertions` | `branch(16) \| entity(16) \| prop(16) \| tx_id(16)` | All assertions |
+| `branch_main` | `branch(16)` | Branch records (not versioned) |
+| `managed_main` | `branch(16) \| type_name(16) \| item(16) \| tx_id(16)` | All managed items (shared CF) |
+| `touched` | `branch(16) \| tx_id(16) \| entity(16)` | Touched entities per tx |
+| `visibility` | `branch(16) \| tx_id(16) \| item_kind(16) \| item_id(16)` | Hide/unhide state (internal, not exposed via public API yet) |
+| `embeddings` | branch-scoped | Entity embeddings (optional, ONNX) |
 
-Docstrings (`///`) on all public items (structs, enums, functions, methods, traits).
-This overrides any global instruction to skip docstrings.
+Slugs are hashed to 16-byte UUIDs in keys; there is no separate
+slug-index CF. The full slug is preserved in the value where needed.
 
-## Commit Messages
+### Key layout convention
 
-Short and informative — describe the intent, not the diff. Do not mention changes
-to CLAUDE.md, README, or other meta-files in commit messages.
+Versioned keys (entity, assertion, managed, ...) share the pattern
+`branch | ... middle ... | tx_id`. Branch first enables ancestry-scoped
+scans; `tx_id` last enables reverse-scan-to-latest with UUID v7
+byte-comparison.
 
-## Code Organization
+See `io/storage_key.rs` (`storage_key!` macro) and
+`store/versioned_key.rs` (`versioned_key!` macro).
 
-One entity — one file. Deep directory structure when needed. No god-files,
-no "utils.rs", no bags of loosely related things. `mod.rs` files contain only
-`mod` declarations and re-exports — no logic, no types, no functions.
-All `impl` blocks for a type live in the file where the type is defined.
-Do not spread `impl` across multiple files unless implementing a foreign trait.
-Use explicit `use` imports, not `super::` paths.
+## Project config
+
+Two YAML files on disk:
+
+- `terra-server.yaml` — `port`, `project_config_path`,
+  `embed_model_dir` (optional, requires `onnx` feature).
+- `project.yaml` — `data_dir`, `schema_path`.
+
+`schema.yaml` sections:
+
+```yaml
+transaction_meta:
+  reasoning: { type: text, required: true }
+
+entity_change_meta:
+  reasoning: { type: text, required: true }
+
+branch_meta:
+  reasoning: { type: text, required: true }
+
+managed_types:
+  rule:
+    fields:
+      content:   { type: text, required: true }
+      rationale: { type: text }
+    lifecycle:
+      initial: draft
+      states: [draft, active, rejected, promoted]
+      visible: [draft, active]
+```
+
+There are no top-level `entity_types` or `properties` sections. The
+entity model is open.
 
 ## Stack
 
-- Rust — core, API, validation layer
-- RocksDB — single storage engine for everything (schema, assertions, branches, entities)
-- serde + serde_json — serialization
-- axum + tokio — HTTP server (terra-server)
+- Rust (workspace, edition 2021)
+- RocksDB — single storage engine
+- axum + tokio — HTTP server (`terra-server`)
+- Optional ONNX Runtime — embedding-backed similarity
 
-## Crate Structure
+Single binary. Zero infrastructure. No Docker, no network dependencies.
 
-- **terra-core** — domain logic, storage, command execution
-- **terra-server** — HTTP server over terra-core (`POST /query`, YAML/JSON)
+## Crate structure
 
-## Deployment
+- `terra-core` — domain logic, storage, command execution. Library
+  entry: `Terra::open(path, config, schema, embedder)` and
+  `terra.execute(branch, input)`.
+- `terra-server` — axum-based HTTP server over terra-core. Single
+  endpoint `POST /query`.
+- `demo-terra-client` (TypeScript, not a workspace crate) — an
+  exploratory POC that wires an LLM to terra-server. Not a reference
+  integration.
 
-Single binary. Zero infrastructure. No Docker, no containers, no network services.
+## Code Style
 
-**When PostgreSQL** — when the server scenario arrives: multiple agents, shared memory,
-network access. Migration is cheap. That is v2. Not now.
+- `///` docstrings on all public items (structs, enums, functions,
+  methods, traits). This overrides any global instruction to skip
+  docstrings.
+- Minimal comments otherwise — only where logic isn't self-evident.
+- One entity per file. Deep directory structure when needed. No
+  god-files, no `utils.rs`, no bags of loosely related things.
+- `mod.rs` files contain only `mod` declarations and re-exports —
+  no logic, no types, no functions.
+- All `impl` blocks for a type live in the file where the type is
+  defined. Do not spread `impl` across files unless implementing a
+  foreign trait.
+- Explicit `use` imports, not `super::` paths.
 
-## API Commands
+## Ownership and Concurrency
 
-Commands are sent as YAML or JSON with a `command` field:
+Assume multi-threaded and async context.
 
-- **Writes** (single mutation primitive):
-  - `transaction` — atomic: schema ops + visibility + entity introduction + assertions
-  - `branch.create` — create branch with optional embedded transaction
-- **Reads**:
-  - `entity-type.list`, `entity-type.get` — schema types (visibility-filtered)
-  - `property.list` — schema properties (visibility-filtered)
-  - `entity.list`, `entity.get` — entities (visibility-filtered)
-  - `transaction.get` — full transaction detail (cross-branch by design, like `git show <sha>`)
-  - `branch.get`, `branch.list` — branches
-  - `log.list` — fact log entries
+- **No lifetimes on long-lived types.** Structs that persist beyond a
+  single function call must not carry lifetime parameters. Use
+  `Arc<T>` for shared ownership instead of `&'a T`. Lifetimes are
+  acceptable only for short-lived borrows within a function scope
+  (iterators, builders, closures).
+- **No references for long-term storage.** Storing `&'a T` in a struct
+  couples it to the lender's lifetime and makes the type unusable
+  across threads and async boundaries. Use `Arc<T>` (or
+  `Arc<Mutex<T>>` / `Arc<RwLock<T>>` when interior mutability is
+  needed).
 
-## Non-Goals for v1
+## Commit Messages
 
-- Distributed deployment
-- Replication
-- Automatic conflict resolution
-- Probabilistic query evaluation
-- Inference engine
+Short and informative — describe the intent, not the diff. Style from
+this repo's log: `<scope>: <lowercase description>`. Do not mention
+changes to `CLAUDE.md`, README, or other meta-files in commit messages.
+
+## Non-goals
+
+- General-purpose DBMS
+- Vector database (embeddings are a convenience, not the primary model)
+- Probabilistic inference / automatic conflict resolution
+- Event-sourcing framework (events describe what happened in the
+  system; assertions are claims about the outside world)
+- Datomic clone (Datomic assumes one authoritative source; terra
+  assumes multiple competing partial sources)
+- Distributed deployment, replication, clustering — single binary only
+
+## Open problems
+
+- **Context-oriented queries.** How to retrieve what is relevant to
+  current reasoning without pulling everything. Right abstractions
+  unclear.
+- **Confidence aggregation.** Multiple sources assert the same
+  property with different confidence. How to combine? Source
+  reliability is itself an assertion — circular but tractable.
+- **Hierarchical query performance.** Recursive traversal of
+  dynamic relation-based hierarchies at scale. Do not optimize
+  prematurely.
 
 ## Naming
 
-**terra_incognita** — named for what it stores: the unknown, the uncertain, the
-unresolved. On old maps, terra incognita marked places where knowledge ran out.
-This database makes that uncertainty first-class.
-
-## v0.2 Rewrite (terra-core)
-
-### Why
-
-v0.1 (terra-core) works but has hardcoded structures that prevent terra from being
-a general-purpose epistemic store. Anyone building an agent on top of terra must either
-accept our naming (reasoning, question, answer, tasks) or fork the codebase. The goal
-of v0.2 is to make terra configurable for different agent developers without forking.
-
-### What changes from v0.1
-
-**1. No more value types (Set, Range, Struct) — only JSON.**
-
-v0.1 has `ValueType` enum with Set, Range, Struct. Each gets separate column families
-(6 total: fact_set, fact_range, fact_struct, hyp_set, hyp_range, hyp_struct). In practice
-all three store JSON bytes with identical key formats. No type-specific queries, no
-indexing, no algebra. The only effect is complexity: PropertyValue enum, type matching
-in writer/reader, parse_property_value guessing type from JSON shape.
-
-v0.2: property values are `serde_json::Value`. One column family for assertions.
-Schema properties have a slug and a description, no value type. Validation of value
-shape is the caller's responsibility (or described in agent config, not in storage).
-
-**2. No more fact/hypothesis distinction — only assertions.**
-
-v0.1 separates facts and hypotheses into different column families with a special query
-model: "latest fact + all hypotheses after it". The deliberation cycle
-(hypotheses → fact → new hypotheses) is a complex concept that the LLM agent must
-understand and apply correctly. In practice, deciding "is this a fact or a hypothesis?"
-is itself an uncertain judgment — ironic for a system designed to model uncertainty.
-
-v0.2: only assertions. Each assertion is a claim with a value and reasoning. Uncertainty
-is expressed in the data itself (confidence fields, alternative values, hedging language
-in reasoning). The agent writes what it knows and explains its confidence in reasoning.
-One assertion per property per transaction (same constraint as v0.1 facts).
-
-This eliminates: 2 separate writers, fact/hypothesis CF split, AssertionKind enum,
-validate_no_conflicting_facts (becomes validate_no_conflicting_assertions),
-the "latest fact + hypotheses after it" query model, and a significant chunk of the
-system prompt explaining when to use facts vs hypotheses.
-
-**3. Transaction metadata is dynamic, not hardcoded.**
-
-v0.1 TransactionInput has fixed fields: reasoning (Value), question (Option<String>),
-answer (Option<String>), commands (Vec<Value>). These are serialized into the transaction
-record in RocksDB. An agent developer who wants "notes" instead of "reasoning" or
-wants to add "confidence" must change Rust code.
-
-v0.2: transaction metadata is `Map<String, Value>`. What fields exist, which are required,
-and their types — defined in a project config file (YAML). The core validates metadata
-against the config at write time. Default config ships with reasoning/question/answer
-for backward compatibility, but the agent developer can replace it entirely.
-
-**4. Tasks removed from core — replaced by managed types.**
-
-v0.1 has a dedicated task subsystem: TaskStore, TaskIo, TaskRecord, TaskStatus enum,
-2 column families (task_main, task_slug), visibility integration with ItemKind::Task,
-and 3 transaction operations (tasks, update_tasks, close_tasks). This is ~500 lines
-of code that duplicates entity storage patterns (versioned records, slug index,
-branch-aware ancestry walk) with a hardcoded schema (goal, reasoning, context, kind,
-notes, resolution, status: open/closed).
-
-v0.2: managed types defined in project config. A managed type has a name, fields
-(required/optional with types), and an optional lifecycle (states + transitions).
-Tasks become one possible managed type in a default config:
-
-```yaml
-managed_types:
-  task:
-    fields:
-      goal: { type: json, required: true }
-      notes: { type: json }
-      resolution: { type: json }
-    lifecycle:
-      states: [open, closed]
-      initial: open
-      transitions:
-        open: [closed]
-```
-
-Storage: single pair of column families (managed_main, managed_slug) shared by all
-managed types, with a type name hash prefix in the key:
-
-```
-managed_main: type_hash(16) | branch_id(16) | item_id(16) | tx_id(16) = 64 bytes
-managed_slug: type_hash(16) | branch_id(16) | slug_bytes
-```
-
-No dynamic CF creation. New managed type in config = immediately writable.
-
-**5. Simplified TransactionInput.**
-
-v0.1:
-```rust
-pub struct TransactionInput {
-    pub reasoning: serde_json::Value,
-    pub question: Option<String>,
-    pub answer: Option<String>,
-    pub commands: Vec<serde_json::Value>,
-    pub entity_types: Vec<CreateEntityType>,
-    pub add_properties: Vec<AddProperties>,
-    pub hide: HideUnhideInput,
-    pub unhide: HideUnhideInput,
-    pub introduce: Vec<IntroduceItem>,
-    pub asserts: Vec<AssertItem>,
-    pub tasks: Vec<TaskCreateItem>,
-    pub update_tasks: Vec<TaskUpdateItem>,
-    pub close_tasks: Vec<TaskCloseItem>,
-}
-```
-
-v0.2:
-```rust
-pub struct TransactionInput {
-    /// Dynamic metadata validated against project config.
-    pub meta: Map<String, Value>,
-    /// Schema operations.
-    pub entity_types: Vec<CreateEntityType>,
-    pub add_properties: Vec<AddProperties>,
-    /// Visibility.
-    pub hide: HideUnhideInput,
-    pub unhide: HideUnhideInput,
-    /// Data operations.
-    pub introduce: Vec<IntroduceItem>,
-    pub asserts: Vec<AssertItem>,
-    /// Managed type operations (tasks, etc. — defined in config).
-    pub managed: Map<String, Vec<ManagedOperation>>,
-}
-```
-
-### What stays the same from v0.1
-
-- RocksDB as storage engine
-- `storage_key!` macro for fixed-size binary keys
-- Branch system: ancestry chain, branch_point_tx, max depth 8, slug uniqueness
-- Entity storage: entity_main, entity_slug CFs, versioned records
-- Schema registry: entity types, properties, branch-aware with inheritance
-- Visibility: hide/unhide per branch, ItemKind (but without Task variant)
-- Transactions: atomic writes via WriteBatch, UUID v7 tx_id
-- Append-only invariant, open-world semantics
-- Processing order: schema ops → visibility → introduce → asserts
-
-### How to work on v0.2
-
-- **Reference**: terra-core (v0.1) is the reference implementation. Read it, port what fits.
-- **Do not modify terra-core.** It stays as-is until v0.2 is ready to replace it.
-- **Port order**: storage_key macro → store (open RocksDB) → schema registry →
-  entities → visibility → assertions → managed types → transaction execution.
-- **Tests**: port and adapt tests from terra-core. Each module should have tests before
-  moving to the next.
-
-### Column families in v0.2
-
-| CF | Purpose | Key format |
-|----|---------|------------|
-| transactions | Transaction metadata | branch(16) \| tx(16) |
-| entity_main | Entity records | branch(16) \| entity(16) \| tx(16) |
-| entity_slug | Entity slug → UUID | branch(16) \| slug |
-| branch_main | Branch records | branch(16) \| tx(16) |
-| branch_slug | Branch slug → UUID | slug |
-| schema_types | Entity types | branch(16) \| type(16) |
-| schema_type_slug | Type slug → UUID | branch(16) \| slug |
-| schema_props | Properties | branch(16) \| prop(16) |
-| schema_prop_slug | Property slug → UUID | branch(16) \| slug |
-| schema_attachments | Type-property links | branch(16) \| type(16) \| prop(16) |
-| visibility | Hide/unhide state | branch(16) \| tx(16) \| kind(1) \| id(16) |
-| assertions | All assertions (was 6 CFs) | branch(16) \| prop(16) \| tx(16) \| entry(16) \| entity(16) |
-| assertion_log | Assertion log entries | entry(16) |
-| managed_main | Managed type records | type_hash(16) \| branch(16) \| item(16) \| tx(16) |
-| managed_slug | Managed type slugs | type_hash(16) \| branch(16) \| slug |
-
-15 CFs (was 21 in v0.1: 19 original + 2 task CFs).
+terra_incognita — named for what it stores: the unknown, the
+uncertain, the unresolved. On old maps, terra incognita marked places
+where knowledge ran out. This database makes that uncertainty
+first-class.

@@ -111,6 +111,15 @@ pub struct SimilarEntityRes {
     pub matched_query: usize,
 }
 
+/// Entity history entry — entity snapshot at a past tx + what changed + tx meta.
+#[derive(Serialize)]
+pub struct EntityHistoryEntryRes {
+    #[serde(flatten)]
+    pub entity: EntityRes,
+    pub changed_properties: Vec<String>,
+    pub transaction_meta: Map<String, Value>,
+}
+
 /// Error response.
 #[derive(Serialize)]
 pub struct ErrorRes {

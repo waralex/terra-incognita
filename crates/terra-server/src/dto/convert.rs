@@ -2,18 +2,21 @@
 
 use terra_core::command::executor::checkout::CheckoutOutput;
 use terra_core::command::input::checkout::CheckoutInput;
+use terra_core::command::input::entity_history::EntityHistoryQuery;
 use terra_core::command::input::transaction::{DeleteItem, TouchItem, TransactionInput};
 use terra_core::domain::branch::Branch;
 use terra_core::domain::entity::{Entity, PropertyValue, SimilarEntity};
+use terra_core::domain::entity_history::EntityHistoryEntry;
 use terra_core::domain::managed::Managed;
 use terra_core::domain::transaction::{Transaction, TransactionDetail};
 use terra_core::domain::tx_meta::TxMeta;
 use terra_core::io::slug::Slug;
 
-use crate::dto::request::{CheckoutReq, EntityReq, ManagedReq, TransactionReq};
+use crate::dto::request::{CheckoutReq, EntityHistoryReq, EntityReq, ManagedReq, TransactionReq};
 use crate::dto::response::{
-    BranchRes, CheckoutRes, DeletedEntityRes, EntityRes, ManagedRes, PropertyValueRes,
-    SimilarEntityRes, TouchedEntityRes, TransactionDetailRes, TransactionRes, TxMetaRes,
+    BranchRes, CheckoutRes, DeletedEntityRes, EntityHistoryEntryRes, EntityRes, ManagedRes,
+    PropertyValueRes, SimilarEntityRes, TouchedEntityRes, TransactionDetailRes, TransactionRes,
+    TxMetaRes,
 };
 
 // --- Request → Domain ---
@@ -189,6 +192,32 @@ pub fn similar_to_res(items: Vec<SimilarEntity<TxMeta>>) -> Vec<SimilarEntityRes
             matched_query: s.matched_query,
         })
         .collect()
+}
+
+pub fn entity_history_req_to_query(req: EntityHistoryReq) -> Result<EntityHistoryQuery, String> {
+    let entity = parse_slug(&req.entity)?;
+    let mut query = EntityHistoryQuery::new(entity, req.limit);
+    if let Some(prop) = req.property {
+        query = query.with_property(parse_slug(&prop)?);
+    }
+    if let Some(at_tx) = req.at_tx {
+        query = query.with_at_tx(at_tx);
+    }
+    query.tx_id_from = req.tx_id_from;
+    query.tx_id_to = req.tx_id_to;
+    Ok(query)
+}
+
+pub fn history_entry_to_res(entry: EntityHistoryEntry) -> EntityHistoryEntryRes {
+    EntityHistoryEntryRes {
+        entity: entity_to_res(entry.entity),
+        changed_properties: entry
+            .changed_properties
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect(),
+        transaction_meta: entry.transaction_meta,
+    }
 }
 
 #[cfg(test)]

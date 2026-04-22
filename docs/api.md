@@ -206,6 +206,46 @@ Response:
   matched_query: 0              # index into the `queries` array
 ```
 
+## entity.history
+
+Change history of a single entity — snapshots at every transaction
+that touched it, newest first.
+
+Two pagination modes:
+
+- **Cursor** (default) — `at_tx` is the upper bound (inclusive),
+  `limit` is the page size.
+- **Range** — set `tx_id_from` (inclusive lower bound). Upper bound
+  is `tx_id_to` if present, otherwise `at_tx`, otherwise the branch
+  head. `limit` still caps the result.
+
+Request:
+
+```yaml
+command: entity.history
+branch: main
+entity: alice                   # required
+property: age                   # optional; only txs that touched this property
+at_tx: <uuid>                   # optional upper bound
+limit: 50                       # default 50
+tx_id_from: <uuid>              # optional; switches to range mode
+tx_id_to: <uuid>                # optional upper bound for range mode
+```
+
+Response:
+
+```yaml
+- <Entity fields>                     # entity snapshot at this tx
+  changed_properties: [age, city]     # property slugs changed in this tx
+  transaction_meta:                   # per `transaction_meta` schema
+    reasoning: "..."
+- <Entity fields>
+  changed_properties: [...]
+  transaction_meta: { ... }
+```
+
+Errors: `not_found` if the entity does not exist on the branch.
+
 ## branch.get
 
 Metadata of a branch.

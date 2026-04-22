@@ -124,3 +124,15 @@ pub struct SimilarEntitiesReq {
     #[serde(default)]
     pub min_similarity: f32,
 }
+
+/// `entity.history` command body.
+#[derive(Deserialize)]
+pub struct EntityHistoryReq {
+    pub entity: String,
+    pub property: Option<String>,
+    pub at_tx: Option<Uuid>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    pub tx_id_from: Option<Uuid>,
+    pub tx_id_to: Option<Uuid>,
+}

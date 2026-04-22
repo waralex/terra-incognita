@@ -14,8 +14,8 @@ use terra_core::Terra;
 
 use crate::dto::convert;
 use crate::dto::request::{
-    CheckoutReq, CommandEnvelope, GetTransactionReq, ListManagedReq, ListTransactionsReq,
-    SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
+    CheckoutReq, CommandEnvelope, EntityHistoryReq, GetTransactionReq, ListManagedReq,
+    ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
 };
 use crate::dto::response::ErrorRes;
 use crate::error::classify;
@@ -49,6 +49,7 @@ pub fn handle(terra: &Terra, body: &[u8], format: ContentFormat) -> Response {
         "managed.list" => cmd_list_managed(terra, &branch, envelope.body, format),
         "transaction.get" => cmd_get_transaction(terra, &branch, envelope.body, format),
         "entities.similar" => cmd_similar_entities(terra, &branch, envelope.body, format),
+        "entity.history" => cmd_entity_history(terra, &branch, envelope.body, format),
         other => error_response(
             format,
             StatusCode::BAD_REQUEST,
@@ -247,6 +248,39 @@ fn cmd_similar_entities(
     }
     match terra.execute(branch, input) {
         Ok(pairs) => ok_response(format, &convert::similar_to_res(pairs)),
+        Err(e) => db_error_response(format, &e),
+    }
+}
+
+fn cmd_entity_history(
+    terra: &Terra,
+    branch: &Slug,
+    body: serde_json::Value,
+    format: ContentFormat,
+) -> Response {
+    let req: EntityHistoryReq = match serde_json::from_value(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
+    };
+    let input = match convert::entity_history_req_to_query(req) {
+        Ok(v) => v,
+        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e),
+    };
+    match terra.execute(branch, input) {
+        Ok(entries) => {
+            let res: Vec<_> = entries
+                .into_iter()
+                .map(convert::history_entry_to_res)
+                .collect();
+            ok_response(format, &res)
+        }
         Err(e) => db_error_response(format, &e),
     }
 }
@@ -604,6 +638,135 @@ mod tests {
         assert_eq!(res["created"][0]["properties"][0]["property"], "age");
         assert_eq!(res["created"][0]["properties"][0]["value"], 25);
         assert!(res["context"]["tx_id"].is_string());
+    }
+
+    #[test]
+    fn entity_history_returns_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        // Create alice with age=25.
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "create alice" },
+                "create": [{
+                    "slug": "alice",
+                    "description": "a person",
+                    "properties": [{ "property": "age", "value": 25 }],
+                    "meta": { "reasoning": "initial" }
+                }]
+            }),
+        );
+
+        // Update alice: age=26, city=Berlin.
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "alice update" },
+                "update": [{
+                    "slug": "alice",
+                    "properties": [
+                        { "property": "age", "value": 26 },
+                        { "property": "city", "value": "Berlin" }
+                    ],
+                    "meta": { "reasoning": "birthday and move" }
+                }]
+            }),
+        );
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entity.history",
+                "entity": "alice",
+                "limit": 10
+            }),
+        );
+
+        assert_eq!(status, StatusCode::OK);
+        let arr = res.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // Most recent first.
+        assert_eq!(arr[0]["transaction_meta"]["reasoning"], "alice update");
+        let changed0: Vec<&str> = arr[0]["changed_properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(changed0.contains(&"age"));
+        assert!(changed0.contains(&"city"));
+
+        assert_eq!(arr[1]["transaction_meta"]["reasoning"], "create alice");
+    }
+
+    #[test]
+    fn entity_history_filter_by_property() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "create" },
+                "create": [{
+                    "slug": "alice",
+                    "description": "p",
+                    "properties": [{ "property": "age", "value": 25 }],
+                    "meta": { "reasoning": "initial" }
+                }]
+            }),
+        );
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "city only" },
+                "update": [{
+                    "slug": "alice",
+                    "properties": [{ "property": "city", "value": "Berlin" }],
+                    "meta": { "reasoning": "moved" }
+                }]
+            }),
+        );
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entity.history",
+                "entity": "alice",
+                "property": "city",
+                "limit": 10
+            }),
+        );
+
+        assert_eq!(status, StatusCode::OK);
+        let arr = res.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["transaction_meta"]["reasoning"], "city only");
+    }
+
+    #[test]
+    fn entity_history_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entity.history",
+                "entity": "ghost",
+                "limit": 10
+            }),
+        );
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(res["kind"], "not_found");
     }
 
     #[test]

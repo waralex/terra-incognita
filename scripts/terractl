@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# terractl — manage a locally installed terra-incognita server.
+# Paths below are substituted by install.sh at install time.
+set -euo pipefail
+
+TERRA_BIN="@@TERRA_BIN@@"
+CONFIG_FILE="@@CONFIG_FILE@@"
+DATA_DIR="@@DATA_DIR@@"
+MODELS_DIR="@@MODELS_DIR@@"
+LOG_DIR="@@LOG_DIR@@"
+PLIST="@@PLIST@@"
+LABEL="@@LABEL@@"
+
+export TERRA_SERVER_CONFIG="$CONFIG_FILE"
+
+have_launchd() { [[ -f "$PLIST" ]]; }
+
+pidfile="$LOG_DIR/terra-server.pid"
+
+cmd_start() {
+  mkdir -p "$LOG_DIR"
+  if have_launchd; then
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || launchctl enable "gui/$(id -u)/$LABEL" || true
+    launchctl kickstart -k "gui/$(id -u)/$LABEL"
+    echo "started via launchd ($LABEL)"
+  else
+    if cmd_status >/dev/null 2>&1; then echo "already running"; return 0; fi
+    nohup "$TERRA_BIN" >"$LOG_DIR/server.out.log" 2>"$LOG_DIR/server.err.log" &
+    echo $! >"$pidfile"
+    echo "started (pid $(cat "$pidfile"))"
+  fi
+}
+
+cmd_stop() {
+  if have_launchd; then
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true
+    echo "stopped ($LABEL)"
+  else
+    if [[ -f "$pidfile" ]] && kill "$(cat "$pidfile")" 2>/dev/null; then
+      rm -f "$pidfile"; echo "stopped"
+    else
+      echo "not running"
+    fi
+  fi
+}
+
+cmd_restart() { cmd_stop || true; cmd_start; }
+
+cmd_status() {
+  if have_launchd; then
+    if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
+      echo "running (launchd: $LABEL)"; return 0
+    fi
+    echo "stopped"; return 1
+  else
+    if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+      echo "running (pid $(cat "$pidfile"))"; return 0
+    fi
+    echo "stopped"; return 1
+  fi
+}
+
+cmd_logs() {
+  local n="${1:-50}"
+  tail -n "$n" -F "$LOG_DIR/server.out.log" "$LOG_DIR/server.err.log" 2>/dev/null
+}
+
+cmd_drop_db() {
+  if [[ "${1:-}" != "--yes" ]]; then
+    printf "Delete all data in %s ? [y/N] " "$DATA_DIR"
+    read -r ans </dev/tty || { echo "aborted"; return 1; }
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || { echo "aborted"; return 1; }
+  fi
+  local running=0
+  cmd_status >/dev/null 2>&1 && running=1
+  [[ $running -eq 1 ]] && cmd_stop
+  rm -rf "${DATA_DIR:?}"
+  mkdir -p "$DATA_DIR"
+  echo "dropped RocksDB at $DATA_DIR"
+  [[ $running -eq 1 ]] && cmd_start
+}
+
+cmd_paths() {
+  cat <<EOF
+binary : $TERRA_BIN
+config : $CONFIG_FILE
+data   : $DATA_DIR
+models : $MODELS_DIR
+logs   : $LOG_DIR
+plist  : ${PLIST:-<none>}
+EOF
+}
+
+cmd_uninstall() {
+  local purge=0
+  [[ "${1:-}" == "--purge" ]] && purge=1
+  cmd_stop 2>/dev/null || true
+  if have_launchd; then rm -f "$PLIST"; fi
+  rm -f "$TERRA_BIN"
+  echo "removed binary and launch agent"
+  if [[ $purge -eq 1 ]]; then
+    rm -rf "$(dirname "${CONFIG_FILE:?}")" "${DATA_DIR:?}" "${LOG_DIR:?}"
+    echo "purged config, data and logs"
+  else
+    echo "config/data kept (use --purge to remove): $(dirname "$CONFIG_FILE"), $DATA_DIR"
+  fi
+  rm -f "$0"
+  echo "removed terractl"
+  echo "NOTE: remove the terra-incognita block from your shell rc manually if no longer needed."
+}
+
+usage() {
+  cat <<EOF
+terractl — manage the local terra-incognita server
+
+Usage: terractl <command>
+
+  start              start the server (launchd or background)
+  stop               stop the server
+  restart            restart the server
+  status             show whether the server is running
+  logs [N]           tail last N lines of stdout/stderr (default 50)
+  drop-db [--yes]    delete the RocksDB data directory
+  paths              print install paths
+  uninstall [--purge]  remove binary + agent (+ config/data with --purge)
+EOF
+}
+
+case "${1:-}" in
+  start)      shift; cmd_start "$@" ;;
+  stop)       shift; cmd_stop "$@" ;;
+  restart)    shift; cmd_restart "$@" ;;
+  status)     shift; cmd_status "$@" ;;
+  logs)       shift; cmd_logs "$@" ;;
+  drop-db)    shift; cmd_drop_db "$@" ;;
+  paths)      shift; cmd_paths "$@" ;;
+  uninstall)  shift; cmd_uninstall "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) echo "unknown command: $1" >&2; usage; exit 1 ;;
+esac

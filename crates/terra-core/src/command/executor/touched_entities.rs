@@ -170,6 +170,8 @@ mod tests {
               reasoning:
                 type: text
                 required: true
+              source:
+                type: text
             branch_meta:
               reasoning:
                 type: text
@@ -365,6 +367,60 @@ mod tests {
         for prop in &entities[0].properties {
             assert_eq!(prop.context.reasoning.as_deref(), Some("census data"));
         }
+    }
+
+    #[test]
+    fn property_source_from_assertion() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+
+        let mut change_meta = meta("from the user");
+        change_meta.insert("source".into(), Value::String("user".into()));
+
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(25),
+                    context: (),
+                }],
+                change_meta,
+            )),
+        );
+
+        let entities = query(&branch, 10);
+        assert_eq!(
+            entities[0].properties[0].context.source.as_deref(),
+            Some("user")
+        );
+    }
+
+    #[test]
+    fn property_source_absent_when_omitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+
+        exec_tx(
+            &branch,
+            TransactionInput::new(meta("create")).create_entity(Entity::new(
+                "bob".parse().unwrap(),
+                Some(serde_json::json!("A person")),
+                vec![PV {
+                    property: "age".parse().unwrap(),
+                    value: serde_json::json!(30),
+                    context: (),
+                }],
+                meta("no source given"),
+            )),
+        );
+
+        let entities = query(&branch, 10);
+        assert_eq!(entities[0].properties[0].context.source, None);
     }
 
     #[test]

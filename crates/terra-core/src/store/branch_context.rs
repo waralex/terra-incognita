@@ -219,6 +219,7 @@ impl BranchContext {
                 reasoning: None,
                 time: time_from_uuid(tx_id),
                 status: None,
+                source: None,
             },
         })
     }

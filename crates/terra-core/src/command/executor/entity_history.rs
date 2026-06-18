@@ -202,6 +202,7 @@ fn build_history_entry(
                 reasoning: None,
                 time: None,
                 status: None,
+                source: None,
             },
         });
 

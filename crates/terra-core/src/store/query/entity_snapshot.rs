@@ -84,6 +84,7 @@ pub fn entity_snapshot(
                     reasoning: Some(a.value.reasoning),
                     time: time_from_uuid(a.key.tx_id),
                     status,
+                    source: a.value.source,
                 },
             }
         })
@@ -101,6 +102,7 @@ pub fn entity_snapshot(
             reasoning: None,
             time: time_from_uuid(head.tx_id),
             status: None,
+            source: None,
         },
     }))
 }

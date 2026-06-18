@@ -37,6 +37,7 @@ impl Command for GetBranch {
                     reasoning: None,
                     time: None,
                     status: None,
+                    source: None,
                 },
             });
         }
@@ -65,6 +66,7 @@ impl Command for GetBranch {
                 reasoning: None,
                 time: time_from_uuid(entry.value.created_from_tx),
                 status: None,
+                source: None,
             },
         })
     }

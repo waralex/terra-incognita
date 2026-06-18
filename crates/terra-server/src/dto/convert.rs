@@ -93,6 +93,7 @@ fn tx_meta_to_res(meta: TxMeta) -> TxMetaRes {
         reasoning: meta.reasoning,
         time: meta.time,
         status: meta.status,
+        source: meta.source,
     }
 }
 

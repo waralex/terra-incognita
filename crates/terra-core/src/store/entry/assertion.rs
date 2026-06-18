@@ -1,7 +1,8 @@
 //! Assertion entry — a single property value claim.
 //!
 //! Key: `branch(16) | entity(16) | prop(16) | tx_id(16)` = 64 bytes fixed + slug suffixes.
-//! Value: JSON with change_id, the property value, and an optional epistemic status.
+//! Value: JSON with change_id, the property value, an optional epistemic status,
+//! and an optional provenance `source`.
 //!
 //! `status` (fact / hypothesis / observation / ...) is declared per project in
 //! `assertion_statuses`. It is set per entity-change (like `reasoning`) and copied
@@ -36,6 +37,13 @@ pub struct AssertionValue {
     /// not configured or the assertion predates them — read as schema `default`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+
+    /// Provenance of the claim — where the knowledge came from. Set per
+    /// entity-change (like `reasoning`/`status`) from the `source` field of
+    /// the entity-change meta and copied onto every assertion of that change.
+    /// `None` when the write omitted it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 impl AssertionValue {
@@ -108,6 +116,7 @@ mod tests {
                 value: serde_json::json!({"name": "London"}),
                 reasoning: "geographic data".into(),
                 status: None,
+                source: None,
             },
         };
 

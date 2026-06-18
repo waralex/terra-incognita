@@ -72,6 +72,7 @@ impl Command for GetTransaction {
             reasoning: None,
             time: time_from_uuid(tx_id),
             status: None,
+            source: None,
         };
 
         // Reconstruct created entities.
@@ -189,6 +190,7 @@ impl GetTransaction {
                         reasoning: Some(a.value.reasoning),
                         time: time_from_uuid(tx_id),
                         status: a.value.status,
+                        source: a.value.source,
                     },
                 });
             }
@@ -206,6 +208,7 @@ impl GetTransaction {
                 reasoning: None,
                 time: time_from_uuid(tx_id),
                 status: None,
+                source: None,
             },
         })
     }
@@ -246,6 +249,7 @@ impl GetTransaction {
                 reasoning: None,
                 time: time_from_uuid(tx_id),
                 status: None,
+                source: None,
             },
         })
     }
@@ -300,6 +304,7 @@ impl GetTransaction {
                     reasoning: None,
                     time: time_from_uuid(tx_id),
                     status: None,
+                    source: None,
                 },
             }),
             None => Err(DbError::Storage(format!(

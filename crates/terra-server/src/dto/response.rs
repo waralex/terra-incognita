@@ -17,6 +17,9 @@ pub struct TxMetaRes {
     /// Epistemic status of the property assertion (per `assertion_statuses`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Provenance of the property assertion — where the knowledge came from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Transaction result.

@@ -98,6 +98,7 @@ fn collect_managed(
                 reasoning: None,
                 time: time_from_uuid(latest.key.tx_id),
                 status: None,
+                source: None,
             },
         });
 

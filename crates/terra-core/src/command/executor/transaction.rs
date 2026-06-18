@@ -88,6 +88,11 @@ impl ExecuteTransaction {
             .assertion_statuses
             .as_ref()
             .map(|s| s.resolve(entity.status.as_deref()).to_string());
+        let source = entity
+            .meta
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
 
         let batch = state.batch();
         batch.put(&EntityChangeEntry {
@@ -112,6 +117,7 @@ impl ExecuteTransaction {
                     value: pv.value.clone(),
                     reasoning: reasoning.clone(),
                     status: status.clone(),
+                    source: source.clone(),
                 },
             })?;
         }
@@ -471,6 +477,7 @@ impl ExecuteTransaction {
                     value: serde_json::Value::Null,
                     reasoning: String::new(),
                     status: retraction_status.clone(),
+                    source: None,
                 },
             })?;
             nullified_props.push(prop.key.prop.clone());
@@ -646,6 +653,7 @@ impl Command for ExecuteTransaction {
                 reasoning: None,
                 time: time_from_uuid(tx_id),
                 status: None,
+                source: None,
             },
         })
     }

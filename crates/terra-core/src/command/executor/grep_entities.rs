@@ -87,6 +87,7 @@ impl Command for GrepEntities {
                         reasoning: None,
                         time: time_from_uuid(head.tx_id),
                         status: None,
+                        source: None,
                     },
                 })
             };

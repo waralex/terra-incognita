@@ -19,6 +19,9 @@ pub struct TxMeta {
     /// Epistemic status of the property assertion (per `assertion_statuses`).
     /// Populated for property contexts; `None` for entity / transaction / branch.
     pub status: Option<String>,
+    /// Provenance of the property assertion — where the knowledge came from.
+    /// Populated for property contexts; `None` for entity / transaction / branch.
+    pub source: Option<String>,
 }
 
 /// Extract timestamp from a UUID v7.

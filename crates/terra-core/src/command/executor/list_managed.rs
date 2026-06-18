@@ -97,6 +97,7 @@ fn collect_managed(
                 branch: latest.key.branch,
                 reasoning: None,
                 time: time_from_uuid(latest.key.tx_id),
+                status: None,
             },
         });
 

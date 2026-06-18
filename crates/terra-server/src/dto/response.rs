@@ -14,6 +14,9 @@ pub struct TxMetaRes {
     pub reasoning: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time: Option<DateTime<Utc>>,
+    /// Epistemic status of the property assertion (per `assertion_statuses`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// Transaction result.

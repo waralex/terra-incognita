@@ -50,6 +50,7 @@ Types:
 # Entity
 slug: alice
 description: "..."              # optional, any JSON
+status: <status>                # optional; per assertion_statuses in schema.yaml
 properties:
   - { property: <slug>, value: <any JSON> }
 meta: { reasoning: "..." }      # per entity_change_meta in schema.yaml
@@ -296,6 +297,7 @@ properties:
       branch: main
       time: ...
       reasoning: "..."           # per-assertion reasoning
+      status: <status>           # per assertion_statuses; omitted when not configured
 meta: { ... }                    # empty on snapshot reads; populated on transaction.get
 context:
   tx_id: ...                     # of the entity record
@@ -304,7 +306,12 @@ context:
 ```
 
 `context.reasoning` appears only on property contexts. On entity,
-transaction, branch, and managed contexts it is omitted.
+transaction, branch, and managed contexts it is omitted. `context.status`
+likewise appears only on property contexts, and only when the project
+declares `assertion_statuses`. When statuses are configured, a single
+property may appear more than once — the consolidating (terminal)
+value plus later non-terminal overlays; see
+[concepts.md](concepts.md#epistemic-status).
 
 ## Response shape: `<Managed>`
 

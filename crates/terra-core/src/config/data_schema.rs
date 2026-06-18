@@ -52,6 +52,47 @@ pub struct DataSchema {
     /// Managed types — versioned record types with optional lifecycle.
     #[serde(default)]
     pub managed_types: IndexMap<String, ManagedTypeDef>,
+
+    /// Epistemic statuses for assertions (fact / hypothesis / observation / ...).
+    /// Absent → no status concept; snapshots return the latest assertion per property.
+    #[serde(default)]
+    pub assertion_statuses: Option<AssertionStatusesDef>,
+}
+
+/// Epistemic statuses an assertion can carry.
+///
+/// `terminal` is the consolidating status (e.g. `fact`): in a snapshot it forms
+/// the baseline per property. Non-terminal statuses (hypothesis, observation)
+/// asserted after the latest terminal are layered on top. `default` is the
+/// status assigned when a write omits one (and how status-less legacy
+/// assertions are read).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AssertionStatusesDef {
+    /// Full set of valid status names.
+    pub values: Vec<String>,
+
+    /// The consolidating status that forms the snapshot baseline.
+    pub terminal: String,
+
+    /// Status assigned when a write omits one.
+    pub default: String,
+}
+
+impl AssertionStatusesDef {
+    /// Resolve an optional status to a concrete one, falling back to `default`.
+    pub fn resolve<'a>(&'a self, status: Option<&'a str>) -> &'a str {
+        status.unwrap_or(&self.default)
+    }
+
+    /// Whether the (resolved) status is the terminal one.
+    pub fn is_terminal(&self, status: Option<&str>) -> bool {
+        self.resolve(status) == self.terminal
+    }
+
+    /// Whether `status` is a declared value.
+    pub fn contains(&self, status: &str) -> bool {
+        self.values.iter().any(|v| v == status)
+    }
 }
 
 /// Definition of a single field in transaction metadata or a managed type.
@@ -125,6 +166,9 @@ pub enum ConfigError {
 
     #[error("managed type \"{type_name}\": field \"{field}\" conflicts with reserved lifecycle field \"state\"")]
     ReservedField { type_name: String, field: String },
+
+    #[error("assertion_statuses: {message}")]
+    AssertionStatuses { message: String },
 }
 
 impl DataSchema {
@@ -144,6 +188,31 @@ impl DataSchema {
     /// Validate internal consistency after deserialization.
     /// Populates `states` from `{initial} ∪ visible` when not explicitly provided.
     fn validate(&mut self) -> Result<(), ConfigError> {
+        if let Some(statuses) = &self.assertion_statuses {
+            if statuses.values.is_empty() {
+                return Err(ConfigError::AssertionStatuses {
+                    message: "values is empty".into(),
+                });
+            }
+            for v in &statuses.values {
+                if v.is_empty() {
+                    return Err(ConfigError::AssertionStatuses {
+                        message: "status value is empty".into(),
+                    });
+                }
+            }
+            if !statuses.contains(&statuses.terminal) {
+                return Err(ConfigError::AssertionStatuses {
+                    message: format!("terminal \"{}\" is not in values", statuses.terminal),
+                });
+            }
+            if !statuses.contains(&statuses.default) {
+                return Err(ConfigError::AssertionStatuses {
+                    message: format!("default \"{}\" is not in values", statuses.default),
+                });
+            }
+        }
+
         for (name, def) in &mut self.managed_types {
             if def.lifecycle.is_some() && def.fields.contains_key("state") {
                 return Err(ConfigError::ReservedField {
@@ -277,6 +346,64 @@ mod tests {
         assert!(config.entity_change_meta.is_empty());
         assert!(config.branch_meta.is_empty());
         assert!(config.managed_types.is_empty());
+        assert!(config.assertion_statuses.is_none());
+    }
+
+    #[test]
+    fn parse_assertion_statuses() {
+        let config = DataSchema::from_yaml(indoc! {"
+            assertion_statuses:
+              values: [fact, hypothesis, observation]
+              terminal: fact
+              default: observation
+        "})
+        .unwrap();
+        let s = config.assertion_statuses.unwrap();
+        assert_eq!(s.values, vec!["fact", "hypothesis", "observation"]);
+        assert_eq!(s.terminal, "fact");
+        assert_eq!(s.default, "observation");
+        assert!(s.is_terminal(Some("fact")));
+        assert!(!s.is_terminal(Some("hypothesis")));
+        // None resolves to default (observation), which is not terminal.
+        assert!(!s.is_terminal(None));
+    }
+
+    #[test]
+    fn assertion_statuses_terminal_not_in_values() {
+        let err = DataSchema::from_yaml(indoc! {"
+            assertion_statuses:
+              values: [hypothesis, observation]
+              terminal: fact
+              default: observation
+        "})
+        .unwrap_err();
+        assert!(err.to_string().contains("terminal \"fact\" is not in values"));
+    }
+
+    #[test]
+    fn assertion_statuses_default_not_in_values() {
+        let err = DataSchema::from_yaml(indoc! {"
+            assertion_statuses:
+              values: [fact, hypothesis]
+              terminal: fact
+              default: observation
+        "})
+        .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("default \"observation\" is not in values"));
+    }
+
+    #[test]
+    fn assertion_statuses_empty_values() {
+        let err = DataSchema::from_yaml(indoc! {"
+            assertion_statuses:
+              values: []
+              terminal: fact
+              default: fact
+        "})
+        .unwrap_err();
+        assert!(err.to_string().contains("values is empty"));
     }
 
     #[test]

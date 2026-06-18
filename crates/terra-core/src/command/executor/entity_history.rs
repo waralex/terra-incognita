@@ -1,6 +1,7 @@
 //! ListEntityHistory — retrieves the change history of an entity.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -8,6 +9,7 @@ use crate::command::Command;
 
 use crate::command::input::entity_history::EntityHistoryQuery;
 use crate::command::CommandState;
+use crate::config::{AssertionStatusesDef, DataSchema};
 use crate::domain::entity::Entity;
 use crate::domain::entity_history::EntityHistoryEntry;
 use crate::domain::tx_meta::TxMeta;
@@ -21,7 +23,16 @@ use crate::store::entry::transaction::{TransactionEntry, TransactionKey};
 use crate::store::query::entity_snapshot;
 
 /// Lists entity history entries ordered most-recent-first.
-pub struct ListEntityHistory;
+pub struct ListEntityHistory {
+    schema: Arc<DataSchema>,
+}
+
+impl ListEntityHistory {
+    /// Create the executor with the project schema (for assertion-status layering).
+    pub fn new(schema: Arc<DataSchema>) -> Self {
+        Self { schema }
+    }
+}
 
 impl Command for ListEntityHistory {
     type Input = EntityHistoryQuery;
@@ -93,9 +104,10 @@ impl Command for ListEntityHistory {
             .collect();
 
         // Step 4: reconstruct snapshots.
+        let statuses = self.schema.assertion_statuses.as_ref();
         let mut entries = Vec::with_capacity(selected.len());
         for (tx_id, changed_props) in selected {
-            let entry = build_history_entry(branch, entity, tx_id, changed_props)?;
+            let entry = build_history_entry(branch, entity, tx_id, changed_props, statuses)?;
             entries.push(entry);
         }
 
@@ -175,18 +187,21 @@ fn build_history_entry(
     slug: &Slug,
     tx_id: Uuid,
     changed_props: Vec<Slug>,
+    statuses: Option<&AssertionStatusesDef>,
 ) -> Result<EntityHistoryEntry, DbError> {
-    let entity =
-        entity_snapshot::entity_snapshot(branch, slug, Some(tx_id))?.unwrap_or_else(|| Entity {
+    let entity = entity_snapshot::entity_snapshot(branch, slug, Some(tx_id), statuses)?
+        .unwrap_or_else(|| Entity {
             slug: slug.clone(),
             description: None,
             properties: vec![],
             meta: serde_json::Map::new(),
+            status: None,
             context: TxMeta {
                 tx_id: Uuid::nil(),
                 branch: branch.id().clone(),
                 reasoning: None,
                 time: None,
+                status: None,
             },
         });
 
@@ -285,7 +300,7 @@ mod tests {
     }
 
     fn query(branch: &BranchContext, input: EntityHistoryQuery) -> Vec<EntityHistoryEntry> {
-        let cmd = ListEntityHistory;
+        let cmd = ListEntityHistory::new(test_schema());
         let mut state = CommandState::new(branch.storage());
         cmd.execute(branch, &mut state, input).unwrap()
     }
@@ -685,7 +700,7 @@ mod tests {
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = storage.main_branch();
 
-        let result = ListEntityHistory.execute(
+        let result = ListEntityHistory::new(test_schema()).execute(
             &branch,
             &mut CommandState::new(branch.storage()),
             EntityHistoryQuery::new("ghost".parse().unwrap(), 10),

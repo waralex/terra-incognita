@@ -167,11 +167,11 @@ impl Executable for TouchedEntitiesQuery {
 
     fn execute_on(
         self,
-        _terra: &Terra,
+        terra: &Terra,
         branch: &BranchContext,
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
-        ListTouchedEntities.execute(branch, state, self)
+        ListTouchedEntities::new(terra.schema.clone()).execute(branch, state, self)
     }
 }
 
@@ -206,11 +206,11 @@ impl Executable for EntityHistoryQuery {
 
     fn execute_on(
         self,
-        _terra: &Terra,
+        terra: &Terra,
         branch: &BranchContext,
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
-        ListEntityHistory.execute(branch, state, self)
+        ListEntityHistory::new(terra.schema.clone()).execute(branch, state, self)
     }
 }
 
@@ -219,11 +219,11 @@ impl Executable for SimilarEntitiesQuery {
 
     fn execute_on(
         self,
-        _terra: &Terra,
+        terra: &Terra,
         branch: &BranchContext,
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
-        FindSimilarEntities.execute(branch, state, self)
+        FindSimilarEntities::new(terra.schema.clone()).execute(branch, state, self)
     }
 }
 
@@ -435,6 +435,77 @@ mod tests {
         assert_eq!(results[0].entity.slug.as_str(), "auth-service");
         assert!(results[0].similarity > 0.0);
         assert_eq!(results[0].matched_query, 0);
+    }
+
+    #[test]
+    fn layered_snapshot_surfaces_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let schema = Arc::new(
+            DataSchema::from_yaml(indoc! {"
+                transaction_meta:
+                  reasoning: { type: text, required: true }
+                entity_change_meta:
+                  reasoning: { type: text, required: true }
+                assertion_statuses:
+                  values: [fact, hypothesis]
+                  terminal: fact
+                  default: hypothesis
+            "})
+            .unwrap(),
+        );
+        let terra = Terra::open(dir.path(), test_config(), schema, Arc::new(NoopEmbedder)).unwrap();
+        let main = main_branch_slug();
+
+        terra
+            .execute(
+                &main,
+                TransactionInput::new(meta("settle")).create_entity(
+                    Entity::new(
+                        "alice".parse().unwrap(),
+                        Some(serde_json::json!("A person")),
+                        vec![PV {
+                            property: "city".parse().unwrap(),
+                            value: serde_json::json!("Paris"),
+                            context: (),
+                        }],
+                        meta("settled"),
+                    )
+                    .with_status(Some("fact".into())),
+                ),
+            )
+            .unwrap();
+
+        terra
+            .execute(
+                &main,
+                TransactionInput::new(meta("guess")).update_entity(
+                    Entity::new(
+                        "alice".parse().unwrap(),
+                        None,
+                        vec![PV {
+                            property: "city".parse().unwrap(),
+                            value: serde_json::json!("Lyon?"),
+                            context: (),
+                        }],
+                        meta("a guess"),
+                    )
+                    .with_status(Some("hypothesis".into())),
+                ),
+            )
+            .unwrap();
+
+        let entities = terra
+            .execute(&main, TouchedEntitiesQuery::new(None, 10))
+            .unwrap();
+        let props = &entities[0].properties;
+        assert_eq!(props.len(), 2);
+        assert!(props
+            .iter()
+            .any(|p| p.value == serde_json::json!("Paris")
+                && p.context.status.as_deref() == Some("fact")));
+        assert!(props
+            .iter()
+            .any(|p| p.context.status.as_deref() == Some("hypothesis")));
     }
 
     #[test]

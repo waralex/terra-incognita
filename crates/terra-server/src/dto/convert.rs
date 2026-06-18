@@ -72,7 +72,7 @@ fn entity_req_to_domain(req: EntityReq) -> Result<Entity, String> {
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
-    Ok(Entity::new(slug, req.description, props, req.meta))
+    Ok(Entity::new(slug, req.description, props, req.meta).with_status(req.status))
 }
 
 fn managed_req_to_domain(req: ManagedReq) -> Result<Managed, String> {
@@ -89,6 +89,7 @@ fn tx_meta_to_res(meta: TxMeta) -> TxMetaRes {
         branch: meta.branch.to_string(),
         reasoning: meta.reasoning,
         time: meta.time,
+        status: meta.status,
     }
 }
 
@@ -242,6 +243,7 @@ mod tests {
                     value: json!(25),
                 }],
                 meta: serde_json::Map::new(),
+                status: None,
             }],
             update: vec![],
             create_managed: vec![],
@@ -261,6 +263,7 @@ mod tests {
                 description: None,
                 properties: vec![],
                 meta: serde_json::Map::new(),
+                status: None,
             }],
             update: vec![],
             create_managed: vec![],

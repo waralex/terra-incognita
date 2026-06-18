@@ -49,6 +49,7 @@ impl Command for ListTransactions {
                     branch: entry.key.branch,
                     reasoning: None,
                     time: time_from_uuid(entry.key.tx_id),
+                    status: None,
                 },
             });
         }
@@ -77,6 +78,7 @@ impl Command for ListTransactions {
                         branch: entry.key.branch,
                         reasoning: None,
                         time: time_from_uuid(entry.key.tx_id),
+                        status: None,
                     },
                 });
             }

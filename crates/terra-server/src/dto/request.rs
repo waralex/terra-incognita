@@ -48,6 +48,9 @@ pub struct EntityReq {
     pub properties: Vec<PropertyValueReq>,
     #[serde(default)]
     pub meta: Map<String, Value>,
+    /// Epistemic status for this change's assertions (per `assertion_statuses`).
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Deserialize)]

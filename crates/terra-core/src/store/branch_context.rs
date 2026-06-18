@@ -218,6 +218,7 @@ impl BranchContext {
                 branch: self.branch.clone(),
                 reasoning: None,
                 time: time_from_uuid(tx_id),
+                status: None,
             },
         })
     }

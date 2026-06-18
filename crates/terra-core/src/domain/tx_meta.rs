@@ -16,6 +16,9 @@ pub struct TxMeta {
     pub reasoning: Option<String>,
     /// Timestamp extracted from UUID v7 tx_id.
     pub time: Option<DateTime<Utc>>,
+    /// Epistemic status of the property assertion (per `assertion_statuses`).
+    /// Populated for property contexts; `None` for entity / transaction / branch.
+    pub status: Option<String>,
 }
 
 /// Extract timestamp from a UUID v7.

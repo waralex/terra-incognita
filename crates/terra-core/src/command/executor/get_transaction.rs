@@ -71,6 +71,7 @@ impl Command for GetTransaction {
             branch: log_branch.clone(),
             reasoning: None,
             time: time_from_uuid(tx_id),
+            status: None,
         };
 
         // Reconstruct created entities.
@@ -187,6 +188,7 @@ impl GetTransaction {
                         branch: log_branch.clone(),
                         reasoning: Some(a.value.reasoning),
                         time: time_from_uuid(tx_id),
+                        status: a.value.status,
                     },
                 });
             }
@@ -197,11 +199,13 @@ impl GetTransaction {
             description,
             properties,
             meta,
+            status: None,
             context: TxMeta {
                 tx_id,
                 branch: log_branch.clone(),
                 reasoning: None,
                 time: time_from_uuid(tx_id),
+                status: None,
             },
         })
     }
@@ -241,6 +245,7 @@ impl GetTransaction {
                 branch: log_branch.clone(),
                 reasoning: None,
                 time: time_from_uuid(tx_id),
+                status: None,
             },
         })
     }
@@ -294,6 +299,7 @@ impl GetTransaction {
                     branch: log_branch.clone(),
                     reasoning: None,
                     time: time_from_uuid(tx_id),
+                    status: None,
                 },
             }),
             None => Err(DbError::Storage(format!(

@@ -80,6 +80,12 @@ replays the full timeline of claims with their sources. Conflict
 resolution is the caller's problem, and the per-assertion reasoning
 lets you reason about *sources* rather than just recency.
 
+A project can optionally tag assertions with an epistemic **status**
+(`fact`, `hypothesis`, `observation`, ...). A snapshot then returns
+the settled `fact` plus any later hypotheses and observations layered
+on top — what is established and what is still in play, side by side.
+See [Concepts](docs/concepts.md#epistemic-status).
+
 ## What's stored
 
 terra is built around two kinds of objects:

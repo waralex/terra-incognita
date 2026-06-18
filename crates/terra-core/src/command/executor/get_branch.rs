@@ -36,6 +36,7 @@ impl Command for GetBranch {
                     branch: main_branch_slug(),
                     reasoning: None,
                     time: None,
+                    status: None,
                 },
             });
         }
@@ -63,6 +64,7 @@ impl Command for GetBranch {
                 branch: main_branch_slug(),
                 reasoning: None,
                 time: time_from_uuid(entry.value.created_from_tx),
+                status: None,
             },
         })
     }

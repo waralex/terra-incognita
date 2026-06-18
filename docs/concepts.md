@@ -438,3 +438,53 @@ caller deciding which to trust can reason about the *sources*
 (LinkedIn profile vs. direct chat message) rather than just about
 recency — which is precisely the information terra is designed to
 preserve. The store does not decide. It keeps the inputs honest.
+
+## Epistemic status
+
+By default every assertion is equal and a snapshot returns the latest
+value per property. A project may instead declare **epistemic
+statuses** — a small vocabulary marking *how settled* a claim is. A
+typical set: `fact`, `hypothesis`, `observation`. This is opt-in, via
+the `assertion_statuses` section of `schema.yaml`
+([configuration](configuration.md#assertion_statuses)); without it, the
+status concept does not exist.
+
+A status is set per entity change, next to `reasoning`, and applies to
+every property asserted in that change:
+
+```yaml
+update:
+  - slug: alice
+    status: hypothesis
+    properties: [{ property: city, value: "Lyon" }]
+    meta: { reasoning: "a guess from her flight bookings" }
+```
+
+One status is declared **terminal** (e.g. `fact`) — the consolidating
+one. The rest (`hypothesis`, `observation`, ...) are non-terminal
+overlays. This changes how a snapshot projects a property:
+
+- The **latest terminal** assertion is the baseline.
+- Every **non-terminal** assertion made *after* that baseline is
+  layered on top, newest-first, each carrying its own status in its
+  property context.
+- Everything older than the latest terminal is **consolidated away** —
+  a terminal assertion resets the picture. Earlier hypotheses and
+  observations remain in `entity.history`, but drop out of the
+  snapshot.
+
+So a single property can come back more than once in a snapshot: the
+settled `fact` plus the open `hypothesis` and `observation` thrown on
+top of it. The reader sees both what is established and what is still
+in play, instead of a single latest-wins value.
+
+A property with no terminal assertion yet returns all its overlays —
+nothing has consolidated it. A retraction (writing `null`) counts as
+terminal: it consolidates the property away, and only later overlays
+can re-open it. A write that omits `status` gets the schema's
+`default`; status-less assertions written before the schema gained
+statuses read as that `default` too.
+
+Statuses layer the same way across branch ancestry: a `fact` inherited
+from the parent is the baseline, and a `hypothesis` thrown on a child
+branch stacks on top of it without disturbing the parent.

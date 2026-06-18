@@ -36,6 +36,12 @@ pub enum ValidationError {
 
     #[error("entity \"{slug}\": description is required")]
     MissingDescription { slug: String },
+
+    #[error("invalid assertion status \"{status}\"")]
+    InvalidStatus { status: String },
+
+    #[error("assertion status \"{status}\" set but no assertion_statuses are configured")]
+    StatusesNotConfigured { status: String },
 }
 
 /// Validates domain objects against DataSchema.
@@ -74,7 +80,7 @@ impl DomainValidator {
         if !entity.properties.is_empty() {
             self.check_entity_change_meta(&entity.meta)?;
         }
-        Ok(())
+        self.check_status(&entity.status)
     }
 
     /// Validate an entity for update (all fields optional).
@@ -82,7 +88,18 @@ impl DomainValidator {
         if !entity.properties.is_empty() {
             self.check_entity_change_meta(&entity.meta)?;
         }
-        Ok(())
+        self.check_status(&entity.status)
+    }
+
+    /// Validate an assertion status against `assertion_statuses`.
+    fn check_status(&self, status: &Option<String>) -> Result<(), ValidationError> {
+        match (&self.schema.assertion_statuses, status) {
+            (Some(s), Some(st)) if !s.contains(st) => {
+                Err(ValidationError::InvalidStatus { status: st.clone() })
+            }
+            (None, Some(st)) => Err(ValidationError::StatusesNotConfigured { status: st.clone() }),
+            _ => Ok(()),
+        }
     }
 
     /// Validate entity change metadata against `DataSchema.entity_change_meta`.
@@ -573,6 +590,70 @@ mod tests {
             matches!(err, ValidationError::InvalidState { type_name, state }
             if type_name == "task" && state == "banana")
         );
+    }
+
+    // --- Assertion status validation ---
+
+    fn schema_with_statuses() -> Arc<DataSchema> {
+        Arc::new(
+            DataSchema::from_yaml(indoc! {"
+            entity_change_meta:
+              reasoning: { type: text, required: true }
+            assertion_statuses:
+              values: [fact, hypothesis]
+              terminal: fact
+              default: hypothesis
+        "})
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn entity_valid_status_accepted() {
+        let v = DomainValidator::new(schema_with_statuses());
+        let e = Entity::new(
+            "alice".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![],
+            Map::new(),
+        )
+        .with_status(Some("fact".into()));
+        v.check_entity_create(&e).unwrap();
+    }
+
+    #[test]
+    fn entity_invalid_status_rejected() {
+        let v = DomainValidator::new(schema_with_statuses());
+        let e = Entity::new(
+            "alice".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![],
+            Map::new(),
+        )
+        .with_status(Some("guess".into()));
+        let err = v.check_entity_create(&e).unwrap_err();
+        assert!(matches!(err, ValidationError::InvalidStatus { status } if status == "guess"));
+    }
+
+    #[test]
+    fn entity_status_without_config_rejected() {
+        let v = DomainValidator::new(schema_with_tx_meta());
+        let e = Entity::new("alice".parse().unwrap(), None, vec![], Map::new())
+            .with_status(Some("fact".into()));
+        let err = v.check_entity_update(&e).unwrap_err();
+        assert!(matches!(err, ValidationError::StatusesNotConfigured { .. }));
+    }
+
+    #[test]
+    fn entity_no_status_is_fine() {
+        let v = DomainValidator::new(schema_with_statuses());
+        let e = Entity::new(
+            "alice".parse().unwrap(),
+            Some(serde_json::json!("A person")),
+            vec![],
+            Map::new(),
+        );
+        v.check_entity_create(&e).unwrap();
     }
 
     #[test]

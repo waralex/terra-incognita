@@ -17,6 +17,11 @@ branch_meta:
     type: text
     required: true
 
+assertion_statuses:
+  values: [fact, hypothesis, observation]
+  terminal: fact
+  default: observation
+
 managed_types:
   rule:
     fields:

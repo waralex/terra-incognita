@@ -82,6 +82,12 @@ impl ExecuteTransaction {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let status = self
+            .validator
+            .schema()
+            .assertion_statuses
+            .as_ref()
+            .map(|s| s.resolve(entity.status.as_deref()).to_string());
 
         let batch = state.batch();
         batch.put(&EntityChangeEntry {
@@ -105,6 +111,7 @@ impl ExecuteTransaction {
                     change_id,
                     value: pv.value.clone(),
                     reasoning: reasoning.clone(),
+                    status: status.clone(),
                 },
             })?;
         }
@@ -441,7 +448,14 @@ impl ExecuteTransaction {
             },
         })?;
 
-        // Nullify existing properties so re-create starts clean.
+        // Nullify existing properties so re-create starts clean. A retraction
+        // consolidates the picture, so it carries the terminal status.
+        let retraction_status = self
+            .validator
+            .schema()
+            .assertion_statuses
+            .as_ref()
+            .map(|s| s.terminal.clone());
         let existing_props = properties::properties(branch, &item.entity, None)?;
         let mut nullified_props = Vec::new();
         for prop in &existing_props {
@@ -456,6 +470,7 @@ impl ExecuteTransaction {
                     change_id,
                     value: serde_json::Value::Null,
                     reasoning: String::new(),
+                    status: retraction_status.clone(),
                 },
             })?;
             nullified_props.push(prop.key.prop.clone());
@@ -630,6 +645,7 @@ impl Command for ExecuteTransaction {
                 branch: branch.id().clone(),
                 reasoning: None,
                 time: time_from_uuid(tx_id),
+                status: None,
             },
         })
     }

@@ -43,6 +43,26 @@ provenance (tx_id + branch + change_id). Stored in the `assertions`
 CF. Multiple assertions for the same property coexist — terra does
 not auto-resolve.
 
+Optionally carries an epistemic `status` (per `assertion_statuses` in
+`schema.yaml`) — see **Assertion statuses** below. `None` when statuses
+are not configured.
+
+### Assertion statuses
+
+Opt-in epistemic status on assertions (e.g. `fact` / `hypothesis` /
+`observation`), declared under `assertion_statuses` in `schema.yaml`
+with a `terminal` status and a `default`. Status is set per
+entity-change (alongside `reasoning`) and copied onto every assertion
+of that change.
+
+Snapshot layering: per property, the latest **terminal** assertion is
+the baseline; non-terminal assertions made after it are layered on top
+(newest-first); everything older than the latest terminal is
+consolidated away. A property with no terminal returns all its
+overlays. A retraction (`null`) is terminal. So a single property can
+appear multiple times in a snapshot. When `assertion_statuses` is
+absent, snapshots are plain latest-wins and `status` is always `None`.
+
 ### Entity changes
 
 A group of assertions on one entity made by a single transaction.
@@ -134,6 +154,11 @@ touch and delete carry `reasoning` at the operation level instead.
 Transaction-level reasoning is available through the transaction's
 `meta` block, not through any `context`.
 
+`TxMeta.status` follows the same shape: **populated** on a property's
+`context` (resolved per `assertion_statuses`), **always None** on
+entity / transaction / branch / managed contexts and when statuses are
+not configured.
+
 **Entity `meta` on read also depends on the command:**
 
 - `transaction.get` → entity `meta` is the entity-change meta recorded
@@ -159,8 +184,9 @@ pub struct TransactionInput {
 ```
 
 `Entity` carries `slug`, optional `description`, `properties:
-Vec<PropertyValue>`, and `meta: Map<String, Value>` (per
-`entity_change_meta`).
+Vec<PropertyValue>`, `meta: Map<String, Value>` (per
+`entity_change_meta`), and optional `status: Option<String>` (per
+`assertion_statuses`).
 
 There is no schema mutation in transactions. Schema lives only in
 `schema.yaml`.
@@ -232,6 +258,11 @@ entity_change_meta:
 
 branch_meta:
   reasoning: { type: text, required: true }
+
+assertion_statuses:          # optional
+  values: [fact, hypothesis, observation]
+  terminal: fact
+  default: observation
 
 managed_types:
   rule:

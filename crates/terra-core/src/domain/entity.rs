@@ -27,6 +27,10 @@ pub struct Entity<M = ()> {
     pub properties: Vec<PropertyValue<M>>,
     /// Entity change metadata — validated against `DataSchema.entity_change_meta`.
     pub meta: Map<String, Value>,
+    /// Epistemic status applied to this change's assertions (per `assertion_statuses`).
+    /// `None` on write → schema `default`. Always `None` on read output (a snapshot
+    /// has no single status; per-property status lives in each property's context).
+    pub status: Option<String>,
     pub context: M,
 }
 
@@ -52,7 +56,14 @@ impl Entity<()> {
             description,
             properties,
             meta,
+            status: None,
             context: (),
         }
+    }
+
+    /// Set the epistemic status for this change's assertions.
+    pub fn with_status(mut self, status: Option<String>) -> Self {
+        self.status = status;
+        self
     }
 }

@@ -1,12 +1,14 @@
 //! ListTouchedEntities — lists recently touched entities with their properties.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use uuid::Uuid;
 
 use crate::command::input::touched_entities::TouchedEntitiesQuery;
 use crate::command::Command;
 use crate::command::CommandState;
+use crate::config::DataSchema;
 use crate::domain::entity::Entity;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::slug::Slug;
@@ -17,7 +19,16 @@ use crate::store::entry::touched::{TouchedEntry, TouchedKey};
 use crate::store::query::entity_snapshot;
 
 /// Lists recently touched entities ordered by touch recency (most recent first).
-pub struct ListTouchedEntities;
+pub struct ListTouchedEntities {
+    schema: Arc<DataSchema>,
+}
+
+impl ListTouchedEntities {
+    /// Create the executor with the project schema (for assertion-status layering).
+    pub fn new(schema: Arc<DataSchema>) -> Self {
+        Self { schema }
+    }
+}
 
 impl Command for ListTouchedEntities {
     type Input = TouchedEntitiesQuery;
@@ -35,7 +46,7 @@ impl Command for ListTouchedEntities {
         };
 
         let slugs = Self::collect_touched_slugs(branch, at_tx, input.limit)?;
-        Self::collect_entities(branch, &slugs, at_tx)
+        self.collect_entities(branch, &slugs, at_tx)
     }
 }
 
@@ -105,13 +116,17 @@ impl ListTouchedEntities {
 
     /// For each entity slug, load entity record + properties → domain Entity.
     fn collect_entities(
+        &self,
         branch: &BranchContext,
         slugs: &[Slug],
         at_tx: Uuid,
     ) -> Result<Vec<Entity<TxMeta>>, DbError> {
+        let statuses = self.schema.assertion_statuses.as_ref();
         let mut entities = Vec::with_capacity(slugs.len());
         for slug in slugs {
-            if let Some(entity) = entity_snapshot::entity_snapshot(branch, slug, Some(at_tx))? {
+            if let Some(entity) =
+                entity_snapshot::entity_snapshot(branch, slug, Some(at_tx), statuses)?
+            {
                 entities.push(entity);
             }
         }
@@ -185,7 +200,7 @@ mod tests {
     }
 
     fn query(branch: &BranchContext, limit: usize) -> Vec<Entity<TxMeta>> {
-        let cmd = ListTouchedEntities;
+        let cmd = ListTouchedEntities::new(test_schema());
         let mut state = CommandState::new(branch.storage());
         cmd.execute(branch, &mut state, TouchedEntitiesQuery::new(None, limit))
             .unwrap()

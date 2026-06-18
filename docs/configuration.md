@@ -65,6 +65,11 @@ entity_change_meta:   # fields on every entity create / update
 branch_meta:          # fields on every checkout
   <name>: <FieldDef>
 
+assertion_statuses:   # optional; epistemic status of assertions
+  values:   [<status>, ...]
+  terminal: <status>
+  default:  <status>
+
 managed_types:
   <type_name>:
     fields:
@@ -122,6 +127,34 @@ Validated on the top-level `meta` block of `checkout`.
 branch_meta:
   reasoning: { type: text, required: true }
 ```
+
+### `assertion_statuses`
+
+Optional. Declares an epistemic status that every assertion carries —
+`fact`, `hypothesis`, `observation`, or whatever a project defines.
+When the section is absent there is no status concept: snapshots return
+the latest assertion per property, as usual.
+
+```yaml
+assertion_statuses:
+  values:   [fact, hypothesis, observation]
+  terminal: fact
+  default:  observation
+```
+
+- `values` (required) — the full set of valid status names. A write
+  with a status outside this set fails with `validation_error`.
+- `terminal` (required) — the *consolidating* status. In a snapshot it
+  forms the baseline per property; everything older than the latest
+  terminal assertion is consolidated away. Must appear in `values`.
+- `default` (required) — the status assigned when a write omits one
+  (and how status-less legacy assertions are read). Must appear in
+  `values`.
+
+Status is set per entity change, alongside `reasoning`, and copied
+onto every assertion in that change — see the `status` field on an
+entity in [api.md](api.md). How statuses layer in a snapshot read is
+described in [concepts.md](concepts.md#epistemic-status).
 
 ### `managed_types`
 

@@ -1,8 +1,11 @@
 //! FindSimilarEntities — multi-vector semantic entity search with full entity loading.
 
+use std::sync::Arc;
+
 use crate::command::input::similar_entities::SimilarEntitiesQuery;
 use crate::command::Command;
 use crate::command::CommandState;
+use crate::config::DataSchema;
 use crate::domain::entity::SimilarEntity;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
@@ -13,7 +16,16 @@ use crate::store::query::{entity_snapshot, similarity};
 /// by the maximum cosine similarity across all query vectors.
 /// Each result includes the full entity snapshot and the index of the
 /// best-matching query.
-pub struct FindSimilarEntities;
+pub struct FindSimilarEntities {
+    schema: Arc<DataSchema>,
+}
+
+impl FindSimilarEntities {
+    /// Create the executor with the project schema (for assertion-status layering).
+    pub fn new(schema: Arc<DataSchema>) -> Self {
+        Self { schema }
+    }
+}
 
 impl Command for FindSimilarEntities {
     type Input = SimilarEntitiesQuery;
@@ -44,10 +56,13 @@ impl Command for FindSimilarEntities {
         )?;
 
         let at_tx = input.at_tx;
+        let statuses = self.schema.assertion_statuses.as_ref();
         let mut results = Vec::with_capacity(matches.len());
 
         for m in matches {
-            if let Some(entity) = entity_snapshot::entity_snapshot(branch, &m.slug, at_tx)? {
+            if let Some(entity) =
+                entity_snapshot::entity_snapshot(branch, &m.slug, at_tx, statuses)?
+            {
                 results.push(SimilarEntity {
                     entity,
                     similarity: m.similarity,
@@ -158,7 +173,7 @@ mod tests {
         embedder: Arc<dyn Embedder>,
         input: SimilarEntitiesQuery,
     ) -> Vec<SimilarEntity<TxMeta>> {
-        let cmd = FindSimilarEntities;
+        let cmd = FindSimilarEntities::new(test_schema());
         let mut state = CommandState::with_embedder(branch.storage(), embedder);
         cmd.execute(branch, &mut state, input).unwrap()
     }

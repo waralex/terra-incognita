@@ -1,0 +1,73 @@
+# terra schema for the personal work-memory store.
+#
+# What Claude accumulates about the user's projects across sessions:
+# claims about projects, their components, people, infra — plus
+# conventions, decisions, open questions, and tasks.
+#
+# Entity conventions (slugs, kinds, properties, relations) live in
+# CONVENTIONS.md — the entity model itself is open and unschematized.
+
+transaction_meta:
+  reasoning: { type: text, required: true }   # why this write happened (session-level)
+  session:   { type: text }                   # conversation id — group a session's writes
+
+entity_change_meta:
+  reasoning: { type: text, required: true }   # why I believe this / surfaces per-property
+  source:    { type: text }                   # provenance: user | code:<path> | slack:<ch> | grafana | web:<url> | inference
+
+branch_meta:
+  reasoning: { type: text, required: true }   # why this exploration branch exists
+
+# Epistemic status of a claim. Terminal `fact` forms the snapshot baseline;
+# `observation` / `hypothesis` layer on top until confirmed.
+assertion_statuses:
+  values:   [fact, hypothesis, observation]
+  terminal: fact
+  default:  observation
+
+managed_types:
+  # How the user likes things done — preferences, style, working agreements.
+  convention:
+    fields:
+      content:   { type: text, required: true }
+      scope:     { type: text }   # project/area this applies to (empty = global)
+      rationale: { type: text }
+    lifecycle:
+      initial: active
+      states:  [active, retired]
+      visible: [active]
+
+  # A choice that was made, and why (ADR-like).
+  decision:
+    fields:
+      content:   { type: text, required: true }
+      rationale: { type: text }
+      scope:     { type: text }
+    lifecycle:
+      initial: accepted
+      states:  [proposed, accepted, superseded]
+      visible: [proposed, accepted]
+
+  # A known unknown — something to clarify. Often spawns a task.
+  open_question:
+    fields:
+      content: { type: text, required: true }
+      scope:   { type: text }
+    lifecycle:
+      initial: open
+      states:  [open, answered, dropped]
+      visible: [open]
+
+  # Something to do. `horizon` is the commitment level, orthogonal to lifecycle:
+  #   next    — committed next action
+  #   someday — would-be-good / backlog
+  task:
+    fields:
+      content:   { type: text, required: true }
+      scope:     { type: text }   # project/area: cube, cube.cubestore
+      horizon:   { type: text }   # next | someday
+      rationale: { type: text }
+    lifecycle:
+      initial: open
+      states:  [open, doing, done, dropped]
+      visible: [open, doing]

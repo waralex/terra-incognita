@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# install.sh — build and install terra-incognita for the current user (no sudo).
+# install.sh — build and install the terra-incognita memory backend (no sudo).
+#
+# Sets up a terra-server seeded with the memory schema (mcp/schema.yaml) — the
+# store Claude uses as cross-session work memory. The MCP server layer is
+# registered here too once it exists.
 #
 # Interactive by default (asks about port, embeddings, model download, autostart).
 # Pass --non-interactive (or any flag in a non-TTY) to use defaults/flags silently.
@@ -17,7 +21,8 @@
 #   --autostart/--no-autostart  --host ADDR  --non-interactive
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/terra-incognita"
@@ -52,7 +57,7 @@ while [[ $# -gt 0 ]]; do
     --autostart)       AUTOSTART=1 ;;
     --no-autostart)    AUTOSTART=0 ;;
     --non-interactive) INTERACTIVE=0 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
   shift
@@ -158,8 +163,8 @@ schema_path: ./schema.yaml
 EOF
 
 if [[ ! -e "$CONFIG_DIR/schema.yaml" ]]; then
-  say "writing $CONFIG_DIR/schema.yaml (from repo seed)"
-  cp "$REPO_DIR/demo-terra-client/terra/schema.yaml" "$CONFIG_DIR/schema.yaml"
+  say "writing $CONFIG_DIR/schema.yaml (from mcp memory schema)"
+  cp "$SCRIPT_DIR/schema.yaml" "$CONFIG_DIR/schema.yaml"
 else
   say "keeping existing $CONFIG_DIR/schema.yaml"
 fi

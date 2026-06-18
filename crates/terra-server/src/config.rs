@@ -7,16 +7,25 @@ use tracing::info;
 
 const CONFIG_FILENAME: &str = "terra-server.yaml";
 const CONFIG_ENV: &str = "TERRA_SERVER_CONFIG";
-const DEFAULT_PORT: u16 = 3000;
+const DEFAULT_HOST: &str = "127.0.0.1";
+const DEFAULT_PORT: u16 = 7373;
 
 /// Server configuration loaded from `terra-server.yaml`.
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
+    /// Address to bind. Defaults to `127.0.0.1` (localhost only).
+    /// Set to `0.0.0.0` to expose on all interfaces — note there is no auth.
+    #[serde(default = "default_host")]
+    pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
     pub project_config_path: PathBuf,
     /// Path to directory with model.onnx + tokenizer.json. Enables embeddings.
     pub embed_model_dir: Option<PathBuf>,
+}
+
+fn default_host() -> String {
+    DEFAULT_HOST.to_string()
 }
 
 fn default_port() -> u16 {

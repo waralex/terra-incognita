@@ -38,7 +38,7 @@ async fn main() {
         "project config: {}",
         server_config.project_config_path.display()
     );
-    info!("port: {}", server_config.port);
+    info!("bind: {}:{}", server_config.host, server_config.port);
 
     let project = ProjectConfig::load(&server_config.project_config_path)
         .expect("failed to load project config");
@@ -66,7 +66,7 @@ async fn main() {
         .route("/query", post(handle_query))
         .with_state(state);
 
-    let addr = format!("0.0.0.0:{}", server_config.port);
+    let addr = format!("{}:{}", server_config.host, server_config.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .expect("failed to bind");

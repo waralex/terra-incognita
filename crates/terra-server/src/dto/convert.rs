@@ -3,6 +3,7 @@
 use terra_core::command::executor::checkout::CheckoutOutput;
 use terra_core::command::input::checkout::CheckoutInput;
 use terra_core::command::input::entity_history::EntityHistoryQuery;
+use terra_core::command::input::grep_entities::{GrepEntitiesQuery, GrepScope};
 use terra_core::command::input::transaction::{DeleteItem, TouchItem, TransactionInput};
 use terra_core::domain::branch::Branch;
 use terra_core::domain::entity::{Entity, PropertyValue, SimilarEntity};
@@ -12,7 +13,9 @@ use terra_core::domain::transaction::{Transaction, TransactionDetail};
 use terra_core::domain::tx_meta::TxMeta;
 use terra_core::io::slug::Slug;
 
-use crate::dto::request::{CheckoutReq, EntityHistoryReq, EntityReq, ManagedReq, TransactionReq};
+use crate::dto::request::{
+    CheckoutReq, EntityHistoryReq, EntityReq, GrepEntitiesReq, ManagedReq, TransactionReq,
+};
 use crate::dto::response::{
     BranchRes, CheckoutRes, DeletedEntityRes, EntityHistoryEntryRes, EntityRes, ManagedRes,
     PropertyValueRes, SimilarEntityRes, TouchedEntityRes, TransactionDetailRes, TransactionRes,
@@ -207,6 +210,43 @@ pub fn entity_history_req_to_query(req: EntityHistoryReq) -> Result<EntityHistor
     query.tx_id_from = req.tx_id_from;
     query.tx_id_to = req.tx_id_to;
     Ok(query)
+}
+
+pub fn grep_entities_req_to_query(req: GrepEntitiesReq) -> Result<GrepEntitiesQuery, String> {
+    let scope = match req.scope {
+        Some(fields) if !fields.is_empty() => parse_grep_scope(&fields)?,
+        _ => GrepScope::default(),
+    };
+    let mut query = GrepEntitiesQuery::new(req.pattern, req.limit)
+        .scope(scope)
+        .include_properties(req.properties);
+    if let Some(at_tx) = req.at_tx {
+        query = query.at_tx(at_tx);
+    }
+    Ok(query)
+}
+
+fn parse_grep_scope(fields: &[String]) -> Result<GrepScope, String> {
+    let mut scope = GrepScope {
+        slug: false,
+        property: false,
+        value: false,
+        reasoning: false,
+    };
+    for field in fields {
+        match field.as_str() {
+            "slug" => scope.slug = true,
+            "property" => scope.property = true,
+            "value" => scope.value = true,
+            "reasoning" => scope.reasoning = true,
+            other => {
+                return Err(format!(
+                    "unknown grep field \"{other}\": expected slug, property, value, or reasoning"
+                ))
+            }
+        }
+    }
+    Ok(scope)
 }
 
 pub fn history_entry_to_res(entry: EntityHistoryEntry) -> EntityHistoryEntryRes {

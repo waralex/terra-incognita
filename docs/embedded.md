@@ -96,6 +96,7 @@ type based on what you want:
 |---|---|
 | `TouchedEntitiesQuery` | `Vec<Entity<TxMeta>>` — recently touched entities |
 | `SimilarEntitiesQuery` | `Vec<SimilarEntity<TxMeta>>` — semantic search |
+| `GrepEntitiesQuery` | `Vec<Entity<TxMeta>>` — regex search over slug/property/value/reasoning |
 | `EntityHistoryQuery` | `Vec<EntityHistoryEntry>` — snapshots at each tx |
 | `GetTransactionQuery` | `TransactionDetail` — full tx detail, cross-branch |
 | `ListTransactionsQuery` | `Vec<Transaction<TxMeta>>` |

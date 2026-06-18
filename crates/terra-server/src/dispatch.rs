@@ -14,8 +14,8 @@ use terra_core::Terra;
 
 use crate::dto::convert;
 use crate::dto::request::{
-    CheckoutReq, CommandEnvelope, EntityHistoryReq, GetTransactionReq, ListManagedReq,
-    ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
+    CheckoutReq, CommandEnvelope, EntityHistoryReq, GetTransactionReq, GrepEntitiesReq,
+    ListManagedReq, ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
 };
 use crate::dto::response::ErrorRes;
 use crate::error::classify;
@@ -49,6 +49,7 @@ pub fn handle(terra: &Terra, body: &[u8], format: ContentFormat) -> Response {
         "managed.list" => cmd_list_managed(terra, &branch, envelope.body, format),
         "transaction.get" => cmd_get_transaction(terra, &branch, envelope.body, format),
         "entities.similar" => cmd_similar_entities(terra, &branch, envelope.body, format),
+        "entities.grep" => cmd_grep_entities(terra, &branch, envelope.body, format),
         "entity.history" => cmd_entity_history(terra, &branch, envelope.body, format),
         other => error_response(
             format,
@@ -248,6 +249,36 @@ fn cmd_similar_entities(
     }
     match terra.execute(branch, input) {
         Ok(pairs) => ok_response(format, &convert::similar_to_res(pairs)),
+        Err(e) => db_error_response(format, &e),
+    }
+}
+
+fn cmd_grep_entities(
+    terra: &Terra,
+    branch: &Slug,
+    body: serde_json::Value,
+    format: ContentFormat,
+) -> Response {
+    let req: GrepEntitiesReq = match serde_json::from_value(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
+    };
+    let input = match convert::grep_entities_req_to_query(req) {
+        Ok(v) => v,
+        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e),
+    };
+    match terra.execute(branch, input) {
+        Ok(entities) => {
+            let res: Vec<_> = entities.into_iter().map(convert::entity_to_res).collect();
+            ok_response(format, &res)
+        }
         Err(e) => db_error_response(format, &e),
     }
 }
@@ -477,6 +508,112 @@ mod tests {
         assert_eq!(arr[0]["slug"], "bob");
         assert_eq!(arr[0]["properties"][0]["property"], "city");
         assert_eq!(arr[0]["properties"][0]["value"], "Berlin");
+    }
+
+    #[test]
+    fn grep_entities_by_slug() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        for slug in ["auth-service", "payment-service"] {
+            dispatch_json(
+                &terra,
+                json!({
+                    "command": "transaction",
+                    "meta": { "reasoning": "create" },
+                    "create": [{
+                        "slug": slug,
+                        "description": "svc",
+                        "meta": { "reasoning": "initial" }
+                    }]
+                }),
+            );
+        }
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entities.grep",
+                "pattern": "^auth-",
+                "properties": false
+            }),
+        );
+
+        assert_eq!(status, StatusCode::OK);
+        let arr = res.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["slug"], "auth-service");
+        assert!(arr[0]["properties"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn grep_entities_by_value_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "create" },
+                "create": [{
+                    "slug": "auth-service",
+                    "description": "svc",
+                    "properties": [{ "property": "role", "value": "authentication" }],
+                    "meta": { "reasoning": "initial" }
+                }]
+            }),
+        );
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entities.grep",
+                "pattern": "authentication",
+                "in": ["value"]
+            }),
+        );
+
+        assert_eq!(status, StatusCode::OK);
+        let arr = res.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["slug"], "auth-service");
+        assert_eq!(arr[0]["properties"][0]["value"], "authentication");
+    }
+
+    #[test]
+    fn grep_invalid_regex_returns_400() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entities.grep",
+                "pattern": "("
+            }),
+        );
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(res["kind"], "validation_error");
+    }
+
+    #[test]
+    fn grep_unknown_field_returns_400() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({
+                "command": "entities.grep",
+                "pattern": "x",
+                "in": ["bogus"]
+            }),
+        );
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(res["kind"], "parse_error");
     }
 
     #[test]

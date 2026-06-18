@@ -385,8 +385,8 @@ own `tx_id`s and reasoning.
 
 ### Snapshot: latest wins
 
-A snapshot read (`entities.touched`, `entities.similar`) returns one
-value per property — the latest committed. Alice's `city` comes back
+A snapshot read (`entities.touched`, `entities.similar`,
+`entities.grep`) returns one value per property — the latest committed. Alice's `city` comes back
 as `Amsterdam`, attributed to the chat transaction:
 
 ```yaml

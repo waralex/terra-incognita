@@ -12,6 +12,10 @@ fn default_limit() -> usize {
     50
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Top-level envelope: every request carries `command` and `branch`.
 #[derive(Deserialize)]
 pub struct CommandEnvelope {
@@ -126,6 +130,22 @@ pub struct SimilarEntitiesReq {
     pub limit: usize,
     #[serde(default)]
     pub min_similarity: f32,
+}
+
+/// `entities.grep` command body.
+#[derive(Deserialize)]
+pub struct GrepEntitiesReq {
+    pub pattern: String,
+    /// Fields to match against: any of `slug`, `property`, `value`, `reasoning`.
+    /// Defaults to `[slug]` when omitted.
+    #[serde(rename = "in", default)]
+    pub scope: Option<Vec<String>>,
+    /// Whether to include properties in the result. Defaults to true.
+    #[serde(default = "default_true")]
+    pub properties: bool,
+    pub at_tx: Option<Uuid>,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
 }
 
 /// `entity.history` command body.

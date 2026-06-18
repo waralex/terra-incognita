@@ -207,6 +207,37 @@ Response:
   matched_query: 0              # index into the `queries` array
 ```
 
+## entities.grep
+
+Regex search over entities on the branch, newest first. The pattern is
+matched against the fields listed in `in`; a match in any of them
+includes the whole entity.
+
+The regex flavor is Rust's `regex` crate (linear-time, no
+backtracking). It is case-sensitive — prefix with `(?i)` to ignore
+case. For `value`, string values are matched against their raw text and
+all other JSON values against their compact serialization (e.g. `42`,
+`true`, `{"k":"v"}`).
+
+Request:
+
+```yaml
+command: entities.grep
+branch: main
+pattern: "^auth-"               # required, regex
+in: [slug]                      # any of: slug, property, value, reasoning; default [slug]
+properties: true                # include properties in the result; default true
+at_tx: <uuid>                   # optional upper bound
+limit: 50                       # default 50
+```
+
+Response: array of `<Entity>` (see below). With `properties: false`
+each entity carries only its slug, description, and provenance — the
+`properties` array is empty.
+
+Errors: `validation_error` for an invalid regex; `parse_error` for an
+unknown field name in `in`.
+
 ## entity.history
 
 Change history of a single entity — snapshots at every transaction

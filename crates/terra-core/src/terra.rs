@@ -8,6 +8,7 @@ use crate::command::executor::checkout::{CheckoutOutput, ExecuteCheckout};
 use crate::command::executor::entity_history::ListEntityHistory;
 use crate::command::executor::get_branch::GetBranch;
 use crate::command::executor::get_transaction::GetTransaction;
+use crate::command::executor::grep_entities::GrepEntities;
 use crate::command::executor::list_managed::ListManaged;
 use crate::command::executor::list_transactions::ListTransactions;
 use crate::command::executor::similar_entities::FindSimilarEntities;
@@ -17,6 +18,7 @@ use crate::command::input::checkout::CheckoutInput;
 use crate::command::input::entity_history::EntityHistoryQuery;
 use crate::command::input::get_branch::GetBranchQuery;
 use crate::command::input::get_transaction::GetTransactionQuery;
+use crate::command::input::grep_entities::GrepEntitiesQuery;
 use crate::command::input::list_managed::ListManagedQuery;
 use crate::command::input::list_transactions::ListTransactionsQuery;
 use crate::command::input::similar_entities::SimilarEntitiesQuery;
@@ -211,6 +213,19 @@ impl Executable for EntityHistoryQuery {
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
         ListEntityHistory::new(terra.schema.clone()).execute(branch, state, self)
+    }
+}
+
+impl Executable for GrepEntitiesQuery {
+    type Output = Vec<Entity<TxMeta>>;
+
+    fn execute_on(
+        self,
+        terra: &Terra,
+        branch: &BranchContext,
+        state: &mut CommandState,
+    ) -> Result<Self::Output, DbError> {
+        GrepEntities::new(terra.schema.clone()).execute(branch, state, self)
     }
 }
 

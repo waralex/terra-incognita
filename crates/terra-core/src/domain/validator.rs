@@ -42,6 +42,9 @@ pub enum ValidationError {
 
     #[error("assertion status \"{status}\" set but no assertion_statuses are configured")]
     StatusesNotConfigured { status: String },
+
+    #[error("invalid regex pattern \"{pattern}\": {message}")]
+    InvalidRegex { pattern: String, message: String },
 }
 
 /// Validates domain objects against DataSchema.

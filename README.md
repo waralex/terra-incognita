@@ -11,8 +11,8 @@ Conflict resolution is the caller's responsibility, not the storage's.
 ## Status
 
 **v0.2.** Core model (entities, assertions, branches, managed types,
-transaction log, entity history, similarity search) is in place. HTTP
-dispatch covers the main commands.
+transaction log, entity history, similarity and regex search) is in
+place. HTTP dispatch covers the main commands.
 
 API shape is still settling — this is an active design exploration, not
 a production datastore.

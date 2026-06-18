@@ -2,6 +2,7 @@ pub mod checkout;
 pub mod entity_history;
 pub mod get_branch;
 pub mod get_transaction;
+pub mod grep_entities;
 pub mod list_managed;
 pub mod list_transactions;
 pub mod similar_entities;

@@ -12,6 +12,43 @@ use crate::store::branch_context::BranchContext;
 use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::query::properties;
 
+/// The record-level part of an entity at a point in time, without properties.
+pub struct EntityHead {
+    /// tx_id of the latest entity record (provenance + recency ordering).
+    pub tx_id: Uuid,
+    /// Branch where that record lives.
+    pub branch: Slug,
+    /// Entity description, if any.
+    pub description: Option<serde_json::Value>,
+}
+
+/// Load just the entity record head (no properties) at an optional point in time.
+///
+/// Returns `None` if the entity is deleted or has no record. This is the cheap
+/// path for callers that only need the slug and provenance — it skips the
+/// per-property assertion scan that [`entity_snapshot`] performs.
+pub fn entity_head(
+    branch: &BranchContext,
+    slug: &Slug,
+    at_tx: Option<Uuid>,
+) -> Result<Option<EntityHead>, DbError> {
+    let mut bound = EntityKey::bound().with_prefix(|k| k.entity = slug.clone());
+    if let Some(tx) = at_tx {
+        bound = bound.with_upper(|k| k.tx_id = tx);
+    }
+
+    let entry = match branch.get_latest::<EntityEntry>(&bound)? {
+        Some(e) if !e.value.is_deleted() => e,
+        _ => return Ok(None),
+    };
+
+    Ok(Some(EntityHead {
+        tx_id: entry.key.tx_id,
+        branch: entry.key.branch,
+        description: entry.value.description,
+    }))
+}
+
 /// Load a single entity snapshot (record + properties) at an optional point in time.
 ///
 /// When `statuses` is `Some`, properties are layered: the latest terminal assertion
@@ -26,22 +63,9 @@ pub fn entity_snapshot(
     at_tx: Option<Uuid>,
     statuses: Option<&AssertionStatusesDef>,
 ) -> Result<Option<Entity<TxMeta>>, DbError> {
-    let mut bound = EntityKey::bound().with_prefix(|k| k.entity = slug.clone());
-    if let Some(tx) = at_tx {
-        bound = bound.with_upper(|k| k.tx_id = tx);
-    }
-
-    let entry = branch.get_latest::<EntityEntry>(&bound)?;
-    if entry.as_ref().is_some_and(|e| e.value.is_deleted()) {
+    let Some(head) = entity_head(branch, slug, at_tx)? else {
         return Ok(None);
-    }
-
-    let entity_tx = entry.as_ref().map(|e| e.key.tx_id).unwrap_or(Uuid::nil());
-    let entity_branch = entry
-        .as_ref()
-        .map(|e| e.key.branch.clone())
-        .unwrap_or_else(|| branch.id().clone());
-    let description = entry.and_then(|e| e.value.description);
+    };
 
     let assertion_entries = match statuses {
         Some(s) => properties::layered_properties(branch, slug, at_tx, s)?,
@@ -67,15 +91,15 @@ pub fn entity_snapshot(
 
     Ok(Some(Entity {
         slug: slug.clone(),
-        description,
+        description: head.description,
         properties,
         meta: serde_json::Map::new(),
         status: None,
         context: TxMeta {
-            tx_id: entity_tx,
-            branch: entity_branch,
+            tx_id: head.tx_id,
+            branch: head.branch,
             reasoning: None,
-            time: time_from_uuid(entity_tx),
+            time: time_from_uuid(head.tx_id),
             status: None,
         },
     }))

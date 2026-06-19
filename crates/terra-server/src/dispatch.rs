@@ -14,8 +14,9 @@ use terra_core::Terra;
 
 use crate::dto::convert;
 use crate::dto::request::{
-    CheckoutReq, CommandEnvelope, EntityHistoryReq, GetTransactionReq, GrepEntitiesReq,
-    ListManagedReq, ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq, TransactionReq,
+    CheckoutReq, CommandEnvelope, EntityGetReq, EntityHistoryReq, GetTransactionReq,
+    GrepEntitiesReq, ListManagedReq, ListTransactionsReq, SimilarEntitiesReq, TouchedEntitiesReq,
+    TransactionReq,
 };
 use crate::dto::response::ErrorRes;
 use crate::error::classify;
@@ -50,6 +51,7 @@ pub fn handle(terra: &Terra, body: &[u8], format: ContentFormat) -> Response {
         "transaction.get" => cmd_get_transaction(terra, &branch, envelope.body, format),
         "entities.similar" => cmd_similar_entities(terra, &branch, envelope.body, format),
         "entities.grep" => cmd_grep_entities(terra, &branch, envelope.body, format),
+        "entity.get" => cmd_get_entity(terra, &branch, envelope.body, format),
         "entity.history" => cmd_entity_history(terra, &branch, envelope.body, format),
         other => error_response(
             format,
@@ -279,6 +281,33 @@ fn cmd_grep_entities(
             let res: Vec<_> = entities.into_iter().map(convert::entity_to_res).collect();
             ok_response(format, &res)
         }
+        Err(e) => db_error_response(format, &e),
+    }
+}
+
+fn cmd_get_entity(
+    terra: &Terra,
+    branch: &Slug,
+    body: serde_json::Value,
+    format: ContentFormat,
+) -> Response {
+    let req: EntityGetReq = match serde_json::from_value(body) {
+        Ok(v) => v,
+        Err(e) => {
+            return error_response(
+                format,
+                StatusCode::BAD_REQUEST,
+                "parse_error",
+                &e.to_string(),
+            )
+        }
+    };
+    let input = match convert::entity_get_req_to_query(req) {
+        Ok(v) => v,
+        Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e),
+    };
+    match terra.execute(branch, input) {
+        Ok(entity) => ok_response(format, &convert::entity_to_res(entity)),
         Err(e) => db_error_response(format, &e),
     }
 }
@@ -579,6 +608,53 @@ mod tests {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["slug"], "auth-service");
         assert_eq!(arr[0]["properties"][0]["value"], "authentication");
+    }
+
+    #[test]
+    fn entity_get_returns_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        dispatch_json(
+            &terra,
+            json!({
+                "command": "transaction",
+                "meta": { "reasoning": "create" },
+                "create": [{
+                    "slug": "cube",
+                    "description": "Cube.js project",
+                    "meta": { "reasoning": "initial" },
+                    "properties": [{ "property": "language", "value": "TypeScript" }]
+                }]
+            }),
+        );
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({ "command": "entity.get", "entity": "cube" }),
+        );
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(res["slug"], "cube");
+        assert_eq!(res["description"], "Cube.js project");
+        let props = res["properties"].as_array().unwrap();
+        assert_eq!(props.len(), 1);
+        assert_eq!(props[0]["property"], "language");
+        assert_eq!(props[0]["value"], "TypeScript");
+    }
+
+    #[test]
+    fn entity_get_missing_returns_404() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+
+        let (status, res) = dispatch_json(
+            &terra,
+            json!({ "command": "entity.get", "entity": "ghost" }),
+        );
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(res["kind"], "not_found");
     }
 
     #[test]

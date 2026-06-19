@@ -238,6 +238,26 @@ each entity carries only its slug, description, and provenance — the
 Errors: `validation_error` for an invalid regex; `parse_error` for an
 unknown field name in `in`.
 
+## entity.get
+
+Current snapshot of a single entity by slug — record plus properties,
+with assertion-status layering applied. Use `at_tx` to read the entity
+as of a point in time instead of its latest state.
+
+Request:
+
+```yaml
+command: entity.get
+branch: main
+entity: alice                   # required
+at_tx: <uuid>                   # optional upper bound; default latest
+```
+
+Response: a single `<Entity>` (see below).
+
+Errors: `not_found` if the entity does not exist (or is deleted) on the
+branch.
+
 ## entity.history
 
 Change history of a single entity — snapshots at every transaction

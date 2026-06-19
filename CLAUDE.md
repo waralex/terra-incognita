@@ -199,8 +199,8 @@ top level. JSON or YAML selected by `Content-Type`.
 
 - Writes: `transaction`, `checkout`
 - Reads: `transactions.list`, `transaction.get`, `entities.touched`,
-  `entities.similar`, `entities.grep`, `entity.history`, `branch.get`,
-  `managed.list`
+  `entities.similar`, `entities.grep`, `entity.get`, `entity.history`,
+  `branch.get`, `managed.list`
 
 `transaction.get` is **cross-branch by design** (like `git show <sha>`):
 a `tx_id` from any branch can be fetched regardless of the envelope's

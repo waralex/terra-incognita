@@ -2,6 +2,7 @@
 
 use terra_core::command::executor::checkout::CheckoutOutput;
 use terra_core::command::input::checkout::CheckoutInput;
+use terra_core::command::input::entity_get::EntityGetQuery;
 use terra_core::command::input::entity_history::EntityHistoryQuery;
 use terra_core::command::input::grep_entities::{GrepEntitiesQuery, GrepScope};
 use terra_core::command::input::transaction::{DeleteItem, TouchItem, TransactionInput};
@@ -14,7 +15,8 @@ use terra_core::domain::tx_meta::TxMeta;
 use terra_core::io::slug::Slug;
 
 use crate::dto::request::{
-    CheckoutReq, EntityHistoryReq, EntityReq, GrepEntitiesReq, ManagedReq, TransactionReq,
+    CheckoutReq, EntityGetReq, EntityHistoryReq, EntityReq, GrepEntitiesReq, ManagedReq,
+    TransactionReq,
 };
 use crate::dto::response::{
     BranchRes, CheckoutRes, DeletedEntityRes, EntityHistoryEntryRes, EntityRes, ManagedRes,
@@ -197,6 +199,14 @@ pub fn similar_to_res(items: Vec<SimilarEntity<TxMeta>>) -> Vec<SimilarEntityRes
             matched_query: s.matched_query,
         })
         .collect()
+}
+
+pub fn entity_get_req_to_query(req: EntityGetReq) -> Result<EntityGetQuery, String> {
+    let mut query = EntityGetQuery::new(parse_slug(&req.entity)?);
+    if let Some(at_tx) = req.at_tx {
+        query = query.with_at_tx(at_tx);
+    }
+    Ok(query)
 }
 
 pub fn entity_history_req_to_query(req: EntityHistoryReq) -> Result<EntityHistoryQuery, String> {

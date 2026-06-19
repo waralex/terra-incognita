@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::command::executor::checkout::{CheckoutOutput, ExecuteCheckout};
+use crate::command::executor::entity_get::GetEntity;
 use crate::command::executor::entity_history::ListEntityHistory;
 use crate::command::executor::get_branch::GetBranch;
 use crate::command::executor::get_transaction::GetTransaction;
@@ -15,6 +16,7 @@ use crate::command::executor::similar_entities::FindSimilarEntities;
 use crate::command::executor::touched_entities::ListTouchedEntities;
 use crate::command::executor::transaction::ExecuteTransaction;
 use crate::command::input::checkout::CheckoutInput;
+use crate::command::input::entity_get::EntityGetQuery;
 use crate::command::input::entity_history::EntityHistoryQuery;
 use crate::command::input::get_branch::GetBranchQuery;
 use crate::command::input::get_transaction::GetTransactionQuery;
@@ -200,6 +202,19 @@ impl Executable for ListManagedQuery {
         state: &mut CommandState,
     ) -> Result<Self::Output, DbError> {
         ListManaged::new(terra.schema.clone()).execute(branch, state, self)
+    }
+}
+
+impl Executable for EntityGetQuery {
+    type Output = Entity<TxMeta>;
+
+    fn execute_on(
+        self,
+        terra: &Terra,
+        branch: &BranchContext,
+        state: &mut CommandState,
+    ) -> Result<Self::Output, DbError> {
+        GetEntity::new(terra.schema.clone()).execute(branch, state, self)
     }
 }
 

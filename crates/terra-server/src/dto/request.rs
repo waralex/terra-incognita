@@ -121,6 +121,13 @@ pub struct GetTransactionReq {
     pub tx_id: Option<Uuid>,
 }
 
+/// `entity.get` command body.
+#[derive(Deserialize)]
+pub struct EntityGetReq {
+    pub entity: String,
+    pub at_tx: Option<Uuid>,
+}
+
 /// `entities.similar` command body.
 #[derive(Deserialize)]
 pub struct SimilarEntitiesReq {

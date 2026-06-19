@@ -1,4 +1,5 @@
 pub mod checkout;
+pub mod entity_get;
 pub mod entity_history;
 pub mod get_branch;
 pub mod get_transaction;

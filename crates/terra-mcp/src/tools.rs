@@ -66,7 +66,8 @@ pub fn list() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "entity": { "type": "string", "description": "Entity slug (dotted namespace, e.g. cube.cubestore)" },
+                    "entity": { "type": "string", "description": "Entity name/slug (dotted namespace, e.g. cube.cubestore)" },
+                    "project": { "type": "string", "description": "Project scope: prefixes the slug as <project>.<entity> (idempotent) and is recorded as a `project` property" },
                     "facts": {
                         "type": "array",
                         "items": {
@@ -95,9 +96,10 @@ pub fn list() -> Vec<Value> {
                 "properties": {
                     "from": { "type": "string" },
                     "relation": { "type": "string", "description": "Relation property, e.g. depends_on" },
-                    "to": { "type": "string", "description": "Target entity slug" },
+                    "to": { "type": "string", "description": "Target entity slug (used verbatim; may be in another project)" },
                     "reasoning": { "type": "string" },
-                    "source": { "type": "string" }
+                    "source": { "type": "string" },
+                    "project": { "type": "string", "description": "Project scope of `from`: prefixes its slug as <project>.<from> (idempotent)" }
                 },
                 "required": ["from", "relation", "to", "reasoning"]
             }
@@ -200,15 +202,17 @@ pub fn build_query(name: &str, args: &Value) -> Result<Value, String> {
         }
 
         "remember" => {
+            let project = opt_str(args, "project");
+            let slug = scoped_slug(project.as_deref(), &req_str(args, "entity")?);
+            let mut props = req(args, "facts")?.as_array().cloned().unwrap_or_default();
+            if let Some(p) = &project {
+                props.push(json!({ "property": "project", "value": p }));
+            }
             let mut entity_meta = json!({ "reasoning": req_str(args, "reasoning")? });
             if let Some(src) = opt_str(args, "source") {
                 entity_meta["source"] = json!(src);
             }
-            let mut entity = json!({
-                "slug": req_str(args, "entity")?,
-                "meta": entity_meta,
-                "properties": req(args, "facts")?,
-            });
+            let mut entity = json!({ "slug": slug, "meta": entity_meta, "properties": props });
             if let Some(d) = opt(args, "description") {
                 entity["description"] = d.clone();
             }
@@ -223,6 +227,7 @@ pub fn build_query(name: &str, args: &Value) -> Result<Value, String> {
         }
 
         "link" => {
+            let from = scoped_slug(opt_str(args, "project").as_deref(), &req_str(args, "from")?);
             let mut entity_meta = json!({ "reasoning": req_str(args, "reasoning")? });
             if let Some(src) = opt_str(args, "source") {
                 entity_meta["source"] = json!(src);
@@ -231,7 +236,7 @@ pub fn build_query(name: &str, args: &Value) -> Result<Value, String> {
                 "command": "transaction",
                 "meta": { "reasoning": req_str(args, "reasoning")? },
                 "write": [{
-                    "slug": req_str(args, "from")?,
+                    "slug": from,
                     "meta": entity_meta,
                     "properties": [{
                         "property": req_str(args, "relation")?,
@@ -294,6 +299,18 @@ pub fn build_query(name: &str, args: &Value) -> Result<Value, String> {
         })),
 
         other => Err(format!("unknown tool: {other}")),
+    }
+}
+
+/// Prefix a name with its project (`<project>.<name>`) to form a slug.
+///
+/// Idempotent: a name that already carries the prefix, or a missing project,
+/// is returned unchanged. Both the slug prefix and the `project` property are
+/// derived from the same input, so they cannot disagree.
+fn scoped_slug(project: Option<&str>, name: &str) -> String {
+    match project {
+        Some(p) if !name.starts_with(&format!("{p}.")) && name != p => format!("{p}.{name}"),
+        _ => name.to_string(),
     }
 }
 
@@ -397,6 +414,53 @@ mod tests {
         assert_eq!(m["state"], "active");
         assert_eq!(m["fields"]["content"], "prefer minimal comments");
         assert!(m["fields"].get("horizon").is_none());
+    }
+
+    #[test]
+    fn remember_project_prefixes_slug_and_adds_property() {
+        let q = build_query(
+            "remember",
+            &json!({
+                "entity": "cubestore",
+                "project": "cube",
+                "reasoning": "r",
+                "facts": [{ "property": "language", "value": "Rust" }]
+            }),
+        )
+        .unwrap();
+        let e = &q["write"][0];
+        assert_eq!(e["slug"], "cube.cubestore");
+        let props = e["properties"].as_array().unwrap();
+        assert!(props
+            .iter()
+            .any(|p| p["property"] == "project" && p["value"] == "cube"));
+    }
+
+    #[test]
+    fn project_prefix_is_idempotent() {
+        let q = build_query(
+            "remember",
+            &json!({
+                "entity": "cube.read-path",
+                "project": "cube",
+                "reasoning": "r",
+                "facts": []
+            }),
+        )
+        .unwrap();
+        assert_eq!(q["write"][0]["slug"], "cube.read-path");
+    }
+
+    #[test]
+    fn link_scopes_from_slug() {
+        let q = build_query(
+            "link",
+            &json!({ "from": "read-path", "project": "terra", "relation": "part_of", "to": "terra", "reasoning": "r" }),
+        )
+        .unwrap();
+        assert_eq!(q["write"][0]["slug"], "terra.read-path");
+        // `to` is used verbatim — not prefixed.
+        assert_eq!(q["write"][0]["properties"][0]["value"], "terra");
     }
 
     #[test]

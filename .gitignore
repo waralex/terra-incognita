@@ -8,3 +8,4 @@ temp
 .claude
 node_modules
 models
+.mcp.json

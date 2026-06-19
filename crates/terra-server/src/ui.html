@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>terra · memory</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #21262d; --muted: #8b949e;
+    --fg: #e6edf3; --accent: #58a6ff; --fact: #3fb950; --hyp: #d29922; --obs: #8b949e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         background: var(--bg); color: var(--fg); }
+  header { display: flex; gap: 10px; align-items: center; padding: 10px 14px;
+           border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); }
+  header .brand { font-weight: 700; color: var(--accent); margin-right: 6px; }
+  header input, header select, header button { font: inherit; background: var(--panel);
+           color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  header input#q { flex: 1; }
+  header button { cursor: pointer; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button.active { border-color: var(--accent); color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; height: calc(100vh - 53px); }
+  #list { border-right: 1px solid var(--line); overflow-y: auto; }
+  #detail { overflow-y: auto; padding: 16px 20px; }
+  .item { padding: 10px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:hover { background: var(--panel); }
+  .item .slug { color: var(--accent); }
+  .item .desc, .muted { color: var(--muted); }
+  .item .sim { float: right; color: var(--muted); }
+  h2.slug { color: var(--accent); margin: 0 0 4px; }
+  .desc-lead { color: var(--muted); margin: 0 0 16px; }
+  .prop { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--panel); }
+  .prop .name { color: var(--accent); font-weight: 700; }
+  .prop .val { white-space: pre-wrap; word-break: break-word; margin: 4px 0; }
+  .prop .val a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .badge { border: 1px solid var(--line); border-radius: 10px; padding: 0 7px; }
+  .badge.fact { color: var(--fact); border-color: var(--fact); }
+  .badge.hypothesis { color: var(--hyp); border-color: var(--hyp); }
+  .badge.observation { color: var(--obs); }
+  .reason { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .row-actions { margin: 4px 0 18px; display: flex; gap: 8px; }
+  .row-actions button { font: inherit; background: var(--panel); color: var(--fg);
+           border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+  .tl { border-left: 2px solid var(--line); margin-left: 6px; padding-left: 14px; }
+  .tl .entry { margin-bottom: 14px; }
+  .tl .when { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); padding: 24px 14px; }
+  code.k { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">terra</span>
+  <div class="tabs">
+    <button id="tab-search" class="active" onclick="setTab('search')">search</button>
+    <button id="tab-recent" onclick="setTab('recent')">recent</button>
+    <button title="coming soon" disabled>branches</button>
+  </div>
+  <input id="q" placeholder="search…  (regex for grep, free text for similar)"
+         onkeydown="if(event.key==='Enter')runSearch()" />
+  <select id="mode">
+    <option value="grep">grep</option>
+    <option value="similar">similar</option>
+  </select>
+  <select id="field" title="grep field">
+    <option value="slug">slug</option>
+    <option value="value">value</option>
+    <option value="property">property</option>
+    <option value="reasoning">reasoning</option>
+  </select>
+  <button onclick="runSearch()">go</button>
+</header>
+<main>
+  <div id="list"><div class="empty">search to list entities, or open <b>recent</b>.</div></div>
+  <div id="detail"><div class="empty">pick an entity to inspect.</div></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+async function query(body) {
+  const r = await fetch('/query', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+function setTab(tab) {
+  $('tab-search').classList.toggle('active', tab === 'search');
+  $('tab-recent').classList.toggle('active', tab === 'recent');
+  if (tab === 'recent') loadRecent();
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  const s = Math.max(0, (Date.now() - new Date(iso)) / 1000);
+  if (s < 90) return Math.round(s) + 's ago';
+  if (s < 5400) return Math.round(s / 60) + 'm ago';
+  if (s < 129600) return Math.round(s / 3600) + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
+function valHtml(v) {
+  if (typeof v === 'string') return `<a onclick="loadEntity('${esc(v)}')">${esc(v)}</a>`;
+  return esc(JSON.stringify(v));
+}
+
+function ctxBadges(c) {
+  const b = [];
+  if (c.status) b.push(`<span class="badge ${esc(c.status)}">${esc(c.status)}</span>`);
+  if (c.source) b.push(`<span class="badge">${esc(c.source)}</span>`);
+  if (c.time) b.push(`<span class="badge" title="${esc(c.time)}">${relTime(c.time)}</span>`);
+  return `<div class="badges">${b.join('')}</div>`;
+}
+
+async function runSearch() {
+  const text = $('q').value.trim();
+  if (!text) return;
+  const mode = $('mode').value;
+  let res;
+  if (mode === 'grep') {
+    res = await query({ command: 'entities.grep', pattern: text, in: [$('field').value], limit: 50 });
+  } else {
+    res = await query({ command: 'entities.similar', queries: [text], limit: 50 });
+  }
+  renderList(res, mode);
+}
+
+function renderList(res, mode) {
+  if (res.error) { $('list').innerHTML = `<div class="empty">${esc(res.error)}</div>`; return; }
+  if (!res.length) { $('list').innerHTML = `<div class="empty">no matches.</div>`; return; }
+  $('list').innerHTML = res.map(e => {
+    const ent = mode === 'similar' ? e : e;
+    const slug = ent.slug;
+    const desc = ent.description ? esc(typeof ent.description === 'string' ? ent.description : JSON.stringify(ent.description)) : '';
+    const sim = (mode === 'similar' && e.similarity != null) ? `<span class="sim">${e.similarity.toFixed(2)}</span>` : '';
+    return `<div class="item" onclick="loadEntity('${esc(slug)}')">${sim}<div class="slug">${esc(slug)}</div><div class="desc">${desc}</div></div>`;
+  }).join('');
+}
+
+async function loadEntity(slug) {
+  const e = await query({ command: 'entity.get', entity: slug });
+  if (e.error) { $('detail').innerHTML = `<div class="empty">${esc(slug)}: ${esc(e.error)}</div>`; return; }
+  const desc = e.description ? esc(typeof e.description === 'string' ? e.description : JSON.stringify(e.description)) : '';
+  const props = (e.properties || []).map(p => `
+    <div class="prop">
+      <span class="name">${esc(p.property)}</span>
+      <div class="val">${valHtml(p.value)}</div>
+      ${ctxBadges(p.context || {})}
+      ${p.context && p.context.reasoning ? `<div class="reason">${esc(p.context.reasoning)}</div>` : ''}
+    </div>`).join('');
+  $('detail').innerHTML = `
+    <h2 class="slug">${esc(e.slug)}</h2>
+    <p class="desc-lead">${desc}</p>
+    <div class="row-actions"><button onclick="loadHistory('${esc(e.slug)}')">history</button></div>
+    ${props || '<div class="empty">no properties.</div>'}`;
+}
+
+async function loadHistory(slug) {
+  const entries = await query({ command: 'entity.history', entity: slug, limit: 50 });
+  if (entries.error) { $('detail').innerHTML = `<div class="empty">${esc(entries.error)}</div>`; return; }
+  const tl = entries.map(en => {
+    const ctx = en.context || {};
+    const changed = (en.changed_properties || []).map(c => `<code class="k">${esc(c)}</code>`).join(' ');
+    const reason = en.transaction_meta && en.transaction_meta.reasoning ? esc(en.transaction_meta.reasoning) : '';
+    return `<div class="entry"><div class="when">${relTime(ctx.time)} · ${esc(ctx.time || '')}</div>
+      <div>changed: ${changed || '<span class="muted">—</span>'}</div>
+      ${reason ? `<div class="reason">${reason}</div>` : ''}</div>`;
+  }).join('');
+  $('detail').innerHTML = `<h2 class="slug">${esc(slug)}</h2>
+    <div class="row-actions"><button onclick="loadEntity('${esc(slug)}')">← snapshot</button></div>
+    <div class="tl">${tl || '<div class="empty">no history.</div>'}</div>`;
+}
+
+async function loadRecent() {
+  const txs = await query({ command: 'transactions.list', limit: 40 });
+  if (txs.error) { $('list').innerHTML = `<div class="empty">${esc(txs.error)}</div>`; return; }
+  $('list').innerHTML = txs.map(t => {
+    const c = t.context || {};
+    const reason = t.meta && t.meta.reasoning ? esc(t.meta.reasoning) : '<span class="muted">(no reasoning)</span>';
+    return `<div class="item" onclick="loadTx('${esc(c.tx_id)}')">
+      <div>${reason}</div><div class="desc">${relTime(c.time)}</div></div>`;
+  }).join('') || '<div class="empty">no transactions.</div>';
+}
+
+async function loadTx(txId) {
+  const d = await query({ command: 'transaction.get', tx_id: txId });
+  if (d.error) { $('detail').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+  // Entities are recall-able by slug; managed items (type/slug) are not, so
+  // they render as plain text.
+  const entGroup = (label, arr) => !arr || !arr.length ? '' :
+    `<div class="prop"><span class="name">${label}</span><div class="val">${arr.map(x => valHtml(x.slug)).join(', ')}</div></div>`;
+  const mgGroup = (label, arr) => !arr || !arr.length ? '' :
+    `<div class="prop"><span class="name">${label}</span><div class="val">${arr.map(x => esc(`${x.type_name}/${x.slug}`)).join(', ')}</div></div>`;
+  $('detail').innerHTML = `
+    <h2 class="slug">transaction</h2>
+    <p class="desc-lead">${esc((d.meta && d.meta.reasoning) || '')} · ${relTime(d.context && d.context.time)} · ${esc(d.branch || '')}</p>
+    ${entGroup('created', d.created)}
+    ${entGroup('updated', d.updated)}
+    ${entGroup('deleted', d.deleted)}
+    ${entGroup('touched', d.touched)}
+    ${mgGroup('created_managed', d.created_managed)}
+    ${mgGroup('updated_managed', d.updated_managed)}`;
+}
+</script>
+</body>
+</html>

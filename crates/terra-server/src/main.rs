@@ -3,6 +3,7 @@ mod dispatch;
 mod dto;
 mod error;
 mod format;
+mod ui;
 
 use std::sync::Arc;
 
@@ -10,7 +11,10 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::{routing::post, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use terra_core::config::ProjectConfig;
 use terra_core::embed::Embedder;
 use terra_core::embed::NoopEmbedder;
@@ -64,6 +68,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/query", post(handle_query))
+        .route("/ui", get(ui::serve_ui))
         .with_state(state);
 
     let addr = format!("{}:{}", server_config.host, server_config.port);

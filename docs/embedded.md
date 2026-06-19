@@ -68,7 +68,7 @@ fn reasoning(text: &str) -> Map<String, Value> {
 }
 
 let input = TransactionInput::new(reasoning("first entity"))
-    .create_entity(Entity::new(
+    .write_entity(Entity::new(
         "alice".parse()?,
         Some(Value::String("a person I know".into())),
         vec![PropertyValue {
@@ -83,9 +83,10 @@ let tx = terra.execute(&"main".parse()?, input)?;
 println!("committed: {}", tx.context.tx_id);
 ```
 
-Other builder methods on `TransactionInput`: `update_entity`,
-`create_managed`, `update_managed`, `delete_entity(DeleteItem)`,
-`touch(TouchItem)`.
+`write_entity` upserts — it creates the entity when its slug is new and
+updates it otherwise (a description is required only when creating). Other
+builder methods on `TransactionInput`: `create_managed`, `update_managed`,
+`delete_entity(DeleteItem)`, `touch(TouchItem)`.
 
 ## Reading
 

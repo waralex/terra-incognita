@@ -80,8 +80,7 @@ export async function handleChat(
 
   const parsed = parseResponse(fullText);
   const mutations: Record<string, unknown[]> = {};
-  if (parsed.create?.length) mutations.create = parsed.create;
-  if (parsed.update?.length) mutations.update = parsed.update;
+  if (parsed.write?.length) mutations.write = parsed.write;
   if (parsed.touch?.length) mutations.touch = parsed.touch;
   emit({ type: "answer", text: parsed.answer, mutations });
 
@@ -152,8 +151,7 @@ function buildTransactionReq(userMessage: string, parsed: ParsedResponse): Trans
     },
   };
 
-  if (parsed.create?.length) txReq.create = parsed.create;
-  if (parsed.update?.length) txReq.update = parsed.update;
+  if (parsed.write?.length) txReq.write = parsed.write;
   if (parsed.delete?.length) txReq.delete = parsed.delete;
   if (parsed.touch?.length) txReq.touch = parsed.touch;
 

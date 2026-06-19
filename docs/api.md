@@ -36,20 +36,23 @@ Request:
 command: transaction
 branch: main
 meta: { reasoning: "..." }      # per transaction_meta in schema.yaml
-create:         [<Entity>]      # optional
-update:         [<Entity>]      # optional
+write:          [<Entity>]      # optional — create if new, update if existing
 create_managed: [<Managed>]     # optional
 update_managed: [<Managed>]     # optional
 delete:         [<Delete>]      # optional
 touch:          [<Touch>]       # optional
 ```
 
+`write` upserts: an entity is created if its slug is new (or was deleted)
+and updated otherwise. `description` is required only when creating.
+`transaction.get` still reports each write as `created` vs `updated`.
+
 Types:
 
 ```yaml
 # Entity
 slug: alice
-description: "..."              # optional, any JSON
+description: "..."              # required when creating; optional when updating
 status: <status>                # optional; per assertion_statuses in schema.yaml
 properties:
   - { property: <slug>, value: <any JSON> }

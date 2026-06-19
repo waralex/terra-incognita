@@ -399,7 +399,7 @@ mod tests {
         exec_tx(&branch, TransactionInput::new(meta("first")));
         let tx2 = exec_tx(
             &branch,
-            TransactionInput::new(meta("second")).create_entity(Entity::new(
+            TransactionInput::new(meta("second")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -431,7 +431,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -445,7 +445,7 @@ mod tests {
 
         let tx2 = exec_tx(
             &branch,
-            TransactionInput::new(meta("update")).update_entity(Entity::new(
+            TransactionInput::new(meta("update")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -515,7 +515,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -555,7 +555,7 @@ mod tests {
                     "feature".parse().unwrap(),
                     meta("explore"),
                     None,
-                    TransactionInput::new(meta("on feature")).create_entity(Entity::new(
+                    TransactionInput::new(meta("on feature")).write_entity(Entity::new(
                         "bob".parse().unwrap(),
                         Some(serde_json::json!("A person")),
                         vec![PV {

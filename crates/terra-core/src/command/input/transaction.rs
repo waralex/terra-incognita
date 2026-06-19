@@ -42,16 +42,14 @@ impl DeleteItem {
 /// builder methods. Passed to `ExecuteTransaction` for execution.
 ///
 /// Processing order (enforced by executor, not by input):
-/// 1. Create entities
-/// 2. Update entities (assertions on existing)
-/// 3. Create managed items
-/// 4. Update managed items
-/// 5. Delete entities (soft-delete with reasoning)
-/// 6. Explicit touches (override auto-touches from create/update)
+/// 1. Write entities (create if new, update if existing)
+/// 2. Create managed items
+/// 3. Update managed items
+/// 4. Delete entities (soft-delete with reasoning)
+/// 5. Explicit touches (override auto-touches from writes)
 pub struct TransactionInput {
     pub(crate) meta: Map<String, Value>,
-    pub(crate) create_entities: Vec<Entity>,
-    pub(crate) update_entities: Vec<Entity>,
+    pub(crate) write_entities: Vec<Entity>,
     pub(crate) create_managed: Vec<Managed>,
     pub(crate) update_managed: Vec<Managed>,
     pub(crate) delete_entities: Vec<DeleteItem>,
@@ -63,8 +61,7 @@ impl TransactionInput {
     pub fn new(meta: Map<String, Value>) -> Self {
         Self {
             meta,
-            create_entities: Vec::new(),
-            update_entities: Vec::new(),
+            write_entities: Vec::new(),
             create_managed: Vec::new(),
             update_managed: Vec::new(),
             delete_entities: Vec::new(),
@@ -72,15 +69,10 @@ impl TransactionInput {
         }
     }
 
-    /// Add a new entity to create.
-    pub fn create_entity(mut self, entity: Entity) -> Self {
-        self.create_entities.push(entity);
-        self
-    }
-
-    /// Add an existing entity to update.
-    pub fn update_entity(mut self, entity: Entity) -> Self {
-        self.update_entities.push(entity);
+    /// Add an entity to write — created if new, updated if it already exists.
+    /// A description is required only when the entity is new.
+    pub fn write_entity(mut self, entity: Entity) -> Self {
+        self.write_entities.push(entity);
         self
     }
 
@@ -125,8 +117,8 @@ mod tests {
     fn empty_transaction() {
         let input = TransactionInput::new(meta("test"));
         assert_eq!(input.meta["reasoning"], "test");
-        assert!(input.create_entities.is_empty());
-        assert!(input.update_entities.is_empty());
+        assert!(input.write_entities.is_empty());
+        assert!(input.write_entities.is_empty());
         assert!(input.create_managed.is_empty());
         assert!(input.update_managed.is_empty());
     }
@@ -134,13 +126,13 @@ mod tests {
     #[test]
     fn with_entities() {
         let input = TransactionInput::new(meta("add entities"))
-            .create_entity(Entity::new(
+            .write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
                 Map::new(),
             ))
-            .update_entity(Entity::new(
+            .write_entity(Entity::new(
                 "bob".parse().unwrap(),
                 None,
                 vec![PropertyValue {
@@ -151,10 +143,9 @@ mod tests {
                 Map::new(),
             ));
 
-        assert_eq!(input.create_entities.len(), 1);
-        assert_eq!(input.create_entities[0].slug.as_str(), "alice");
-        assert_eq!(input.update_entities.len(), 1);
-        assert_eq!(input.update_entities[0].slug.as_str(), "bob");
+        assert_eq!(input.write_entities.len(), 2);
+        assert_eq!(input.write_entities[0].slug.as_str(), "alice");
+        assert_eq!(input.write_entities[1].slug.as_str(), "bob");
     }
 
     #[test]
@@ -188,13 +179,13 @@ mod tests {
         fields.insert("goal".into(), serde_json::json!("investigate"));
 
         let input = TransactionInput::new(meta("mixed"))
-            .create_entity(Entity::new(
+            .write_entity(Entity::new(
                 "server".parse().unwrap(),
                 Some(serde_json::json!("Production server")),
                 vec![],
                 Map::new(),
             ))
-            .update_entity(Entity::new(
+            .write_entity(Entity::new(
                 "server".parse().unwrap(),
                 None,
                 vec![PropertyValue {
@@ -211,8 +202,7 @@ mod tests {
                 fields,
             ));
 
-        assert_eq!(input.create_entities.len(), 1);
-        assert_eq!(input.update_entities.len(), 1);
+        assert_eq!(input.write_entities.len(), 2);
         assert_eq!(input.create_managed.len(), 1);
         assert!(input.update_managed.is_empty());
     }

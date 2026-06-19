@@ -216,7 +216,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -244,7 +244,7 @@ mod tests {
         for name in ["alice", "bob", "charlie"] {
             exec_tx(
                 &branch,
-                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                TransactionInput::new(meta("create")).write_entity(Entity::new(
                     name.parse().unwrap(),
                     Some(serde_json::json!("person")),
                     vec![],
@@ -267,7 +267,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "server".parse().unwrap(),
                 Some(serde_json::json!("A server")),
                 vec![PV {
@@ -299,7 +299,7 @@ mod tests {
 
         exec_tx(
             &main,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -343,7 +343,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
@@ -380,7 +380,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -407,7 +407,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "bob".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -432,7 +432,7 @@ mod tests {
         // Create entity on main.
         exec_tx(
             &main,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -487,7 +487,7 @@ mod tests {
                     "child".parse().unwrap(),
                     meta("explore"),
                     None,
-                    TransactionInput::new(meta("create on child")).create_entity(Entity::new(
+                    TransactionInput::new(meta("create on child")).write_entity(Entity::new(
                         "bob".parse().unwrap(),
                         Some(serde_json::json!("A person")),
                         vec![],

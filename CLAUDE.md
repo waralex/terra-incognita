@@ -80,12 +80,16 @@ separately.
 
 **Processing order** inside a transaction (enforced by the executor):
 
-1. Create entities
-2. Update entities (new assertions on existing entities)
-3. Create managed items
-4. Update managed items
-5. Delete entities (soft-delete with reasoning)
-6. Explicit touches (override auto-touches from create/update)
+1. Write entities (upsert — create if new, update if existing)
+2. Create managed items
+3. Update managed items
+4. Delete entities (soft-delete with reasoning)
+5. Explicit touches (override auto-touches from writes)
+
+A write creates the entity when its slug is new (or was previously
+deleted) and updates it otherwise; `description` is required only when
+creating. The executor still classifies each write as created vs
+updated, so `transaction.get` reports the two separately.
 
 ### Touching
 
@@ -174,8 +178,7 @@ not configured.
 ```rust
 pub struct TransactionInput {
     meta: Map<String, Value>,              // transaction_meta
-    create_entities: Vec<Entity>,
-    update_entities: Vec<Entity>,
+    write_entities: Vec<Entity>,           // upsert: create if new, else update
     create_managed: Vec<Managed>,
     update_managed: Vec<Managed>,
     delete_entities: Vec<DeleteItem>,      // { entity, reasoning }

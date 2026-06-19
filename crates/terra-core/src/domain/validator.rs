@@ -73,21 +73,12 @@ impl DomainValidator {
         validate_fields(meta, &self.schema.branch_meta, true)
     }
 
-    /// Validate an entity for creation (description required).
-    pub fn check_entity_create(&self, entity: &Entity) -> Result<(), ValidationError> {
-        if entity.description.is_none() {
-            return Err(ValidationError::MissingDescription {
-                slug: entity.slug.to_string(),
-            });
-        }
-        if !entity.properties.is_empty() {
-            self.check_entity_change_meta(&entity.meta)?;
-        }
-        self.check_status(&entity.status)
-    }
-
-    /// Validate an entity for update (all fields optional).
-    pub fn check_entity_update(&self, entity: &Entity) -> Result<(), ValidationError> {
+    /// Validate an entity write (create or update).
+    ///
+    /// Checks change-meta (when properties are present) and status. The
+    /// description requirement is conditional on the entity being new, which
+    /// is only known at execution time, so it is enforced by the executor.
+    pub fn check_entity_write(&self, entity: &Entity) -> Result<(), ValidationError> {
         if !entity.properties.is_empty() {
             self.check_entity_change_meta(&entity.meta)?;
         }
@@ -320,23 +311,16 @@ mod tests {
             vec![],
             Map::new(),
         );
-        v.check_entity_create(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     #[test]
-    fn entity_create_missing_description() {
+    fn entity_write_without_description_ok() {
+        // Description-required-on-create is enforced by the executor (it needs
+        // to know whether the entity exists); the validator allows it.
         let v = DomainValidator::new(schema_with_tx_meta());
         let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
-
-        let err = v.check_entity_create(&e).unwrap_err();
-        assert!(matches!(err, ValidationError::MissingDescription { slug } if slug == "person"));
-    }
-
-    #[test]
-    fn entity_update_without_description() {
-        let v = DomainValidator::new(schema_with_tx_meta());
-        let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
-        v.check_entity_update(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     // --- Managed create ---
@@ -514,7 +498,7 @@ mod tests {
             }],
             meta,
         );
-        v.check_entity_create(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     #[test]
@@ -532,7 +516,7 @@ mod tests {
             }],
             Map::new(),
         );
-        let err = v.check_entity_create(&e).unwrap_err();
+        let err = v.check_entity_write(&e).unwrap_err();
         assert!(matches!(err, ValidationError::MissingField { field } if field == "reasoning"));
     }
 
@@ -545,7 +529,7 @@ mod tests {
             vec![],
             Map::new(),
         );
-        v.check_entity_create(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     #[test]
@@ -563,7 +547,7 @@ mod tests {
             }],
             Map::new(),
         );
-        let err = v.check_entity_update(&e).unwrap_err();
+        let err = v.check_entity_write(&e).unwrap_err();
         assert!(matches!(err, ValidationError::MissingField { field } if field == "reasoning"));
     }
 
@@ -571,7 +555,7 @@ mod tests {
     fn entity_update_without_properties_skips_change_meta() {
         let v = DomainValidator::new(schema_with_entity_change_meta());
         let e = Entity::new("person".parse().unwrap(), None, vec![], Map::new());
-        v.check_entity_update(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     // --- Lifecycle state validation ---
@@ -621,7 +605,7 @@ mod tests {
             Map::new(),
         )
         .with_status(Some("fact".into()));
-        v.check_entity_create(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     #[test]
@@ -634,7 +618,7 @@ mod tests {
             Map::new(),
         )
         .with_status(Some("guess".into()));
-        let err = v.check_entity_create(&e).unwrap_err();
+        let err = v.check_entity_write(&e).unwrap_err();
         assert!(matches!(err, ValidationError::InvalidStatus { status } if status == "guess"));
     }
 
@@ -643,7 +627,7 @@ mod tests {
         let v = DomainValidator::new(schema_with_tx_meta());
         let e = Entity::new("alice".parse().unwrap(), None, vec![], Map::new())
             .with_status(Some("fact".into()));
-        let err = v.check_entity_update(&e).unwrap_err();
+        let err = v.check_entity_write(&e).unwrap_err();
         assert!(matches!(err, ValidationError::StatusesNotConfigured { .. }));
     }
 
@@ -656,7 +640,7 @@ mod tests {
             vec![],
             Map::new(),
         );
-        v.check_entity_create(&e).unwrap();
+        v.check_entity_write(&e).unwrap();
     }
 
     #[test]

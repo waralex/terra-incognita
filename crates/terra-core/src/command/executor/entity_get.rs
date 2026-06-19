@@ -124,7 +124,7 @@ mod tests {
         change.insert("source".into(), Value::String("user".into()));
         exec_tx(
             &branch,
-            TransactionInput::new(meta("seed")).create_entity(DomainEntity::new(
+            TransactionInput::new(meta("seed")).write_entity(DomainEntity::new(
                 "cube".parse().unwrap(),
                 Some(serde_json::json!("Cube.js project")),
                 vec![PV {
@@ -154,7 +154,7 @@ mod tests {
 
         let tx1 = exec_tx(
             &branch,
-            TransactionInput::new(meta("seed")).create_entity(DomainEntity::new(
+            TransactionInput::new(meta("seed")).write_entity(DomainEntity::new(
                 "cube".parse().unwrap(),
                 Some(serde_json::json!("Cube.js project")),
                 vec![PV {
@@ -167,7 +167,7 @@ mod tests {
         );
         exec_tx(
             &branch,
-            TransactionInput::new(meta("grow")).update_entity(DomainEntity::new(
+            TransactionInput::new(meta("grow")).write_entity(DomainEntity::new(
                 "cube".parse().unwrap(),
                 None,
                 vec![PV {
@@ -211,7 +211,7 @@ mod tests {
 
         exec_tx(
             &branch,
-            TransactionInput::new(meta("seed")).create_entity(DomainEntity::new(
+            TransactionInput::new(meta("seed")).write_entity(DomainEntity::new(
                 "tmp".parse().unwrap(),
                 Some(serde_json::json!("temporary")),
                 vec![],

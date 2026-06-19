@@ -454,7 +454,7 @@ mod tests {
                 "command": "transaction",
                 "branch": "main",
                 "meta": { "reasoning": "create entity" },
-                "create": [{
+                "write": [{
                     "slug": "alice",
                     "description": "A person",
                     "properties": [{ "property": "age", "value": 25 }],
@@ -514,7 +514,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "create" },
-                "create": [{
+                "write": [{
                     "slug": "bob",
                     "description": "B person",
                     "properties": [{ "property": "city", "value": "Berlin" }],
@@ -550,7 +550,7 @@ mod tests {
                 json!({
                     "command": "transaction",
                     "meta": { "reasoning": "create" },
-                    "create": [{
+                    "write": [{
                         "slug": slug,
                         "description": "svc",
                         "meta": { "reasoning": "initial" }
@@ -585,7 +585,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "create" },
-                "create": [{
+                "write": [{
                     "slug": "auth-service",
                     "description": "svc",
                     "properties": [{ "property": "role", "value": "authentication" }],
@@ -620,7 +620,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "create" },
-                "create": [{
+                "write": [{
                     "slug": "cube",
                     "description": "Cube.js project",
                     "meta": { "reasoning": "initial" },
@@ -828,7 +828,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "create" },
-                "create": [{
+                "write": [{
                     "slug": "alice",
                     "description": "A person",
                     "properties": [{ "property": "age", "value": 25 }],
@@ -864,7 +864,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "create alice" },
-                "create": [{
+                "write": [{
                     "slug": "alice",
                     "description": "a person",
                     "properties": [{ "property": "age", "value": 25 }],
@@ -879,7 +879,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "alice update" },
-                "update": [{
+                "write": [{
                     "slug": "alice",
                     "properties": [
                         { "property": "age", "value": 26 },
@@ -927,7 +927,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "create" },
-                "create": [{
+                "write": [{
                     "slug": "alice",
                     "description": "p",
                     "properties": [{ "property": "age", "value": 25 }],
@@ -940,7 +940,7 @@ mod tests {
             json!({
                 "command": "transaction",
                 "meta": { "reasoning": "city only" },
-                "update": [{
+                "write": [{
                     "slug": "alice",
                     "properties": [{ "property": "city", "value": "Berlin" }],
                     "meta": { "reasoning": "moved" }

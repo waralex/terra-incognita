@@ -10,7 +10,7 @@ use crate::command::CommandState;
 use crate::domain::entity::Entity;
 use crate::domain::transaction::Transaction;
 use crate::domain::tx_meta::{time_from_uuid, TxMeta};
-use crate::domain::validator::DomainValidator;
+use crate::domain::validator::{DomainValidator, ValidationError};
 use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
 use crate::io::DbError;
@@ -195,89 +195,42 @@ impl ExecuteTransaction {
         Ok(())
     }
 
-    fn create_entity(
+    /// Write an entity — create if new (absent or previously deleted),
+    /// update if it already exists. Returns the change plus whether the
+    /// entity was newly created (`true`) or updated (`false`). A description
+    /// is required when creating.
+    fn write_entity(
         &self,
         branch: &BranchContext,
         state: &mut CommandState,
         tx_id: Uuid,
         entity: &Entity,
-    ) -> Result<ChangeItem, DbError> {
+    ) -> Result<(ChangeItem, bool), DbError> {
         let bound = EntityKey::bound().with_prefix(|k| {
             k.branch = branch.id().clone();
             k.entity = entity.slug.clone();
         });
-        if let Some(existing) = branch.get_latest::<EntityEntry>(&bound)? {
-            if !existing.value.is_deleted() {
-                return Err(DbError::Storage(format!(
-                    "entity already exists: {}",
-                    entity.slug
-                )));
+
+        let existing_record = branch.get_latest::<EntityEntry>(&bound)?;
+        let is_new = existing_record
+            .as_ref()
+            .map(|e| e.value.is_deleted())
+            .unwrap_or(true);
+
+        if is_new && entity.description.is_none() {
+            return Err(ValidationError::MissingDescription {
+                slug: entity.slug.to_string(),
             }
+            .into());
         }
 
-        state.batch().put(&EntityEntry {
-            key: EntityKey {
-                branch: branch.id().clone(),
-                entity: entity.slug.clone(),
-                tx_id,
-            },
-            value: EntityValue {
-                description: entity.description.clone(),
-                ..Default::default()
-            },
-        })?;
-
-        Self::write_touched(branch, state.batch(), tx_id, entity)?;
-        let change_id = self.write_assertions(branch, state, tx_id, entity)?;
-        // New entity — description from input, no existing properties.
-        Self::write_embedding(
-            state,
-            branch,
-            tx_id,
-            entity,
-            change_id,
-            entity.description.as_ref(),
-            &[],
-        )?;
-
-        Ok(ChangeItem {
-            entity: entity.slug.clone(),
-            change_id,
-            properties: entity
-                .properties
-                .iter()
-                .map(|pv| pv.property.clone())
-                .collect(),
-        })
-    }
-
-    fn update_entity(
-        &self,
-        branch: &BranchContext,
-        state: &mut CommandState,
-        tx_id: Uuid,
-        entity: &Entity,
-    ) -> Result<ChangeItem, DbError> {
-        let bound = EntityKey::bound().with_prefix(|k| {
-            k.branch = branch.id().clone();
-            k.entity = entity.slug.clone();
-        });
-        if !branch.exists::<EntityEntry>(&bound)? {
-            return Err(DbError::Storage(format!(
-                "entity not found: {}",
-                entity.slug
-            )));
-        }
-
-        // Read existing state for embedding BEFORE writing to batch.
-        // Guarded: skip DB reads when embedder is inactive.
+        // Read existing state for embedding BEFORE writing to batch. Only an
+        // update with an active embedder needs it; a fresh entity has none.
         let stored_desc: Option<serde_json::Value>;
         let existing: Vec<AssertionEntry>;
-        if state.embedder().dimensions() != 0 {
+        if !is_new && state.embedder().dimensions() != 0 {
             stored_desc = if entity.description.is_none() {
-                branch
-                    .get_latest::<EntityEntry>(&bound)?
-                    .and_then(|e| e.value.description)
+                existing_record.and_then(|e| e.value.description)
             } else {
                 None
             };
@@ -288,7 +241,9 @@ impl ExecuteTransaction {
         }
         let description = entity.description.as_ref().or(stored_desc.as_ref());
 
-        if entity.description.is_some() {
+        // Write the entity record when creating, or when an update supplies a
+        // new description.
+        if is_new || entity.description.is_some() {
             state.batch().put(&EntityEntry {
                 key: EntityKey {
                     branch: branch.id().clone(),
@@ -314,15 +269,18 @@ impl ExecuteTransaction {
             &existing,
         )?;
 
-        Ok(ChangeItem {
-            entity: entity.slug.clone(),
-            change_id,
-            properties: entity
-                .properties
-                .iter()
-                .map(|pv| pv.property.clone())
-                .collect(),
-        })
+        Ok((
+            ChangeItem {
+                entity: entity.slug.clone(),
+                change_id,
+                properties: entity
+                    .properties
+                    .iter()
+                    .map(|pv| pv.property.clone())
+                    .collect(),
+            },
+            is_new,
+        ))
     }
 
     fn create_managed_item(
@@ -526,11 +484,8 @@ impl Command for ExecuteTransaction {
         // Validate everything before touching storage.
         self.validator
             .check_transaction(&Transaction::new(input.meta.clone()))?;
-        for entity in &input.create_entities {
-            self.validator.check_entity_create(entity)?;
-        }
-        for entity in &input.update_entities {
-            self.validator.check_entity_update(entity)?;
+        for entity in &input.write_entities {
+            self.validator.check_entity_write(entity)?;
         }
         for managed in &input.create_managed {
             self.validator.check_managed_create(managed)?;
@@ -543,25 +498,20 @@ impl Command for ExecuteTransaction {
 
         let mut seen_entity_slugs: HashSet<&Slug> = HashSet::new();
         let mut created_items = Vec::new();
-        for entity in &input.create_entities {
-            if !seen_entity_slugs.insert(&entity.slug) {
-                return Err(DbError::Storage(format!(
-                    "duplicate entity in transaction: {}",
-                    entity.slug
-                )));
-            }
-            created_items.push(self.create_entity(branch, state, tx_id, entity)?);
-        }
-
         let mut updated_items = Vec::new();
-        for entity in &input.update_entities {
+        for entity in &input.write_entities {
             if !seen_entity_slugs.insert(&entity.slug) {
                 return Err(DbError::Storage(format!(
                     "duplicate entity in transaction: {}",
                     entity.slug
                 )));
             }
-            updated_items.push(self.update_entity(branch, state, tx_id, entity)?);
+            let (item, is_new) = self.write_entity(branch, state, tx_id, entity)?;
+            if is_new {
+                created_items.push(item);
+            } else {
+                updated_items.push(item);
+            }
         }
 
         let mut deleted_items = Vec::new();
@@ -762,7 +712,7 @@ mod tests {
 
         let result = exec(
             &branch,
-            TransactionInput::new(meta("introduce alice")).create_entity(Entity::new(
+            TransactionInput::new(meta("introduce alice")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -782,14 +732,14 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_entity_slug_fails() {
+    fn rewriting_existing_entity_updates() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
         exec(
             &branch,
-            TransactionInput::new(meta("first")).create_entity(Entity::new(
+            TransactionInput::new(meta("first")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("First")),
                 vec![],
@@ -797,21 +747,22 @@ mod tests {
             )),
         );
 
-        let cmd = cmd();
-        let mut state = CommandState::new(branch.storage());
-        let err = cmd
-            .execute(
-                &branch,
-                &mut state,
-                TransactionInput::new(meta("second")).create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("Duplicate")),
-                    vec![],
-                    Map::new(),
-                )),
-            )
-            .unwrap_err();
-        assert!(err.to_string().contains("already exists"));
+        // Writing the same slug again updates instead of failing.
+        exec(
+            &branch,
+            TransactionInput::new(meta("second")).write_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Updated")),
+                vec![],
+                Map::new(),
+            )),
+        );
+
+        let entry = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.value.description, Some(serde_json::json!("Updated")));
     }
 
     #[test]
@@ -833,13 +784,13 @@ mod tests {
         let result = exec(
             &branch,
             TransactionInput::new(meta("batch"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("Person A")),
                     vec![],
                     Map::new(),
                 ))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "bob".parse().unwrap(),
                     Some(serde_json::json!("Person B")),
                     vec![],
@@ -868,7 +819,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -887,7 +838,7 @@ mod tests {
 
         let result = exec(
             &branch,
-            TransactionInput::new(meta("create with props")).create_entity(Entity::new(
+            TransactionInput::new(meta("create with props")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
@@ -954,7 +905,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -964,7 +915,7 @@ mod tests {
 
         let result = exec(
             &branch,
-            TransactionInput::new(meta("update")).update_entity(Entity::new(
+            TransactionInput::new(meta("update")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PropertyValue {
@@ -993,7 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn update_entity_not_found() {
+    fn write_new_entity_requires_description() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
@@ -1004,7 +955,7 @@ mod tests {
             .execute(
                 &branch,
                 &mut state,
-                TransactionInput::new(meta("update missing")).update_entity(Entity::new(
+                TransactionInput::new(meta("write missing")).write_entity(Entity::new(
                     "ghost".parse().unwrap(),
                     None,
                     vec![],
@@ -1012,7 +963,10 @@ mod tests {
                 )),
             )
             .unwrap_err();
-        assert!(err.to_string().contains("entity not found: ghost"));
+        assert!(matches!(
+            err,
+            DbError::Validation(ValidationError::MissingDescription { slug }) if slug == "ghost"
+        ));
     }
 
     #[test]
@@ -1023,7 +977,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Original")),
                 vec![],
@@ -1033,7 +987,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update desc")).update_entity(Entity::new(
+            TransactionInput::new(meta("update desc")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Updated description")),
                 vec![],
@@ -1362,7 +1316,7 @@ mod tests {
         exec(
             &branch,
             TransactionInput::new(meta("setup"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "server".parse().unwrap(),
                     Some(serde_json::json!("Production server")),
                     vec![],
@@ -1386,7 +1340,7 @@ mod tests {
         let result = exec(
             &branch,
             TransactionInput::new(meta("mixed"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "db-node".parse().unwrap(),
                     Some(serde_json::json!("Database node")),
                     vec![PropertyValue {
@@ -1396,7 +1350,7 @@ mod tests {
                     }],
                     entity_meta("initial check"),
                 ))
-                .update_entity(Entity::new(
+                .write_entity(Entity::new(
                     "server".parse().unwrap(),
                     None,
                     vec![PropertyValue {
@@ -1453,7 +1407,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -1463,7 +1417,7 @@ mod tests {
 
         let result = exec(
             &branch,
-            TransactionInput::new(meta("observe")).update_entity(Entity::new(
+            TransactionInput::new(meta("observe")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![
@@ -1526,7 +1480,7 @@ mod tests {
 
         let result = exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -1551,7 +1505,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -1561,7 +1515,7 @@ mod tests {
 
         let result = exec(
             &branch,
-            TransactionInput::new(meta("update")).update_entity(Entity::new(
+            TransactionInput::new(meta("update")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PropertyValue {
@@ -1591,13 +1545,13 @@ mod tests {
         let result = exec(
             &branch,
             TransactionInput::new(meta("batch"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("Person A")),
                     vec![],
                     entity_meta("introduce alice"),
                 ))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "bob".parse().unwrap(),
                     Some(serde_json::json!("Person B")),
                     vec![],
@@ -1627,7 +1581,7 @@ mod tests {
         let result = exec(
             &branch,
             TransactionInput::new(meta("investigate"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![],
@@ -1736,7 +1690,7 @@ mod tests {
 
             exec(
                 &branch,
-                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                TransactionInput::new(meta("create")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PropertyValue {
@@ -1769,7 +1723,7 @@ mod tests {
             let result = exec_with_embedder(
                 &branch,
                 embedder.clone(),
-                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                TransactionInput::new(meta("create")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PropertyValue {
@@ -1806,7 +1760,7 @@ mod tests {
             exec_with_embedder(
                 &branch,
                 embedder.clone(),
-                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                TransactionInput::new(meta("create")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![],
@@ -1817,7 +1771,7 @@ mod tests {
             let result = exec_with_embedder(
                 &branch,
                 embedder.clone(),
-                TransactionInput::new(meta("update")).update_entity(Entity::new(
+                TransactionInput::new(meta("update")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     None,
                     vec![PropertyValue {
@@ -1853,7 +1807,7 @@ mod tests {
             exec_with_embedder(
                 &branch,
                 embedder.clone(),
-                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                TransactionInput::new(meta("create")).write_entity(Entity::new(
                     "server".parse().unwrap(),
                     Some(serde_json::json!("Production server")),
                     vec![
@@ -1890,7 +1844,7 @@ mod tests {
                 &branch,
                 embedder.clone(),
                 TransactionInput::new(meta("create"))
-                    .create_entity(Entity::new(
+                    .write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("A person")),
                         vec![PropertyValue {
@@ -1900,7 +1854,7 @@ mod tests {
                         }],
                         entity_meta("initial"),
                     ))
-                    .create_entity(Entity::new(
+                    .write_entity(Entity::new(
                         "bob".parse().unwrap(),
                         Some(serde_json::json!("Another person")),
                         vec![PropertyValue {
@@ -1934,7 +1888,7 @@ mod tests {
                 exec_with_embedder(
                     &branch,
                     embedder.clone(),
-                    TransactionInput::new(meta("create")).create_entity(Entity::new(
+                    TransactionInput::new(meta("create")).write_entity(Entity::new(
                         name.parse().unwrap(),
                         Some(serde_json::json!("person")),
                         vec![],
@@ -1958,7 +1912,7 @@ mod tests {
             exec_with_embedder(
                 &branch,
                 embedder.clone(),
-                TransactionInput::new(meta("create")).create_entity(Entity::new(
+                TransactionInput::new(meta("create")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![],
@@ -1985,7 +1939,7 @@ mod tests {
         let tx1 = exec(
             &branch,
             TransactionInput::new(meta("setup"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("Person A")),
                     vec![PropertyValue {
@@ -1995,7 +1949,7 @@ mod tests {
                     }],
                     entity_meta("census"),
                 ))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "bob".parse().unwrap(),
                     Some(serde_json::json!("Person B")),
                     vec![],
@@ -2025,7 +1979,7 @@ mod tests {
         let tx2 = exec(
             &branch,
             TransactionInput::new(meta("mixed ops"))
-                .update_entity(Entity::new(
+                .write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     None,
                     vec![PropertyValue {
@@ -2073,13 +2027,13 @@ mod tests {
                 &branch,
                 &mut state,
                 TransactionInput::new(meta("dup"))
-                    .create_entity(Entity::new(
+                    .write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("First")),
                         vec![],
                         Map::new(),
                     ))
-                    .create_entity(Entity::new(
+                    .write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("Second")),
                         vec![],
@@ -2136,13 +2090,13 @@ mod tests {
         let result = exec(
             &branch,
             TransactionInput::new(meta("two entities"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("Person A")),
                     vec![],
                     Map::new(),
                 ))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "bob".parse().unwrap(),
                     Some(serde_json::json!("Person B")),
                     vec![],
@@ -2161,7 +2115,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -2176,7 +2130,7 @@ mod tests {
                 &branch,
                 &mut state,
                 TransactionInput::new(meta("dup update"))
-                    .update_entity(Entity::new(
+                    .write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         None,
                         vec![PropertyValue {
@@ -2186,7 +2140,7 @@ mod tests {
                         }],
                         entity_meta("first"),
                     ))
-                    .update_entity(Entity::new(
+                    .write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         None,
                         vec![PropertyValue {
@@ -2211,7 +2165,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![],
@@ -2251,7 +2205,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Original Alice")),
                 vec![PropertyValue {
@@ -2274,7 +2228,7 @@ mod tests {
         // Re-create with same slug, different data.
         exec(
             &branch,
-            TransactionInput::new(meta("recreate")).create_entity(Entity::new(
+            TransactionInput::new(meta("recreate")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("New Alice")),
                 vec![PropertyValue {
@@ -2305,7 +2259,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
                 vec![
@@ -2334,7 +2288,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("recreate")).create_entity(Entity::new(
+            TransactionInput::new(meta("recreate")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("New Alice")),
                 vec![PropertyValue {
@@ -2360,7 +2314,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
                 vec![PropertyValue {
@@ -2385,35 +2339,47 @@ mod tests {
     }
 
     #[test]
-    fn create_non_deleted_entity_still_fails() {
+    fn rewrite_after_delete_recreates() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
         let branch = BranchContext::main(storage);
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
                 vec![],
                 Map::new(),
             )),
         );
+        exec(
+            &branch,
+            TransactionInput::new(meta("delete")).delete_entity(DeleteItem::new(
+                "alice".parse().unwrap(),
+                serde_json::json!("removed"),
+            )),
+        );
 
-        let c = cmd();
-        let mut state = CommandState::new(branch.storage());
-        let err = c
-            .execute(
-                &branch,
-                &mut state,
-                TransactionInput::new(meta("duplicate")).create_entity(Entity::new(
-                    "alice".parse().unwrap(),
-                    Some(serde_json::json!("Duplicate")),
-                    vec![],
-                    Map::new(),
-                )),
-            )
-            .unwrap_err();
-        assert!(err.to_string().contains("already exists"));
+        // Writing the slug again after deletion re-creates it.
+        exec(
+            &branch,
+            TransactionInput::new(meta("recreate")).write_entity(Entity::new(
+                "alice".parse().unwrap(),
+                Some(serde_json::json!("Alice again")),
+                vec![],
+                Map::new(),
+            )),
+        );
+
+        let entry = branch
+            .get_latest::<EntityEntry>(&entity_bound(&branch, "alice"))
+            .unwrap()
+            .unwrap();
+        assert!(!entry.value.is_deleted());
+        assert_eq!(
+            entry.value.description,
+            Some(serde_json::json!("Alice again"))
+        );
     }
 }

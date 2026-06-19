@@ -324,7 +324,7 @@ mod tests {
         let tx = terra
             .execute(
                 &main,
-                TransactionInput::new(meta("create entity")).create_entity(Entity::new(
+                TransactionInput::new(meta("create entity")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PV {
@@ -378,7 +378,7 @@ mod tests {
         terra
             .execute(
                 &main,
-                TransactionInput::new(meta("seed")).create_entity(Entity::new(
+                TransactionInput::new(meta("seed")).write_entity(Entity::new(
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![],
@@ -441,7 +441,7 @@ mod tests {
         terra
             .execute(
                 &main,
-                TransactionInput::new(meta("init")).create_entity(Entity::new(
+                TransactionInput::new(meta("init")).write_entity(Entity::new(
                     "auth-service".parse().unwrap(),
                     Some(serde_json::json!("auth service")),
                     vec![PV {
@@ -489,7 +489,7 @@ mod tests {
         terra
             .execute(
                 &main,
-                TransactionInput::new(meta("settle")).create_entity(
+                TransactionInput::new(meta("settle")).write_entity(
                     Entity::new(
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("A person")),
@@ -508,7 +508,7 @@ mod tests {
         terra
             .execute(
                 &main,
-                TransactionInput::new(meta("guess")).update_entity(
+                TransactionInput::new(meta("guess")).write_entity(
                     Entity::new(
                         "alice".parse().unwrap(),
                         None,

@@ -229,7 +229,7 @@ mod tests {
     fn seed(branch: &BranchContext) {
         exec(
             branch,
-            TransactionInput::new(meta("t1")).create_entity(person(
+            TransactionInput::new(meta("t1")).write_entity(person(
                 "auth-service",
                 vec![("role", serde_json::json!("authentication"))],
                 "infra setup",
@@ -237,7 +237,7 @@ mod tests {
         );
         exec(
             branch,
-            TransactionInput::new(meta("t2")).create_entity(person(
+            TransactionInput::new(meta("t2")).write_entity(person(
                 "auth-gateway",
                 vec![("region", serde_json::json!("eu"))],
                 "edge node",
@@ -245,7 +245,7 @@ mod tests {
         );
         exec(
             branch,
-            TransactionInput::new(meta("t3")).create_entity(person(
+            TransactionInput::new(meta("t3")).write_entity(person(
                 "payment-service",
                 vec![("currency", serde_json::json!("usd"))],
                 "billing",
@@ -398,12 +398,12 @@ mod tests {
 
         let tx1 = exec_tx(
             &branch,
-            TransactionInput::new(meta("t1")).create_entity(person("alice", vec![], "first")),
+            TransactionInput::new(meta("t1")).write_entity(person("alice", vec![], "first")),
         );
         // Created after tx1 — must not appear when querying at tx1.
         exec(
             &branch,
-            TransactionInput::new(meta("t2")).create_entity(person("bob", vec![], "later")),
+            TransactionInput::new(meta("t2")).write_entity(person("bob", vec![], "later")),
         );
 
         // Full-snapshot path (include_properties = true) is the one that used to
@@ -424,7 +424,7 @@ mod tests {
 
         exec(
             &main,
-            TransactionInput::new(meta("create")).create_entity(person(
+            TransactionInput::new(meta("create")).write_entity(person(
                 "auth-service",
                 vec![("role", serde_json::json!("authentication"))],
                 "infra",
@@ -476,7 +476,7 @@ mod tests {
 
         exec(
             &main,
-            TransactionInput::new(meta("create")).create_entity(person("auth-service", vec![], "infra")),
+            TransactionInput::new(meta("create")).write_entity(person("auth-service", vec![], "infra")),
         );
 
         let checkout = ExecuteCheckout::new(DomainValidator::new(test_schema()));

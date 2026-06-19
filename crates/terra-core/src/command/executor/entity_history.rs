@@ -314,7 +314,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create alice")).create_entity(Entity::new(
+            TransactionInput::new(meta("create alice")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -328,7 +328,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update alice")).update_entity(Entity::new(
+            TransactionInput::new(meta("update alice")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -367,7 +367,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -381,7 +381,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update desc")).update_entity(Entity::new(
+            TransactionInput::new(meta("update desc")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A great person")),
                 vec![],
@@ -410,7 +410,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
@@ -431,7 +431,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update age")).update_entity(Entity::new(
+            TransactionInput::new(meta("update age")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -445,7 +445,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update city")).update_entity(Entity::new(
+            TransactionInput::new(meta("update city")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -480,7 +480,7 @@ mod tests {
 
         let tx1 = exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -494,7 +494,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 1")).update_entity(Entity::new(
+            TransactionInput::new(meta("update 1")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -508,7 +508,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 2")).update_entity(Entity::new(
+            TransactionInput::new(meta("update 2")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -537,7 +537,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -551,7 +551,7 @@ mod tests {
 
         let tx2 = exec(
             &branch,
-            TransactionInput::new(meta("update 1")).update_entity(Entity::new(
+            TransactionInput::new(meta("update 1")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -565,7 +565,7 @@ mod tests {
 
         let tx3 = exec(
             &branch,
-            TransactionInput::new(meta("update 2")).update_entity(Entity::new(
+            TransactionInput::new(meta("update 2")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -596,7 +596,7 @@ mod tests {
 
         exec(
             &main,
-            TransactionInput::new(meta("create on main")).create_entity(Entity::new(
+            TransactionInput::new(meta("create on main")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -618,7 +618,7 @@ mod tests {
                     "child".parse().unwrap(),
                     meta("explore"),
                     None,
-                    TransactionInput::new(meta("update on child")).update_entity(Entity::new(
+                    TransactionInput::new(meta("update on child")).write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         None,
                         vec![PV {
@@ -655,7 +655,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -669,7 +669,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("delete age")).update_entity(Entity::new(
+            TransactionInput::new(meta("delete age")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -719,7 +719,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -733,7 +733,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 1")).update_entity(Entity::new(
+            TransactionInput::new(meta("update 1")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -747,7 +747,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update 2")).update_entity(Entity::new(
+            TransactionInput::new(meta("update 2")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {

@@ -284,7 +284,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
@@ -305,7 +305,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update")).update_entity(Entity::new(
+            TransactionInput::new(meta("update")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -333,7 +333,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
@@ -354,7 +354,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("delete age")).update_entity(Entity::new(
+            TransactionInput::new(meta("delete age")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -380,7 +380,7 @@ mod tests {
 
         let tx1 = exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
@@ -394,7 +394,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("update")).update_entity(Entity::new(
+            TransactionInput::new(meta("update")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
@@ -430,7 +430,7 @@ mod tests {
 
         exec(
             &main,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![
@@ -459,7 +459,7 @@ mod tests {
                     "child".parse().unwrap(),
                     meta("explore"),
                     None,
-                    TransactionInput::new(meta("update age")).update_entity(Entity::new(
+                    TransactionInput::new(meta("update age")).write_entity(Entity::new(
                         "alice".parse().unwrap(),
                         None,
                         vec![PV {
@@ -537,7 +537,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t1")).create_entity(capital(
+            TransactionInput::new(meta("t1")).write_entity(capital(
                 serde_json::json!("Lyon"),
                 "old fact",
                 "fact",
@@ -546,7 +546,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t2")).update_entity(capital(
+            TransactionInput::new(meta("t2")).write_entity(capital(
                 serde_json::json!("Paris?"),
                 "guess",
                 "hypothesis",
@@ -555,7 +555,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t3")).update_entity(capital(
+            TransactionInput::new(meta("t3")).write_entity(capital(
                 serde_json::json!("doc says Paris"),
                 "obs",
                 "observation",
@@ -564,7 +564,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t4")).update_entity(capital(
+            TransactionInput::new(meta("t4")).write_entity(capital(
                 serde_json::json!("Paris"),
                 "settled",
                 "fact",
@@ -573,7 +573,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t5")).update_entity(capital(
+            TransactionInput::new(meta("t5")).write_entity(capital(
                 serde_json::json!("might move"),
                 "new guess",
                 "hypothesis",
@@ -602,7 +602,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t1")).create_entity(capital(
+            TransactionInput::new(meta("t1")).write_entity(capital(
                 serde_json::json!("Paris?"),
                 "guess",
                 "hypothesis",
@@ -611,7 +611,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t2")).update_entity(capital(
+            TransactionInput::new(meta("t2")).write_entity(capital(
                 serde_json::json!("seen Paris"),
                 "obs",
                 "observation",
@@ -634,7 +634,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t1")).create_entity(capital(
+            TransactionInput::new(meta("t1")).write_entity(capital(
                 serde_json::json!("Paris?"),
                 "guess",
                 "hypothesis",
@@ -643,7 +643,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t2")).update_entity(capital(
+            TransactionInput::new(meta("t2")).write_entity(capital(
                 serde_json::json!("Paris"),
                 "settled",
                 "fact",
@@ -668,7 +668,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t1")).create_entity(capital(
+            TransactionInput::new(meta("t1")).write_entity(capital(
                 serde_json::json!("Paris"),
                 "settled",
                 "fact",
@@ -678,7 +678,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t2")).update_entity(capital(
+            TransactionInput::new(meta("t2")).write_entity(capital(
                 serde_json::Value::Null,
                 "retract",
                 "fact",
@@ -693,7 +693,7 @@ mod tests {
         exec_s(
             &branch,
             schema.clone(),
-            TransactionInput::new(meta("t3")).update_entity(capital(
+            TransactionInput::new(meta("t3")).write_entity(capital(
                 serde_json::json!("maybe Lyon"),
                 "reopen",
                 "hypothesis",
@@ -714,7 +714,7 @@ mod tests {
         exec_s(
             &main,
             schema.clone(),
-            TransactionInput::new(meta("t1")).create_entity(capital(
+            TransactionInput::new(meta("t1")).write_entity(capital(
                 serde_json::json!("Paris"),
                 "settled",
                 "fact",
@@ -731,7 +731,7 @@ mod tests {
                     "child".parse().unwrap(),
                     meta("explore"),
                     None,
-                    TransactionInput::new(meta("guess on child")).update_entity(capital(
+                    TransactionInput::new(meta("guess on child")).write_entity(capital(
                         serde_json::json!("maybe Lyon"),
                         "child guess",
                         "hypothesis",
@@ -761,7 +761,7 @@ mod tests {
 
         exec(
             &branch,
-            TransactionInput::new(meta("create")).create_entity(Entity::new(
+            TransactionInput::new(meta("create")).write_entity(Entity::new(
                 "server".parse().unwrap(),
                 Some(serde_json::json!("A server")),
                 vec![

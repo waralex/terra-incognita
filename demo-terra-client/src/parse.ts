@@ -74,8 +74,8 @@ export function parseResponse(text: string): ParsedResponse {
   return {
     answer: json.answer ?? text,
     reasoning: json.reasoning ?? "",
-    create: json.create,
-    update: json.update,
+    // Unified upsert bucket; accept legacy create/update too.
+    write: [...(json.write ?? []), ...(json.create ?? []), ...(json.update ?? [])],
     delete: json.delete,
     touch: json.touch,
     create_rule: json.create_rule,

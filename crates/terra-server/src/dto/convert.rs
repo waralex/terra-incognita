@@ -32,11 +32,8 @@ fn parse_slug(s: &str) -> Result<Slug, String> {
 
 pub fn transaction_req_to_input(req: TransactionReq) -> Result<TransactionInput, String> {
     let mut input = TransactionInput::new(req.meta);
-    for e in req.create {
-        input = input.create_entity(entity_req_to_domain(e)?);
-    }
-    for e in req.update {
-        input = input.update_entity(entity_req_to_domain(e)?);
+    for e in req.write {
+        input = input.write_entity(entity_req_to_domain(e)?);
     }
     for m in req.create_managed {
         input = input.create_managed(managed_req_to_domain(m)?);
@@ -286,7 +283,7 @@ mod tests {
                 m.insert("reasoning".into(), json!("test"));
                 m
             },
-            create: vec![EntityReq {
+            write: vec![EntityReq {
                 slug: "alice".into(),
                 description: Some(json!("A person")),
                 properties: vec![crate::dto::request::PropertyValueReq {
@@ -296,7 +293,6 @@ mod tests {
                 meta: serde_json::Map::new(),
                 status: None,
             }],
-            update: vec![],
             create_managed: vec![],
             update_managed: vec![],
             delete: vec![],
@@ -309,14 +305,13 @@ mod tests {
     fn invalid_slug_rejected() {
         let req = TransactionReq {
             meta: serde_json::Map::new(),
-            create: vec![EntityReq {
+            write: vec![EntityReq {
                 slug: "INVALID SLUG!!!".into(),
                 description: None,
                 properties: vec![],
                 meta: serde_json::Map::new(),
                 status: None,
             }],
-            update: vec![],
             create_managed: vec![],
             update_managed: vec![],
             delete: vec![],
@@ -341,8 +336,7 @@ mod tests {
                     m.insert("reasoning".into(), json!("init"));
                     m
                 },
-                create: vec![],
-                update: vec![],
+                write: vec![],
                 create_managed: vec![],
                 update_managed: vec![],
                 delete: vec![],

@@ -232,7 +232,7 @@ mod tests {
                     "feature".parse().unwrap(),
                     tx_meta("explore"),
                     None,
-                    TransactionInput::new(tx_meta("create entity on branch")).create_entity(
+                    TransactionInput::new(tx_meta("create entity on branch")).write_entity(
                         Entity::new(
                             "alice".parse().unwrap(),
                             Some(serde_json::json!("A person")),

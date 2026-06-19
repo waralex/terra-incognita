@@ -30,10 +30,9 @@ pub struct CommandEnvelope {
 #[derive(Deserialize)]
 pub struct TransactionReq {
     pub meta: Map<String, Value>,
+    /// Entities to write — created if new, updated if existing.
     #[serde(default)]
-    pub create: Vec<EntityReq>,
-    #[serde(default)]
-    pub update: Vec<EntityReq>,
+    pub write: Vec<EntityReq>,
     #[serde(default)]
     pub create_managed: Vec<ManagedReq>,
     #[serde(default)]

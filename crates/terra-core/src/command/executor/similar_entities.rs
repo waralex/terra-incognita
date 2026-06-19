@@ -188,7 +188,7 @@ mod tests {
         exec_tx_with_embedder(
             &branch,
             embedder.clone(),
-            TransactionInput::new(meta("init")).create_entity(Entity::new(
+            TransactionInput::new(meta("init")).write_entity(Entity::new(
                 "auth-service".parse().unwrap(),
                 Some(serde_json::json!("auth service")),
                 vec![PV {
@@ -228,13 +228,13 @@ mod tests {
             &branch,
             embedder.clone(),
             TransactionInput::new(meta("init"))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "auth-service".parse().unwrap(),
                     Some(serde_json::json!("auth")),
                     vec![],
                     meta("setup"),
                 ))
-                .create_entity(Entity::new(
+                .write_entity(Entity::new(
                     "payment-service".parse().unwrap(),
                     Some(serde_json::json!("payments")),
                     vec![],
@@ -271,7 +271,7 @@ mod tests {
         exec_tx_with_embedder(
             &branch,
             embedder.clone(),
-            TransactionInput::new(meta("init")).create_entity(Entity::new(
+            TransactionInput::new(meta("init")).write_entity(Entity::new(
                 "low-match".parse().unwrap(),
                 Some(serde_json::json!("something")),
                 vec![],

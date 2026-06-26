@@ -116,6 +116,11 @@ build_args=(build --release -p terra-server)
 BUILT_BIN="$REPO_DIR/target/release/terra-server"
 [[ -x "$BUILT_BIN" ]] || { echo "build did not produce $BUILT_BIN" >&2; exit 1; }
 
+say "building terra-mcp (release)"
+( cd "$REPO_DIR" && cargo build --release -p terra-mcp )
+BUILT_MCP="$REPO_DIR/target/release/terra-mcp"
+[[ -x "$BUILT_MCP" ]] || { echo "build did not produce $BUILT_MCP" >&2; exit 1; }
+
 # --- directories -----------------------------------------------------------
 mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
 [[ $USE_ONNX -eq 1 ]] && mkdir -p "$MODELS_DIR"
@@ -123,6 +128,9 @@ mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
 # --- binaries --------------------------------------------------------------
 say "installing binary to $BIN_DIR/terra-server"
 install -m 0755 "$BUILT_BIN" "$BIN_DIR/terra-server"
+
+say "installing binary to $BIN_DIR/terra-mcp"
+install -m 0755 "$BUILT_MCP" "$BIN_DIR/terra-mcp"
 
 say "installing terractl to $BIN_DIR/terractl"
 sed \
@@ -235,7 +243,8 @@ rm -f "$tmp"
 say "done."
 echo
 echo "  bind     $HOST:$PORT"
-echo "  binary   $BIN_DIR/terra-server"
+echo "  server   $BIN_DIR/terra-server"
+echo "  mcp      $BIN_DIR/terra-mcp"
 echo "  config   $CONFIG_FILE"
 echo "  data     $DATA_DIR"
 [[ $USE_ONNX -eq 1 ]] && echo "  models   $MODELS_DIR"

@@ -9,6 +9,25 @@ use crate::tools;
 /// Protocol version advertised when the client does not propose one.
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// Server-level memory protocol, injected once by the client at connect time
+/// (no per-turn accumulation). Travels with the server to any project it is
+/// connected in.
+const INSTRUCTIONS: &str = "\
+These tools are your cross-session work memory. Use them like human memory — \
+associations and directions, not a verbatim cache.\n\
+- Recall at task start: before non-trivial work, `recall`/`grep` what is \
+already known. Treat code-sourced memory as \"verify, don't trust\" — it ages.\n\
+- Record durable findings as you reach them: when you derive something worth \
+not re-deriving (a code seam, where-to-look, a decision, a user preference), \
+`remember`/`link`/`note` it at the right altitude (the map and conclusion, not \
+line numbers), with `source` and `status`.\n\
+- Consolidate by writing a `status: fact` assertion — it supersedes earlier \
+observations on that property (kept in history). No separate consolidate step.\n\
+- Don't store what's volatile or already in code/git. Memory is for what the \
+repo can't tell you, stable enough to outlive the session.\n\
+- Slugs are your internal addressing (dotted namespace, e.g. cube.cubestore); \
+pass `project` to scope an entity.";
+
 /// Stateless MCP server: every tool call is forwarded to the terra daemon.
 pub struct McpServer {
     terra: TerraClient,
@@ -48,7 +67,8 @@ impl McpServer {
         json!({
             "protocolVersion": version,
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "terra-mcp", "version": env!("CARGO_PKG_VERSION") }
+            "serverInfo": { "name": "terra-mcp", "version": env!("CARGO_PKG_VERSION") },
+            "instructions": INSTRUCTIONS
         })
     }
 

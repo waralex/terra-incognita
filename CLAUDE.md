@@ -4,6 +4,25 @@ Append-only epistemic store with first-class uncertainty, provenance, and
 branching. A database of claims about the world — every assertion knows
 what it is, who said it, when, and why.
 
+## Memory protocol (terra is the agent's memory)
+
+This store is also Claude's cross-session work memory, reached via the
+`terra` MCP tools. Behaviour to keep (steady-state; not a per-turn nag):
+
+- **Recall at task start.** Before non-trivial work, `recall`/`grep` what
+  is already known (the UserPromptSubmit hook surfaces pointers; follow the
+  relevant ones). Treat code-sourced memory as "verify, don't trust" — it
+  ages; check it against current code.
+- **Record durable findings as you reach them.** When you derive something
+  worth not re-deriving (a code seam, "where to look", a decision, a user
+  preference), `remember`/`link`/`note` it — at the right altitude (the map
+  and conclusion, not line numbers), with `source` and `status`.
+- **Consolidate by writing a `fact`.** A `status: fact` assertion supersedes
+  earlier observations on that property (drops them from the snapshot,
+  keeps them in history). No separate "consolidate" step.
+- **Don't store what's volatile or already in code/git.** Memory is for
+  what the repo can't tell you, stable enough to outlive the session.
+
 ## Core Philosophy
 
 terra stores epistemic state and delivers it honestly. It does not

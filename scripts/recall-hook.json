@@ -1,0 +1,11 @@
+{
+  "url": "http://127.0.0.1:7373/query",
+  "branch": "main",
+  "similar_limit": 5,
+  "touched_limit": 4,
+  "min_similarity": 0.35,
+  "max_total": 6,
+  "with_description": true,
+  "request_timeout": 5,
+  "enabled": true
+}

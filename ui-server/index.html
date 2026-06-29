@@ -49,6 +49,22 @@
   .tl .when { color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); padding: 24px 14px; }
   code.k { color: var(--accent); }
+  .item .type { color: var(--muted); float: right; font-size: 12px; }
+  .tx-section { margin-bottom: 18px; }
+  .tx-section > h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .04em;
+           color: var(--muted); margin: 0 0 8px; font-weight: 700; }
+  .tx-entity { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+           margin-bottom: 10px; background: var(--panel); }
+  .tx-entity .head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 6px; }
+  .tx-entity .head .slug { color: var(--accent); cursor: pointer; font-weight: 700; }
+  .tx-entity .head .state { color: var(--muted); }
+  .tx-entity .desc { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .tx-entity .prop { background: var(--bg); }
+  .tag { font-size: 11px; border-radius: 10px; padding: 0 7px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.created { color: var(--fact); border-color: var(--fact); }
+  .tag.updated { color: var(--hyp); border-color: var(--hyp); }
+  .tag.deleted { color: #f85149; border-color: #f85149; }
+  .tag.touched { color: var(--obs); }
 </style>
 </head>
 <body>
@@ -57,6 +73,7 @@
   <div class="tabs">
     <button id="tab-search" class="active" onclick="setTab('search')">search</button>
     <button id="tab-recent" onclick="setTab('recent')">recent</button>
+    <button id="tab-managed" onclick="setTab('managed')">managed</button>
     <button title="coming soon" disabled>branches</button>
   </div>
   <input id="q" placeholder="search…  (regex for grep, free text for similar)"
@@ -80,7 +97,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 async function query(body) {
   const r = await fetch('/query', {
@@ -89,10 +106,61 @@ async function query(body) {
   return r.json();
 }
 
-function setTab(tab) {
+const route = { tab: 'search', mode: 'grep', field: 'slug', q: '', view: '', id: '', type: '' };
+
+function pushRoute() {
+  const p = new URLSearchParams();
+  p.set('tab', route.tab);
+  if (route.tab === 'search') {
+    p.set('mode', route.mode);
+    p.set('field', route.field);
+    if (route.q) p.set('q', route.q);
+  }
+  if (route.view) {
+    p.set('view', route.view);
+    if (route.id) p.set('id', route.id);
+    if (route.type) p.set('type', route.type);
+  }
+  history.replaceState(null, '', '#' + p.toString());
+}
+
+function applyTabUI(tab) {
   $('tab-search').classList.toggle('active', tab === 'search');
   $('tab-recent').classList.toggle('active', tab === 'recent');
+  $('tab-managed').classList.toggle('active', tab === 'managed');
+}
+
+function setTab(tab) {
+  route.tab = tab;
+  applyTabUI(tab);
   if (tab === 'recent') loadRecent();
+  if (tab === 'managed') loadManaged();
+  pushRoute();
+}
+
+function restore() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  route.tab = p.get('tab') || 'search';
+  route.mode = p.get('mode') || 'grep';
+  route.field = p.get('field') || 'slug';
+  route.q = p.get('q') || '';
+  route.view = p.get('view') || '';
+  route.id = p.get('id') || '';
+  route.type = p.get('type') || '';
+
+  $('mode').value = route.mode;
+  $('field').value = route.field;
+  $('q').value = route.q;
+
+  applyTabUI(route.tab);
+  if (route.tab === 'search') { if (route.q) runSearch(); }
+  else if (route.tab === 'recent') loadRecent();
+  else if (route.tab === 'managed') loadManaged();
+
+  if (route.view === 'entity') loadEntity(route.id);
+  else if (route.view === 'history') loadHistory(route.id);
+  else if (route.view === 'tx') loadTx(route.id);
+  else if (route.view === 'managed') loadManagedItem(route.type, route.id);
 }
 
 function relTime(iso) {
@@ -104,9 +172,39 @@ function relTime(iso) {
   return Math.round(s / 86400) + 'd ago';
 }
 
+const SLUG_RE = /^[a-z0-9._-]+$/;
 function valHtml(v) {
-  if (typeof v === 'string') return `<a onclick="loadEntity('${esc(v)}')">${esc(v)}</a>`;
+  if (typeof v === 'string') {
+    return SLUG_RE.test(v)
+      ? `<a onclick="loadEntity('${esc(v)}')">${esc(v)}</a>`
+      : esc(v);
+  }
   return esc(JSON.stringify(v));
+}
+
+function descHtml(d) {
+  if (!d) return '';
+  return esc(typeof d === 'string' ? d : JSON.stringify(d));
+}
+
+function propCard(p) {
+  return `<div class="prop">
+    <span class="name">${esc(p.property)}</span>
+    <div class="val">${valHtml(p.value)}</div>
+    ${ctxBadges(p.context || {})}
+    ${p.context && p.context.reasoning ? `<div class="reason">${esc(p.context.reasoning)}</div>` : ''}
+  </div>`;
+}
+
+function propsHtml(props) {
+  return (props || []).map(propCard).join('');
+}
+
+function fieldsHtml(fields) {
+  return Object.entries(fields || {}).map(([k, v]) => `<div class="prop">
+    <span class="name">${esc(k)}</span>
+    <div class="val">${typeof v === 'string' ? esc(v) : esc(JSON.stringify(v))}</div>
+  </div>`).join('');
 }
 
 function ctxBadges(c) {
@@ -121,6 +219,11 @@ async function runSearch() {
   const text = $('q').value.trim();
   if (!text) return;
   const mode = $('mode').value;
+  route.tab = 'search';
+  route.mode = mode;
+  route.field = $('field').value;
+  route.q = text;
+  pushRoute();
   let res;
   if (mode === 'grep') {
     res = await query({ command: 'entities.grep', pattern: text, in: [$('field').value], limit: 50 });
@@ -134,7 +237,7 @@ function renderList(res, mode) {
   if (res.error) { $('list').innerHTML = `<div class="empty">${esc(res.error)}</div>`; return; }
   if (!res.length) { $('list').innerHTML = `<div class="empty">no matches.</div>`; return; }
   $('list').innerHTML = res.map(e => {
-    const ent = mode === 'similar' ? e : e;
+    const ent = e;
     const slug = ent.slug;
     const desc = ent.description ? esc(typeof ent.description === 'string' ? ent.description : JSON.stringify(ent.description)) : '';
     const sim = (mode === 'similar' && e.similarity != null) ? `<span class="sim">${e.similarity.toFixed(2)}</span>` : '';
@@ -143,16 +246,11 @@ function renderList(res, mode) {
 }
 
 async function loadEntity(slug) {
+  route.view = 'entity'; route.id = slug; route.type = ''; pushRoute();
   const e = await query({ command: 'entity.get', entity: slug });
   if (e.error) { $('detail').innerHTML = `<div class="empty">${esc(slug)}: ${esc(e.error)}</div>`; return; }
-  const desc = e.description ? esc(typeof e.description === 'string' ? e.description : JSON.stringify(e.description)) : '';
-  const props = (e.properties || []).map(p => `
-    <div class="prop">
-      <span class="name">${esc(p.property)}</span>
-      <div class="val">${valHtml(p.value)}</div>
-      ${ctxBadges(p.context || {})}
-      ${p.context && p.context.reasoning ? `<div class="reason">${esc(p.context.reasoning)}</div>` : ''}
-    </div>`).join('');
+  const desc = descHtml(e.description);
+  const props = propsHtml(e.properties);
   $('detail').innerHTML = `
     <h2 class="slug">${esc(e.slug)}</h2>
     <p class="desc-lead">${desc}</p>
@@ -161,6 +259,7 @@ async function loadEntity(slug) {
 }
 
 async function loadHistory(slug) {
+  route.view = 'history'; route.id = slug; route.type = ''; pushRoute();
   const entries = await query({ command: 'entity.history', entity: slug, limit: 50 });
   if (entries.error) { $('detail').innerHTML = `<div class="empty">${esc(entries.error)}</div>`; return; }
   const tl = entries.map(en => {
@@ -187,25 +286,118 @@ async function loadRecent() {
   }).join('') || '<div class="empty">no transactions.</div>';
 }
 
+function txEntityCard(e, tag) {
+  const desc = descHtml(e.description);
+  return `<div class="tx-entity">
+    <div class="head"><span class="tag ${tag}">${tag}</span>
+      <span class="slug" onclick="loadEntity('${esc(e.slug)}')">${esc(e.slug)}</span></div>
+    ${desc ? `<div class="desc">${desc}</div>` : ''}
+    ${propsHtml(e.properties) || '<div class="muted">no property changes.</div>'}
+  </div>`;
+}
+
+function txManagedCard(m, tag) {
+  const state = m.state ? `<span class="state">${esc(m.state)}</span>` : '';
+  return `<div class="tx-entity">
+    <div class="head"><span class="tag ${tag}">managed</span>
+      <span class="slug">${esc(m.type_name)}/${esc(m.slug)}</span> ${state}</div>
+    ${fieldsHtml(m.fields) || '<div class="muted">no fields.</div>'}
+  </div>`;
+}
+
+function txGoneCard(x, tag) {
+  const reason = x.reasoning != null
+    ? (typeof x.reasoning === 'string' ? x.reasoning : JSON.stringify(x.reasoning)) : '';
+  return `<div class="tx-entity">
+    <div class="head"><span class="tag ${tag}">${tag}</span>
+      <span class="slug" onclick="loadEntity('${esc(x.slug)}')">${esc(x.slug)}</span></div>
+    ${reason ? `<div class="reason">${esc(reason)}</div>` : ''}
+  </div>`;
+}
+
+function txSection(title, html) {
+  return html ? `<div class="tx-section"><h3>${title}</h3>${html}</div>` : '';
+}
+
 async function loadTx(txId) {
+  route.view = 'tx'; route.id = txId; route.type = ''; pushRoute();
   const d = await query({ command: 'transaction.get', tx_id: txId });
   if (d.error) { $('detail').innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
-  // Entities are recall-able by slug; managed items (type/slug) are not, so
-  // they render as plain text.
-  const entGroup = (label, arr) => !arr || !arr.length ? '' :
-    `<div class="prop"><span class="name">${label}</span><div class="val">${arr.map(x => valHtml(x.slug)).join(', ')}</div></div>`;
-  const mgGroup = (label, arr) => !arr || !arr.length ? '' :
-    `<div class="prop"><span class="name">${label}</span><div class="val">${arr.map(x => esc(`${x.type_name}/${x.slug}`)).join(', ')}</div></div>`;
+  const ents = (arr, tag) => (arr || []).map(e => txEntityCard(e, tag)).join('');
+  const mans = (arr, tag) => (arr || []).map(m => txManagedCard(m, tag)).join('');
+  const gone = (arr, tag) => (arr || []).map(x => txGoneCard(x, tag)).join('');
+  const sections =
+    txSection('created', ents(d.created, 'created')) +
+    txSection('updated', ents(d.updated, 'updated')) +
+    txSection('created managed', mans(d.created_managed, 'created')) +
+    txSection('updated managed', mans(d.updated_managed, 'updated')) +
+    txSection('deleted', gone(d.deleted, 'deleted')) +
+    txSection('touched', gone(d.touched, 'touched'));
   $('detail').innerHTML = `
     <h2 class="slug">transaction</h2>
     <p class="desc-lead">${esc((d.meta && d.meta.reasoning) || '')} · ${relTime(d.context && d.context.time)} · ${esc(d.branch || '')}</p>
-    ${entGroup('created', d.created)}
-    ${entGroup('updated', d.updated)}
-    ${entGroup('deleted', d.deleted)}
-    ${entGroup('touched', d.touched)}
-    ${mgGroup('created_managed', d.created_managed)}
-    ${mgGroup('updated_managed', d.updated_managed)}`;
+    ${sections || '<div class="empty">empty transaction.</div>'}`;
 }
+
+async function loadManaged() {
+  const items = await query({ command: 'managed.list' });
+  if (items.error) { $('list').innerHTML = `<div class="empty">${esc(items.error)}</div>`; return; }
+  if (!items.length) { $('list').innerHTML = `<div class="empty">no managed items.</div>`; return; }
+  managedCache = {};
+  $('list').innerHTML = items.map((m, i) => {
+    managedCache[i] = m;
+    const state = m.state ? `<span class="badge">${esc(m.state)}</span>` : '';
+    return `<div class="item" onclick="showManaged(${i})">
+      <span class="type">${esc(m.type_name)}</span>
+      <div class="slug">${esc(m.slug)}</div>
+      <div class="badges">${state}</div></div>`;
+  }).join('');
+}
+
+let managedCache = {};
+
+function showManaged(i) {
+  const m = managedCache[i];
+  if (m) renderManaged(m);
+}
+
+async function loadManagedItem(type, slug) {
+  const items = await query({ command: 'managed.list' });
+  if (items.error) { $('detail').innerHTML = `<div class="empty">${esc(items.error)}</div>`; return; }
+  const m = (items || []).find(x => x.type_name === type && x.slug === slug);
+  if (!m) { $('detail').innerHTML = `<div class="empty">${esc(type + '/' + slug)}: not found.</div>`; return; }
+  renderManaged(m);
+}
+
+function renderManaged(m) {
+  route.view = 'managed'; route.id = m.slug; route.type = m.type_name; pushRoute();
+  const ctx = m.context || {};
+  const state = m.state ? `<span class="badge">${esc(m.state)}</span>` : '';
+  const badges = [];
+  if (state) badges.push(state);
+  if (ctx.time) badges.push(`<span class="badge" title="${esc(ctx.time)}">${relTime(ctx.time)}</span>`);
+  if (ctx.source) badges.push(`<span class="badge">${esc(ctx.source)}</span>`);
+  $('detail').innerHTML = `
+    <h2 class="slug">${esc(m.type_name)}/${esc(m.slug)}</h2>
+    <div class="badges" style="margin-bottom:12px">${badges.join('')}</div>
+    ${fieldsHtml(m.fields) || '<div class="empty">no fields.</div>'}
+    ${ctx.reasoning ? `<div class="reason">${esc(ctx.reasoning)}</div>` : ''}`;
+}
+
+window.addEventListener('hashchange', () => {
+  const cur = '#' + new URLSearchParams({ ...routeParams() }).toString();
+  if (location.hash !== cur) restore();
+});
+
+function routeParams() {
+  const p = {};
+  p.tab = route.tab;
+  if (route.tab === 'search') { p.mode = route.mode; p.field = route.field; if (route.q) p.q = route.q; }
+  if (route.view) { p.view = route.view; if (route.id) p.id = route.id; if (route.type) p.type = route.type; }
+  return p;
+}
+
+restore();
 </script>
 </body>
 </html>

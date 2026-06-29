@@ -104,7 +104,10 @@ fn tool_error(message: &str) -> Value {
 
 /// Render a terra `{ error, kind }` body into a one-line message.
 fn describe_terra_error(resp: &Value) -> String {
-    let msg = resp.get("error").and_then(|v| v.as_str()).unwrap_or("error");
+    let msg = resp
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("error");
     match resp.get("kind").and_then(|v| v.as_str()) {
         Some(kind) => format!("{msg} ({kind})"),
         None => msg.to_string(),

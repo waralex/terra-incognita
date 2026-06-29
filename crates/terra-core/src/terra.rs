@@ -529,10 +529,8 @@ mod tests {
             .unwrap();
         let props = &entities[0].properties;
         assert_eq!(props.len(), 2);
-        assert!(props
-            .iter()
-            .any(|p| p.value == serde_json::json!("Paris")
-                && p.context.status.as_deref() == Some("fact")));
+        assert!(props.iter().any(|p| p.value == serde_json::json!("Paris")
+            && p.context.status.as_deref() == Some("fact")));
         assert!(props
             .iter()
             .any(|p| p.context.status.as_deref() == Some("hypothesis")));

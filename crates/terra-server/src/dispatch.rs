@@ -629,10 +629,8 @@ mod tests {
             }),
         );
 
-        let (status, res) = dispatch_json(
-            &terra,
-            json!({ "command": "entity.get", "entity": "cube" }),
-        );
+        let (status, res) =
+            dispatch_json(&terra, json!({ "command": "entity.get", "entity": "cube" }));
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(res["slug"], "cube");

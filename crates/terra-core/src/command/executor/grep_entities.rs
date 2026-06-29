@@ -61,7 +61,8 @@ impl Command for GrepEntities {
                 let Some(mut entity) = entity_snapshot(branch, &slug, at_tx, statuses)? else {
                     continue;
                 };
-                if (scope.slug && re.is_match(slug.as_str())) || content_matches(&entity, scope, &re)
+                if (scope.slug && re.is_match(slug.as_str()))
+                    || content_matches(&entity, scope, &re)
                 {
                     if !input.include_properties {
                         entity.properties.clear();
@@ -256,7 +257,9 @@ mod tests {
     #[test]
     fn matches_slug_by_default() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         let results = grep(&branch, GrepEntitiesQuery::new("^auth-".into(), 50));
@@ -267,7 +270,9 @@ mod tests {
     #[test]
     fn newest_first_and_limit() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         // All three match ".*"; newest (payment, t3) first, limited to 2.
@@ -280,7 +285,9 @@ mod tests {
     #[test]
     fn properties_false_omits_properties() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         let results = grep(
@@ -295,7 +302,9 @@ mod tests {
     #[test]
     fn matches_value_scope() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         let scope = GrepScope {
@@ -314,7 +323,9 @@ mod tests {
     #[test]
     fn matches_property_and_reasoning_scope() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         let by_prop = grep(
@@ -343,7 +354,9 @@ mod tests {
     #[test]
     fn invalid_regex_is_validation_error() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         let cmd = GrepEntities::new(test_schema());
         let mut state = CommandState::new(branch.storage());
         let err = cmd
@@ -358,16 +371,19 @@ mod tests {
     #[test]
     fn deleted_entity_excluded() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         exec(
             &branch,
-            TransactionInput::new(meta("remove"))
-                .delete_entity(crate::command::input::transaction::DeleteItem::new(
+            TransactionInput::new(meta("remove")).delete_entity(
+                crate::command::input::transaction::DeleteItem::new(
                     "auth-service".parse().unwrap(),
                     serde_json::json!("decommissioned"),
-                )),
+                ),
+            ),
         );
 
         let results = grep(&branch, GrepEntitiesQuery::new("^auth-".into(), 50));
@@ -378,7 +394,9 @@ mod tests {
     #[test]
     fn no_fields_matches_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
         seed(&branch);
 
         let scope = GrepScope {
@@ -394,7 +412,9 @@ mod tests {
     #[test]
     fn at_tx_excludes_future_entity() {
         let dir = tempfile::tempdir().unwrap();
-        let branch = Storage::open(dir.path(), test_config()).unwrap().main_branch();
+        let branch = Storage::open(dir.path(), test_config())
+            .unwrap()
+            .main_branch();
 
         let tx1 = exec_tx(
             &branch,
@@ -408,10 +428,7 @@ mod tests {
 
         // Full-snapshot path (include_properties = true) is the one that used to
         // leak phantom entities for slugs created after at_tx.
-        let results = grep(
-            &branch,
-            GrepEntitiesQuery::new(".".into(), 50).at_tx(tx1),
-        );
+        let results = grep(&branch, GrepEntitiesQuery::new(".".into(), 50).at_tx(tx1));
         let slugs: Vec<&str> = results.iter().map(|e| e.slug.as_str()).collect();
         assert_eq!(slugs, vec!["alice"]);
     }
@@ -476,7 +493,11 @@ mod tests {
 
         exec(
             &main,
-            TransactionInput::new(meta("create")).write_entity(person("auth-service", vec![], "infra")),
+            TransactionInput::new(meta("create")).write_entity(person(
+                "auth-service",
+                vec![],
+                "infra",
+            )),
         );
 
         let checkout = ExecuteCheckout::new(DomainValidator::new(test_schema()));

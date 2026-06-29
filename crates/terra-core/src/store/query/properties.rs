@@ -621,7 +621,9 @@ mod tests {
         let statuses = schema.assertion_statuses.as_ref().unwrap();
         let props = layered_properties(&branch, &"alice".parse().unwrap(), None, statuses).unwrap();
         assert_eq!(props.len(), 2);
-        assert!(props.iter().all(|p| p.value.status.as_deref() != Some("fact")));
+        assert!(props
+            .iter()
+            .all(|p| p.value.status.as_deref() != Some("fact")));
     }
 
     #[test]

@@ -100,7 +100,11 @@ mod tests {
     fn get(branch: &BranchContext, slug: &str) -> Result<Entity<TxMeta>, DbError> {
         let cmd = GetEntity::new(test_schema());
         let mut state = CommandState::new(branch.storage());
-        cmd.execute(branch, &mut state, EntityGetQuery::new(slug.parse().unwrap()))
+        cmd.execute(
+            branch,
+            &mut state,
+            EntityGetQuery::new(slug.parse().unwrap()),
+        )
     }
 
     fn get_at(branch: &BranchContext, slug: &str, at_tx: uuid::Uuid) -> Entity<TxMeta> {
@@ -138,7 +142,10 @@ mod tests {
 
         let entity = get(&branch, "cube").unwrap();
         assert_eq!(entity.slug.as_str(), "cube");
-        assert_eq!(entity.description, Some(serde_json::json!("Cube.js project")));
+        assert_eq!(
+            entity.description,
+            Some(serde_json::json!("Cube.js project"))
+        );
         assert_eq!(entity.properties.len(), 1);
         let prop = &entity.properties[0];
         assert_eq!(prop.value, serde_json::json!("TypeScript"));

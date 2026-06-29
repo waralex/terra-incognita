@@ -377,7 +377,9 @@ mod tests {
               default: observation
         "})
         .unwrap_err();
-        assert!(err.to_string().contains("terminal \"fact\" is not in values"));
+        assert!(err
+            .to_string()
+            .contains("terminal \"fact\" is not in values"));
     }
 
     #[test]

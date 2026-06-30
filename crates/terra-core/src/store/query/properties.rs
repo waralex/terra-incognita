@@ -160,7 +160,7 @@ pub fn layered_properties(
             .filter(|o| baseline_tx.is_none_or(|bt| o.key.tx_id > bt))
             .filter(|o| !o.value.is_deleted())
             .collect();
-        kept.sort_by(|a, b| b.key.tx_id.cmp(&a.key.tx_id));
+        kept.sort_by_key(|o| std::cmp::Reverse(o.key.tx_id));
 
         if let Some(base) = baseline {
             if !base.value.is_deleted() {

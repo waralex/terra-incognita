@@ -99,7 +99,7 @@ impl Command for GrepEntities {
         }
 
         // Reverse insertion order: tx_id is UUID v7, so this is newest-first.
-        results.sort_by(|a, b| b.context.tx_id.cmp(&a.context.tx_id));
+        results.sort_by_key(|r| std::cmp::Reverse(r.context.tx_id));
         results.truncate(input.limit);
         Ok(results)
     }

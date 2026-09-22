@@ -32,6 +32,19 @@ fn parse_slug(s: &str) -> Result<Slug, String> {
 
 pub fn transaction_req_to_input(req: TransactionReq) -> Result<TransactionInput, String> {
     let mut input = TransactionInput::new(req.meta);
+    for p in req.preconditions {
+        input = input.require_property(
+            terra_core::command::input::transaction::PropertyPrecondition {
+                entity: parse_slug(&p.entity)?,
+                property: parse_slug(&p.property)?,
+                expected: if p.expected.is_null() {
+                    None
+                } else {
+                    Some(p.expected)
+                },
+            },
+        );
+    }
     for e in req.write {
         input = input.write_entity(entity_req_to_domain(e)?);
     }
@@ -68,6 +81,7 @@ fn entity_req_to_domain(req: EntityReq) -> Result<Entity, String> {
         .into_iter()
         .map(|p| {
             Ok(PropertyValue {
+                supersedes_tx: p.supersedes_tx,
                 property: parse_slug(&p.property)?,
                 value: p.value,
                 context: (),
@@ -108,6 +122,7 @@ pub fn entity_to_res(e: Entity<TxMeta>) -> EntityRes {
         .properties
         .into_iter()
         .map(|p| PropertyValueRes {
+            supersedes_tx: p.supersedes_tx,
             property: p.property.to_string(),
             value: p.value,
             context: tx_meta_to_res(p.context),
@@ -116,6 +131,7 @@ pub fn entity_to_res(e: Entity<TxMeta>) -> EntityRes {
     EntityRes {
         slug: e.slug.to_string(),
         description: e.description,
+        property_refs: e.property_refs.into_iter().map(|p| p.to_string()).collect(),
         properties,
         meta: e.meta,
         context: tx_meta_to_res(e.context),
@@ -200,6 +216,12 @@ pub fn similar_to_res(items: Vec<SimilarEntity<TxMeta>>) -> Vec<SimilarEntityRes
 
 pub fn entity_get_req_to_query(req: EntityGetReq) -> Result<EntityGetQuery, String> {
     let mut query = EntityGetQuery::new(parse_slug(&req.entity)?);
+    if let Some(prefix) = req.property_prefix {
+        query = query.with_property_prefix(parse_slug(&prefix)?);
+    }
+    if let Some(depth) = req.property_depth {
+        query = query.with_property_depth(depth);
+    }
     if let Some(at_tx) = req.at_tx {
         query = query.with_at_tx(at_tx);
     }
@@ -207,6 +229,9 @@ pub fn entity_get_req_to_query(req: EntityGetReq) -> Result<EntityGetQuery, Stri
 }
 
 pub fn entity_history_req_to_query(req: EntityHistoryReq) -> Result<EntityHistoryQuery, String> {
+    if req.property.is_some() && (req.property_prefix.is_some() || req.property_depth.is_some()) {
+        return Err("property cannot be combined with property_prefix/property_depth".into());
+    }
     let entity = parse_slug(&req.entity)?;
     let mut query = EntityHistoryQuery::new(entity, req.limit);
     if let Some(prop) = req.property {
@@ -215,6 +240,8 @@ pub fn entity_history_req_to_query(req: EntityHistoryReq) -> Result<EntityHistor
     if let Some(at_tx) = req.at_tx {
         query = query.with_at_tx(at_tx);
     }
+    query.property_prefix = req.property_prefix.map(|p| parse_slug(&p)).transpose()?;
+    query.property_depth = req.property_depth;
     query.tx_id_from = req.tx_id_from;
     query.tx_id_to = req.tx_id_to;
     Ok(query)
@@ -259,6 +286,8 @@ fn parse_grep_scope(fields: &[String]) -> Result<GrepScope, String> {
 
 pub fn history_entry_to_res(entry: EntityHistoryEntry) -> EntityHistoryEntryRes {
     EntityHistoryEntryRes {
+        tx_id: entry.tx_id,
+        tx_time: terra_core::domain::tx_meta::time_from_uuid(entry.tx_id),
         entity: entity_to_res(entry.entity),
         changed_properties: entry
             .changed_properties
@@ -269,6 +298,40 @@ pub fn history_entry_to_res(entry: EntityHistoryEntry) -> EntityHistoryEntryRes 
     }
 }
 
+pub fn entity_to_tree_res(e: Entity<TxMeta>) -> super::response::EntityTreeRes {
+    use super::response::{AssertionRes, EntityTreeRes, PropertyNodeRes};
+    use terra_core::domain::property_tree::{property_tree, PropertyTree};
+    fn convert(tree: PropertyTree<TxMeta>) -> std::collections::BTreeMap<String, PropertyNodeRes> {
+        tree.into_iter()
+            .map(|(key, node)| {
+                (
+                    key,
+                    PropertyNodeRes {
+                        assertions: node
+                            .assertions
+                            .into_iter()
+                            .map(|p| AssertionRes {
+                                supersedes_tx: p.supersedes_tx,
+                                value: p.value,
+                                context: tx_meta_to_res(p.context),
+                            })
+                            .collect(),
+                        children: convert(node.children),
+                    },
+                )
+            })
+            .collect()
+    }
+    EntityTreeRes {
+        slug: e.slug.to_string(),
+        description: e.description,
+        properties: convert(property_tree(e.properties)),
+        property_refs: e.property_refs.into_iter().map(|p| p.to_string()).collect(),
+        meta: e.meta,
+        context: tx_meta_to_res(e.context),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -276,8 +339,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn history_selection_request_is_optional_and_unambiguous() {
+        let req: EntityHistoryReq = serde_json::from_value(
+            serde_json::json!({"entity":"doc","property_prefix":"section","property_depth":2}),
+        )
+        .unwrap();
+        let q = entity_history_req_to_query(req).unwrap();
+        assert_eq!(q.property_prefix.unwrap().as_str(), "section");
+        assert_eq!(q.property_depth, Some(2));
+        let req: EntityHistoryReq = serde_json::from_value(
+            serde_json::json!({"entity":"doc","property":"x","property_depth":2}),
+        )
+        .unwrap();
+        assert!(entity_history_req_to_query(req).is_err());
+    }
+
+    #[test]
     fn transaction_req_roundtrip() {
         let req = TransactionReq {
+            preconditions: Vec::new(),
             meta: {
                 let mut m = serde_json::Map::new();
                 m.insert("reasoning".into(), json!("test"));
@@ -287,6 +367,7 @@ mod tests {
                 slug: "alice".into(),
                 description: Some(json!("A person")),
                 properties: vec![crate::dto::request::PropertyValueReq {
+                    supersedes_tx: None,
                     property: "age".into(),
                     value: json!(25),
                 }],
@@ -304,6 +385,7 @@ mod tests {
     #[test]
     fn invalid_slug_rejected() {
         let req = TransactionReq {
+            preconditions: Vec::new(),
             meta: serde_json::Map::new(),
             write: vec![EntityReq {
                 slug: "INVALID SLUG!!!".into(),
@@ -331,6 +413,7 @@ mod tests {
             },
             created_from_tx: None,
             transaction: TransactionReq {
+                preconditions: Vec::new(),
                 meta: {
                     let mut m = serde_json::Map::new();
                     m.insert("reasoning".into(), json!("init"));

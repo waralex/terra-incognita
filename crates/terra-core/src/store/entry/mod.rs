@@ -1,4 +1,5 @@
 pub mod assertion;
+mod assertion_key;
 pub mod branch;
 pub mod embedding;
 pub mod entity;

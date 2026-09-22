@@ -8,7 +8,7 @@ pub fn classify(err: &DbError) -> (StatusCode, &'static str) {
     match err {
         DbError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
         DbError::Storage(msg) => {
-            if msg.contains("already exists") {
+            if msg.contains("already exists") || msg.contains("precondition conflict") {
                 (StatusCode::CONFLICT, "conflict")
             } else if msg.contains("not found") {
                 (StatusCode::NOT_FOUND, "not_found")

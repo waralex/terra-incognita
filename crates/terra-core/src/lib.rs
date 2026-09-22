@@ -3,6 +3,7 @@
 
 pub mod command;
 pub mod config;
+pub mod documents;
 pub mod domain;
 pub mod embed;
 pub mod io;

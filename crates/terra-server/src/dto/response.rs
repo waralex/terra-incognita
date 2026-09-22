@@ -32,6 +32,8 @@ pub struct TransactionRes {
 /// Entity property with provenance.
 #[derive(Serialize)]
 pub struct PropertyValueRes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supersedes_tx: Option<Uuid>,
     pub property: String,
     pub value: Value,
     pub context: TxMetaRes,
@@ -41,6 +43,9 @@ pub struct PropertyValueRes {
 #[derive(Serialize)]
 pub struct EntityRes {
     pub slug: String,
+    /// Structural navigation paths, not proof of visible values.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub property_refs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<Value>,
     pub properties: Vec<PropertyValueRes>,
@@ -120,6 +125,8 @@ pub struct SimilarEntityRes {
 /// Entity history entry — entity snapshot at a past tx + what changed + tx meta.
 #[derive(Serialize)]
 pub struct EntityHistoryEntryRes {
+    pub tx_id: Uuid,
+    pub tx_time: Option<DateTime<Utc>>,
     #[serde(flatten)]
     pub entity: EntityRes,
     pub changed_properties: Vec<String>,
@@ -131,4 +138,34 @@ pub struct EntityHistoryEntryRes {
 pub struct ErrorRes {
     pub error: String,
     pub kind: String,
+}
+
+/// Tree leaves retain every visible assertion and its provenance.
+#[derive(Serialize)]
+pub struct AssertionRes {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supersedes_tx: Option<Uuid>,
+    pub value: Value,
+    pub context: TxMetaRes,
+}
+
+#[derive(Serialize)]
+pub struct PropertyNodeRes {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub assertions: Vec<AssertionRes>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub children: std::collections::BTreeMap<String, PropertyNodeRes>,
+}
+
+#[derive(Serialize)]
+pub struct EntityTreeRes {
+    pub slug: String,
+    /// Structural navigation paths, not proof of visible values.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub property_refs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<Value>,
+    pub properties: std::collections::BTreeMap<String, PropertyNodeRes>,
+    pub meta: Map<String, Value>,
+    pub context: TxMetaRes,
 }

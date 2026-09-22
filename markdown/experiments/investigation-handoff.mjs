@@ -1,0 +1,31 @@
+import {connectDocumentMcp} from '../document-mcp-client.mjs';
+import {mkdtemp,writeFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+const directory=await mkdtemp('/tmp/terra-memory-investigation-'),root=randomUUID(),client=connectDocumentMcp(directory,root);
+try{
+ console.log('SETUP',directory,root);
+ console.log('INIT',JSON.stringify(await client.rpc('initialize',{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'investigation-worker',version:'1'}})));
+ console.log('TOOLS',JSON.stringify(await client.rpc('tools/list',{})));
+ const call=async(name,args)=>{const result=await client.call(name,args);console.log(name,JSON.stringify({args,result}));return result;};
+ const rootView=await call('read',{format:'json',});
+ const created=await call('write',{parent:root,markdown:'# Cache latency investigation\n\nHypothesis: repeated cache misses explain the release latency spike.\n\nConclusion: the cache TTL regression is the cause; reverting the TTL should restore latency.\n\n## Evidence\n\nInitial replay showed a 31% miss rate and p95 latency of 420 ms.\n\n## Follow-up\n\n- [ ] Verify replay clock alignment\n- [ ] Repeat the production-shaped benchmark',reason:'Record provisional investigation findings from the initial replay'});
+ const mainSectionId=created.blocks[0];
+ const main=await call('read',{format:'json',id:mainSectionId});
+ const conclusion=main.blocks.find(b=>b.body.startsWith('Conclusion:'));
+ const evidenceSection=main.blocks.find(b=>b.title==='Evidence');
+ const followupSection=main.blocks.find(b=>b.title==='Follow-up');
+ await call('write',{target:conclusion.id,expected:conclusion.revision,markdown:'Conclusion: the replay clock skew caused the apparent miss-rate spike. Keep the production TTL unchanged until a synchronized benchmark is complete.',reason:'The replay worker clock was 90 seconds ahead; synchronized replay reduced misses to 2% with the same TTL, invalidating the TTL regression diagnosis'});
+ const evidence=await call('read',{format:'json',id:evidenceSection.id});
+ const evidenceParagraph=evidence.blocks.find(b=>b.body.startsWith('Initial replay'));
+ await call('write',{target:evidenceParagraph.id,expected:evidenceParagraph.revision,markdown:'Initial replay showed a 31% miss rate and p95 latency of 420 ms; its worker clock was later found to be 90 seconds ahead.\n\nWith clocks synchronized and the same TTL, miss rate fell to 2% and p95 latency to 115 ms. The production-shaped benchmark is still pending.',reason:'Separate the misleading initial measurement from the controlled follow-up result'});
+ const followup=await call('read',{format:'json',id:followupSection.id});
+ const list=followup.blocks.find(b=>typeof b.kind==='object'&&b.kind.List);
+ const tasks=await call('read',{format:'json',id:list.id});
+ const completed=tasks.blocks.find(b=>b.preview==='Verify replay clock alignment');
+ if(!completed)throw Error('Task preview missing');
+ await call('change',{reason:'Clock alignment verified; label the investigation as corrected while retaining the benchmark follow-up',edits:[{id:mainSectionId,expected:main.blocks.find(b=>b.id===mainSectionId).revision,title:'Cache latency investigation — corrected'},{id:completed.id,expected:completed.revision,state:'Done'}]});
+ await call('read',{format:'json',id:mainSectionId});
+ await call('read',{format:'json',id:list.id});
+ await writeFile('/tmp/terra-memory-trial-handoff.json',JSON.stringify({directory,root,mainSectionId,task:'Recover the original mistaken conclusion and explain why it was corrected, using this memory and its history. Cite the relevant block IDs and transaction reasons.'},null,2));
+ console.log('HANDOFF /tmp/terra-memory-trial-handoff.json');
+}finally{await client.close();}

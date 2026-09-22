@@ -1,5 +1,6 @@
 //! ListEntityHistory — retrieves the change history of an entity.
 
+use crate::domain::property_path;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -17,7 +18,7 @@ use crate::io::slug::Slug;
 use crate::io::storage_key::StorageKey;
 use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
-use crate::store::entry::assertion::{AssertionEntry, AssertionKey};
+use crate::store::entry::assertion::{AssertionEntry, AssertionKey, AssertionRange};
 use crate::store::entry::entity::{EntityEntry, EntityKey};
 use crate::store::entry::transaction::{TransactionEntry, TransactionKey};
 use crate::store::query::entity_snapshot;
@@ -45,6 +46,13 @@ impl Command for ListEntityHistory {
         input: Self::Input,
     ) -> Result<Self::Output, DbError> {
         let entity = &input.entity;
+        if input.property.is_some()
+            && (input.property_prefix.is_some() || input.property_depth.is_some())
+        {
+            return Err(DbError::Storage(
+                "property cannot be combined with property_prefix/property_depth".into(),
+            ));
+        }
 
         // Step 1: resolve effective bounds.
         let upper_tx = input
@@ -73,12 +81,17 @@ impl Command for ListEntityHistory {
                 branch.storage(),
                 entity,
                 input.property.as_ref(),
+                input.property_prefix.as_ref(),
+                input.property_depth,
                 &scope.branch,
                 scope.upper_tx,
                 &mut tx_changes,
             )?;
 
-            if input.property.is_none() {
+            if input.property.is_none()
+                && input.property_prefix.is_none()
+                && input.property_depth.is_none()
+            {
                 collect_entity_txs(
                     branch.storage(),
                     entity,
@@ -107,7 +120,15 @@ impl Command for ListEntityHistory {
         let statuses = self.schema.assertion_statuses.as_ref();
         let mut entries = Vec::with_capacity(selected.len());
         for (tx_id, changed_props) in selected {
-            let entry = build_history_entry(branch, entity, tx_id, changed_props, statuses)?;
+            let entry = build_history_entry(
+                branch,
+                entity,
+                tx_id,
+                changed_props,
+                statuses,
+                input.property_prefix.as_ref(),
+                input.property_depth,
+            )?;
             entries.push(entry);
         }
 
@@ -115,15 +136,16 @@ impl Command for ListEntityHistory {
     }
 }
 
-/// Scan AssertionEntry to discover tx_ids where properties changed.
-///
-/// Key layout: `branch | entity | prop | tx_id`. Because prop sorts before tx_id,
-/// the KeyBound upper on tx_id doesn't cap per-property — entries with lower prop
-/// hashes but higher tx_ids still fall within the range. We filter by tx_id manually.
+/// Discover event IDs from keys in the selected property range.
+/// Keys group transactions by property, so time bounds are checked per key.
+/// Omitted descendants are skipped without reading assertion values.
+#[allow(clippy::too_many_arguments)] // Independent range filters and output accumulator.
 fn collect_assertion_txs(
     storage: &crate::store::storage::Storage,
     entity: &Slug,
     property_filter: Option<&Slug>,
+    prefix: Option<&Slug>,
+    depth: Option<usize>,
     on_branch: &Slug,
     at_tx: Option<Uuid>,
     tx_changes: &mut BTreeMap<Uuid, Vec<Slug>>,
@@ -136,18 +158,40 @@ fn collect_assertion_txs(
         bound = bound.with_prefix(|k| k.prop = prop.clone());
     }
 
-    let iter = storage.scan::<AssertionEntry>(&bound)?;
-    for entry_result in iter {
-        let entry = entry_result?;
-        if let Some(upper) = at_tx {
-            if entry.key.tx_id > upper {
+    let selected_bound = AssertionRange::subtree(on_branch, entity, prefix.map(Slug::as_str));
+    let mut iter = if property_filter.is_some() {
+        storage.scan_keys::<AssertionEntry>(&bound)?
+    } else {
+        storage.scan_keys::<AssertionEntry>(&selected_bound)?
+    };
+    while let Some(result) = iter.next() {
+        let key = result?;
+        let path = key.prop.as_str();
+        let relative = match prefix {
+            Some(p) if path == p.as_str() => "",
+            Some(p) => match property_path::relative(path, p.as_str()) {
+                Some(relative) => relative,
+                None => continue,
+            },
+            None => path,
+        };
+        let n = if prefix.is_some_and(|p| path == p.as_str()) {
+            0
+        } else {
+            property_path::depth(relative)
+        };
+        if let Some(d) = depth {
+            if n > d {
+                let base = prefix.map_or(0, |p| property_path::depth(p.as_str()));
+                let target = property_path::prefix(path, (base + d).max(1));
+                iter.seek(&AssertionRange::after_subtree(on_branch, entity, &target));
                 continue;
             }
         }
-        tx_changes
-            .entry(entry.key.tx_id)
-            .or_default()
-            .push(entry.key.prop);
+        if at_tx.is_some_and(|upper| key.tx_id > upper) {
+            continue;
+        }
+        tx_changes.entry(key.tx_id).or_default().push(key.prop);
     }
 
     Ok(())
@@ -172,10 +216,10 @@ fn collect_entity_txs(
         bound = bound.with_upper(|k| k.tx_id = tx);
     }
 
-    let iter = storage.scan::<EntityEntry>(&bound)?;
+    let iter = storage.scan_keys::<EntityEntry>(&bound)?;
     for entry_result in iter {
         let entry = entry_result?;
-        tx_changes.entry(entry.key.tx_id).or_default();
+        tx_changes.entry(entry.tx_id).or_default();
     }
 
     Ok(())
@@ -188,28 +232,39 @@ fn build_history_entry(
     tx_id: Uuid,
     changed_props: Vec<Slug>,
     statuses: Option<&AssertionStatusesDef>,
+    prefix: Option<&Slug>,
+    depth: Option<usize>,
 ) -> Result<EntityHistoryEntry, DbError> {
-    let entity = entity_snapshot::entity_snapshot(branch, slug, Some(tx_id), statuses)?
-        .unwrap_or_else(|| Entity {
-            slug: slug.clone(),
-            description: None,
-            properties: vec![],
-            meta: serde_json::Map::new(),
+    let entity = entity_snapshot::entity_snapshot_selected(
+        branch,
+        slug,
+        Some(tx_id),
+        statuses,
+        prefix,
+        depth,
+    )?
+    .unwrap_or_else(|| Entity {
+        property_refs: vec![],
+        slug: slug.clone(),
+        description: None,
+        properties: vec![],
+        meta: serde_json::Map::new(),
+        status: None,
+        context: TxMeta {
+            tx_id: Uuid::nil(),
+            branch: branch.id().clone(),
+            reasoning: None,
+            time: None,
             status: None,
-            context: TxMeta {
-                tx_id: Uuid::nil(),
-                branch: branch.id().clone(),
-                reasoning: None,
-                time: None,
-                status: None,
-                source: None,
-            },
-        });
+            source: None,
+        },
+    });
 
     let tx_entry = load_transaction_meta(branch, tx_id)?;
     let transaction_meta = tx_entry.map(|e| e.value.meta).unwrap_or_default();
 
     Ok(EntityHistoryEntry {
+        tx_id,
         entity,
         changed_properties: changed_props,
         transaction_meta,
@@ -307,6 +362,124 @@ mod tests {
     }
 
     #[test]
+    fn projected_history_counts_empty_descendant_segments_before_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+        let write = |property: &str, value: &str| {
+            exec(
+                &branch,
+                TransactionInput::new(meta("event")).write_entity(Entity::new(
+                    "doc".parse().unwrap(),
+                    Some(serde_json::json!("Document")),
+                    vec![PV {
+                        property: property.parse().unwrap(),
+                        value: serde_json::json!(value),
+                        supersedes_tx: None,
+                        context: (),
+                    }],
+                    meta("event"),
+                )),
+            )
+        };
+        let exact = write("a", "parent");
+        let descendant = write("a.", "child");
+        let mut selection = EntityHistoryQuery::new("doc".parse().unwrap(), 1);
+        selection.property_prefix = Some("a".parse().unwrap());
+        selection.property_depth = Some(0);
+        let h = query(&branch, selection);
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].tx_id, exact.context.tx_id);
+        assert_eq!(h[0].changed_properties, vec!["a".parse::<Slug>().unwrap()]);
+        assert_eq!(h[0].entity.properties.len(), 1);
+        assert_eq!(h[0].entity.properties[0].value, serde_json::json!("parent"));
+
+        let mut selection = EntityHistoryQuery::new("doc".parse().unwrap(), 1);
+        selection.property_prefix = Some("a".parse().unwrap());
+        selection.property_depth = Some(1);
+        let h = query(&branch, selection);
+        assert_eq!(h[0].tx_id, descendant.context.tx_id);
+        assert_eq!(h[0].changed_properties, vec!["a.".parse::<Slug>().unwrap()]);
+        assert_eq!(h[0].entity.properties.len(), 2);
+    }
+
+    #[test]
+    fn projected_history_filters_before_limit_and_preserves_empty_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+        let write = |props: Vec<(&str, serde_json::Value)>| {
+            exec(
+                &branch,
+                TransactionInput::new(meta("event")).write_entity(Entity::new(
+                    "doc".parse().unwrap(),
+                    Some(serde_json::json!("Document")),
+                    props
+                        .into_iter()
+                        .map(|(p, value)| PV {
+                            property: p.parse().unwrap(),
+                            value,
+                            supersedes_tx: None,
+                            context: (),
+                        })
+                        .collect(),
+                    meta("event"),
+                )),
+            )
+        };
+        let first = write(vec![
+            ("section.body", serde_json::json!("before")),
+            ("section.deep.body", serde_json::json!("deep")),
+            ("section2.body", serde_json::json!("sibling")),
+        ]);
+        let removed = write(vec![("section.body", serde_json::Value::Null)]);
+        write(vec![
+            ("section.deep.body", serde_json::json!("changed deep")),
+            ("section2.body", serde_json::json!("changed sibling")),
+        ]);
+        let selection = |limit| {
+            let mut q = EntityHistoryQuery::new("doc".parse().unwrap(), limit);
+            q.property_prefix = Some("section".parse().unwrap());
+            q.property_depth = Some(1);
+            q
+        };
+        let h = query(&branch, selection(1));
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].tx_id, removed.context.tx_id);
+        assert_eq!(
+            h[0].changed_properties,
+            vec!["section.body".parse::<Slug>().unwrap()]
+        );
+        assert!(h[0].entity.properties.is_empty());
+        let h = query(&branch, selection(10).with_at_tx(first.context.tx_id));
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].tx_id, first.context.tx_id);
+        assert_eq!(h[0].entity.properties.len(), 1);
+        assert_eq!(h[0].entity.properties[0].value, serde_json::json!("before"));
+        let mut exact = EntityHistoryQuery::new("doc".parse().unwrap(), 10);
+        exact.property_prefix = Some("section.body".parse().unwrap());
+        exact.property_depth = Some(0);
+        assert_eq!(query(&branch, exact).len(), 2);
+        let mut root = EntityHistoryQuery::new("doc".parse().unwrap(), 10);
+        root.property_depth = Some(1);
+        assert!(query(&branch, root).is_empty());
+        // On a child branch, inherited selected history remains bounded at fork time.
+        let mut cs = CommandState::new(branch.storage());
+        let checkout = crate::command::input::checkout::CheckoutInput::new(
+            "child".parse().unwrap(),
+            meta("fork"),
+            Some(first.context.tx_id),
+            TransactionInput::new(meta("initial child")),
+        );
+        ExecuteCheckout::new(validator())
+            .execute(&branch, &mut cs, checkout)
+            .unwrap();
+        cs.commit().unwrap();
+        let child = storage.branch("child".parse().unwrap()).unwrap();
+        assert_eq!(query(&child, selection(10)).len(), 1);
+    }
+
+    #[test]
     fn basic_history_create_and_update() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
@@ -318,6 +491,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -332,6 +506,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(26),
                     context: (),
@@ -371,6 +546,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -415,11 +591,13 @@ mod tests {
                 Some(serde_json::json!("A person")),
                 vec![
                     PV {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(25),
                         context: (),
                     },
                     PV {
+                        supersedes_tx: None,
                         property: "city".parse().unwrap(),
                         value: serde_json::json!("London"),
                         context: (),
@@ -435,6 +613,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(26),
                     context: (),
@@ -449,6 +628,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "city".parse().unwrap(),
                     value: serde_json::json!("Paris"),
                     context: (),
@@ -484,6 +664,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -498,6 +679,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(26),
                     context: (),
@@ -512,6 +694,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(27),
                     context: (),
@@ -541,6 +724,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -555,6 +739,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(26),
                     context: (),
@@ -569,6 +754,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(27),
                     context: (),
@@ -600,6 +786,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -622,6 +809,7 @@ mod tests {
                         "alice".parse().unwrap(),
                         None,
                         vec![PV {
+                            supersedes_tx: None,
                             property: "age".parse().unwrap(),
                             value: serde_json::json!(30),
                             context: (),
@@ -659,6 +847,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -673,6 +862,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::Value::Null,
                     context: (),
@@ -723,6 +913,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -737,6 +928,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(26),
                     context: (),
@@ -751,6 +943,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(27),
                     context: (),

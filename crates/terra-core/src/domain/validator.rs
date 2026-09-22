@@ -492,6 +492,7 @@ mod tests {
             "person".parse().unwrap(),
             Some(serde_json::json!("A person")),
             vec![PropertyValue {
+                supersedes_tx: None,
                 property: "age".parse().unwrap(),
                 value: serde_json::json!(30),
                 context: (),
@@ -510,6 +511,7 @@ mod tests {
             "person".parse().unwrap(),
             Some(serde_json::json!("A person")),
             vec![PropertyValue {
+                supersedes_tx: None,
                 property: "age".parse().unwrap(),
                 value: serde_json::json!(30),
                 context: (),
@@ -541,6 +543,7 @@ mod tests {
             "person".parse().unwrap(),
             None,
             vec![PropertyValue {
+                supersedes_tx: None,
                 property: "age".parse().unwrap(),
                 value: serde_json::json!(31),
                 context: (),

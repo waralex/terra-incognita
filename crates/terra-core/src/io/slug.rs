@@ -58,10 +58,15 @@ impl Slug {
     /// Deterministic hash for use in storage keys.
     pub fn hash(&self) -> Uuid {
         match &self.0 {
-            SlugInner::Value(s) => Uuid::new_v5(&SLUG_HASH_NAMESPACE, s.as_bytes()),
+            SlugInner::Value(s) => Self::hash_text(s),
             SlugInner::Min => Uuid::from_bytes([0x00; 16]),
             SlugInner::Max => Uuid::from_bytes([0xFF; 16]),
         }
+    }
+
+    /// Same hash for path segments, including empty legacy segments, without allocating a Slug.
+    pub(crate) fn hash_text(text: &str) -> Uuid {
+        Uuid::new_v5(&SLUG_HASH_NAMESPACE, text.as_bytes())
     }
 
     /// The original string.

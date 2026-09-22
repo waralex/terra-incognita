@@ -8,6 +8,8 @@ use super::storage_value::StorageValue;
 /// A `DbItem` is a composite of a typed key and a typed value.
 /// Storage layer uses these associated types for type-safe get/put.
 pub trait DbItem: Sized {
+    /// Persisted codec version for this column family. Version 1 denotes legacy unmarked data.
+    const FORMAT_VERSION: u32 = 1;
     type Key: StorageKey;
     type Value: StorageValue;
 

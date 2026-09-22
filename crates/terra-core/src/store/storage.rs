@@ -81,6 +81,13 @@ impl Storage {
         self.db.scan::<T>(prefix)
     }
 
+    pub fn scan_keys<T: DbItem>(
+        &self,
+        prefix: &impl crate::io::KeyPrefix<Key = T::Key>,
+    ) -> Result<crate::io::db_iterator::DbKeyIterator<'_, T>, DbError> {
+        self.db.scan_keys::<T>(prefix)
+    }
+
     /// Reverse scan over items within the given range.
     pub fn scan_rev<'a, T: DbItem>(
         &'a self,

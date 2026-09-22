@@ -10,7 +10,7 @@ use crate::domain::entity::Entity;
 use crate::domain::tx_meta::TxMeta;
 use crate::io::DbError;
 use crate::store::branch_context::BranchContext;
-use crate::store::query::entity_snapshot::entity_snapshot;
+use crate::store::query::entity_snapshot::entity_snapshot_selected;
 
 /// Reads a single entity snapshot, with assertion-status layering when configured.
 pub struct GetEntity {
@@ -35,8 +35,16 @@ impl Command for GetEntity {
         input: Self::Input,
     ) -> Result<Self::Output, DbError> {
         let statuses = self.schema.assertion_statuses.as_ref();
-        entity_snapshot(branch, &input.entity, input.at_tx, statuses)?
-            .ok_or_else(|| DbError::Storage(format!("entity not found: {}", input.entity)))
+        let entity = entity_snapshot_selected(
+            branch,
+            &input.entity,
+            input.at_tx,
+            statuses,
+            input.property_prefix.as_ref(),
+            input.property_depth,
+        )?
+        .ok_or_else(|| DbError::Storage(format!("entity not found: {}", input.entity)))?;
+        Ok(entity)
     }
 }
 
@@ -119,6 +127,151 @@ mod tests {
     }
 
     #[test]
+    fn subtree_preserves_layering_and_historical_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+        let mut summary_tx = None;
+        for (status, value) in [
+            ("observation", "old"),
+            ("fact", "summary"),
+            ("hypothesis", "new"),
+        ] {
+            let tx = exec_tx(
+                &branch,
+                TransactionInput::new(meta(value)).write_entity(
+                    DomainEntity::new(
+                        "cube".parse().unwrap(),
+                        Some(Value::String("test".into())),
+                        vec![
+                            PV {
+                                supersedes_tx: None,
+                                property: "a.b".parse().unwrap(),
+                                value: Value::String(value.into()),
+                                context: (),
+                            },
+                            PV {
+                                supersedes_tx: None,
+                                property: "ab".parse().unwrap(),
+                                value: Value::String("sibling".into()),
+                                context: (),
+                            },
+                        ],
+                        meta(value),
+                    )
+                    .with_status(Some(status.into())),
+                ),
+            );
+            if status == "fact" {
+                summary_tx = Some(tx);
+            }
+        }
+        let cmd = GetEntity::new(test_schema());
+        let query = || {
+            EntityGetQuery::new("cube".parse().unwrap()).with_property_prefix("a".parse().unwrap())
+        };
+        let mut state = CommandState::new(branch.storage());
+        let current = cmd.execute(&branch, &mut state, query()).unwrap();
+        let tree = crate::domain::property_tree::property_tree(current.properties);
+        let assertions = &tree["a"].children["b"].assertions;
+        assert_eq!(assertions.len(), 2);
+        assert_eq!(assertions[0].value, "summary");
+        assert_eq!(assertions[1].context.status.as_deref(), Some("hypothesis"));
+        let historical = cmd
+            .execute(&branch, &mut state, query().with_at_tx(summary_tx.unwrap()))
+            .unwrap();
+        assert_eq!(historical.properties.len(), 1);
+        assert_eq!(historical.properties[0].value, "summary");
+    }
+
+    #[test]
+    fn depth_refs_respect_snapshot_and_can_be_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Storage::open(dir.path(), test_config()).unwrap();
+        let branch = storage.main_branch();
+        let write = |paths: &[&str]| {
+            exec_tx(
+                &branch,
+                TransactionInput::new(meta("seed")).write_entity(
+                    DomainEntity::new(
+                        "cube".parse().unwrap(),
+                        Some(serde_json::json!("test")),
+                        paths
+                            .iter()
+                            .map(|p| PV {
+                                supersedes_tx: None,
+                                property: p.parse().unwrap(),
+                                value: serde_json::json!(p),
+                                context: (),
+                            })
+                            .collect(),
+                        meta("seed"),
+                    )
+                    .with_status(Some("fact".into())),
+                ),
+            )
+        };
+        let before = write(&["a", "a.b", "a.b.c", "ab.c", "odd.b-.c"]);
+        write(&["a.future.deep"]);
+        let cmd = GetEntity::new(test_schema());
+        let mut state = CommandState::new(branch.storage());
+        let q = || {
+            EntityGetQuery::new("cube".parse().unwrap())
+                .with_property_prefix("a".parse().unwrap())
+                .with_property_depth(1)
+                .with_at_tx(before)
+        };
+        let result = cmd.execute(&branch, &mut state, q()).unwrap();
+        assert_eq!(
+            result
+                .properties
+                .iter()
+                .map(|p| p.property.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "a.b"]
+        );
+        assert_eq!(
+            result
+                .property_refs
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>(),
+            ["a.b"]
+        );
+        let opened = cmd
+            .execute(
+                &branch,
+                &mut state,
+                EntityGetQuery::new("cube".parse().unwrap())
+                    .with_property_prefix(result.property_refs[0].clone())
+                    .with_property_depth(1)
+                    .with_at_tx(before),
+            )
+            .unwrap();
+        assert_eq!(opened.properties.len(), 2);
+        assert!(opened.property_refs.is_empty());
+        let exact = cmd
+            .execute(&branch, &mut state, q().with_property_depth(0))
+            .unwrap();
+        assert_eq!(exact.properties.len(), 1);
+        assert_eq!(exact.property_refs[0].as_str(), "a");
+        let odd = cmd
+            .execute(
+                &branch,
+                &mut state,
+                EntityGetQuery::new("cube".parse().unwrap())
+                    .with_property_prefix("odd".parse().unwrap())
+                    .with_property_depth(1),
+            )
+            .unwrap();
+        assert_eq!(odd.property_refs[0].as_str(), "odd.b-.c");
+        assert!(odd.property_refs[0]
+            .as_str()
+            .parse::<crate::io::Slug>()
+            .is_ok());
+    }
+
+    #[test]
     fn get_existing_entity() {
         let dir = tempfile::tempdir().unwrap();
         let storage = Storage::open(dir.path(), test_config()).unwrap();
@@ -132,6 +285,7 @@ mod tests {
                 "cube".parse().unwrap(),
                 Some(serde_json::json!("Cube.js project")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "language".parse().unwrap(),
                     value: serde_json::json!("TypeScript"),
                     context: (),
@@ -165,6 +319,7 @@ mod tests {
                 "cube".parse().unwrap(),
                 Some(serde_json::json!("Cube.js project")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "language".parse().unwrap(),
                     value: serde_json::json!("TypeScript"),
                     context: (),
@@ -178,6 +333,7 @@ mod tests {
                 "cube".parse().unwrap(),
                 None,
                 vec![PV {
+                    supersedes_tx: None,
                     property: "stars".parse().unwrap(),
                     value: serde_json::json!(100),
                     context: (),

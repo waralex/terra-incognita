@@ -113,6 +113,7 @@ impl ExecuteTransaction {
                     tx_id,
                 },
                 value: AssertionValue {
+                    supersedes_tx: pv.supersedes_tx,
                     change_id,
                     value: pv.value.clone(),
                     reasoning: reasoning.clone(),
@@ -129,7 +130,7 @@ impl ExecuteTransaction {
     ///
     /// Pure function — all data is provided by the caller.
     /// `description` is the resolved description (from input or from storage).
-    /// `existing` contains previously-stored properties not overridden by the input.
+    /// `existing` is the projected post-write visible state, using the snapshot resolver.
     fn build_embed_text(
         entity: &Entity,
         description: Option<&serde_json::Value>,
@@ -143,24 +144,17 @@ impl ExecuteTransaction {
             lines.push(format!("description: {}", desc));
         }
 
-        let input_props: std::collections::HashSet<&crate::io::slug::Slug> =
-            entity.properties.iter().map(|pv| &pv.property).collect();
-
-        for pv in &entity.properties {
-            lines.push(format!("{}: {}", pv.property, pv.value));
-        }
-
         for a in existing {
-            if !input_props.contains(&a.key.prop) {
-                lines.push(format!("{}: {}", a.key.prop, a.value.value));
-            }
+            lines.push(format!("{}: {}", a.key.prop, a.value.value));
         }
 
         lines.join("\n")
     }
 
     /// Generate and write embedding for an entity if the embedder is active.
+    #[allow(clippy::too_many_arguments)] // Transaction identity and embedding source fields.
     fn write_embedding(
+        &self,
         state: &mut CommandState,
         branch: &BranchContext,
         tx_id: Uuid,
@@ -224,17 +218,47 @@ impl ExecuteTransaction {
             .into());
         }
 
-        // Read existing state for embedding BEFORE writing to batch. Only an
-        // update with an active embedder needs it; a fresh entity has none.
+        // Preview the post-write visible state for an active embedder before commit.
+        // A terminal withdrawal may expose evidence absent from the current snapshot.
         let stored_desc: Option<serde_json::Value>;
         let existing: Vec<AssertionEntry>;
-        if !is_new && state.embedder().dimensions() != 0 {
+        if state.embedder().dimensions() != 0 {
             stored_desc = if entity.description.is_none() {
                 existing_record.and_then(|e| e.value.description)
             } else {
                 None
             };
-            existing = properties::properties(branch, &entity.slug, None)?;
+            let statuses = self.validator.schema().assertion_statuses.as_ref();
+            let pending: Vec<_> = entity
+                .properties
+                .iter()
+                .map(|p| AssertionEntry {
+                    key: AssertionKey {
+                        branch: branch.id().clone(),
+                        entity: entity.slug.clone(),
+                        prop: p.property.clone(),
+                        tx_id,
+                    },
+                    value: AssertionValue {
+                        supersedes_tx: p.supersedes_tx,
+                        change_id: Uuid::nil(),
+                        value: p.value.clone(),
+                        reasoning: String::new(),
+                        status: statuses.map(|s| s.resolve(entity.status.as_deref()).to_owned()),
+                        source: None,
+                    },
+                })
+                .collect();
+            existing = if is_new {
+                // New/recreated entities have no active evidence. Each property is
+                // unique (validated before writes); addressed targets require an existing entity.
+                pending
+                    .into_iter()
+                    .filter(|p| !p.value.is_deleted())
+                    .collect()
+            } else {
+                properties::with_pending(branch, &entity.slug, statuses, &pending)?
+            };
         } else {
             stored_desc = None;
             existing = vec![];
@@ -259,7 +283,7 @@ impl ExecuteTransaction {
 
         Self::write_touched(branch, state.batch(), tx_id, entity)?;
         let change_id = self.write_assertions(branch, state, tx_id, entity)?;
-        Self::write_embedding(
+        self.write_embedding(
             state,
             branch,
             tx_id,
@@ -419,10 +443,17 @@ impl ExecuteTransaction {
             .schema()
             .assertion_statuses
             .as_ref()
-            .map(|s| s.terminal.clone());
-        let existing_props = properties::properties(branch, &item.entity, None)?;
+            .and_then(|s| s.terminal.first().cloned());
+        let existing_props = match self.validator.schema().assertion_statuses.as_ref() {
+            Some(statuses) => properties::layered_properties(branch, &item.entity, None, statuses)?,
+            None => properties::properties(branch, &item.entity, None)?,
+        };
         let mut nullified_props = Vec::new();
+        let mut seen_props = HashSet::new();
         for prop in &existing_props {
+            if !seen_props.insert(prop.key.prop.clone()) {
+                continue;
+            }
             state.batch().put(&AssertionEntry {
                 key: AssertionKey {
                     branch: branch.id().clone(),
@@ -431,6 +462,7 @@ impl ExecuteTransaction {
                     tx_id,
                 },
                 value: AssertionValue {
+                    supersedes_tx: None,
                     change_id,
                     value: serde_json::Value::Null,
                     reasoning: String::new(),
@@ -481,11 +513,73 @@ impl Command for ExecuteTransaction {
         state: &mut CommandState,
         input: Self::Input,
     ) -> Result<Self::Output, DbError> {
+        // Checked before any writes, under Terra's mutation lock through commit.
+        let mut checked = std::collections::HashMap::new();
+        for condition in &input.preconditions {
+            let key = (&condition.entity, &condition.property);
+            if let std::collections::hash_map::Entry::Vacant(entry) = checked.entry(key) {
+                let actual = properties::exact_property(
+                    branch,
+                    &condition.entity,
+                    &condition.property,
+                    self.validator.schema().assertion_statuses.as_ref(),
+                )?
+                .into_iter()
+                .max_by_key(|a| a.key.tx_id)
+                .map(|a| a.value.value);
+                entry.insert(actual);
+            }
+            let actual = &checked[&key];
+            if actual != &condition.expected {
+                return Err(DbError::Storage(format!(
+                    "precondition conflict: {}.{} changed; reread before retry",
+                    condition.entity, condition.property
+                )));
+            }
+        }
         // Validate everything before touching storage.
         self.validator
             .check_transaction(&Transaction::new(input.meta.clone()))?;
         for entity in &input.write_entities {
             self.validator.check_entity_write(entity)?;
+            let mut keys = HashSet::new();
+            let snapshot = if entity.properties.iter().any(|p| p.supersedes_tx.is_some()) {
+                Some(
+                    crate::store::query::entity_snapshot::entity_snapshot(
+                        branch,
+                        &entity.slug,
+                        None,
+                        self.validator.schema().assertion_statuses.as_ref(),
+                    )?
+                    .ok_or_else(|| {
+                        DbError::Storage(format!("entity not found: {}", entity.slug))
+                    })?,
+                )
+            } else {
+                None
+            };
+            for p in &entity.properties {
+                if !keys.insert(&p.property) {
+                    return Err(DbError::Storage(format!(
+                        "duplicate property in transaction: {}.{}",
+                        entity.slug, p.property
+                    )));
+                }
+                if let Some(target) = p.supersedes_tx {
+                    if !snapshot
+                        .as_ref()
+                        .unwrap()
+                        .properties
+                        .iter()
+                        .any(|old| old.property == p.property && old.context.tx_id == target)
+                    {
+                        return Err(DbError::Storage(format!(
+                            "supersedes target is not active: {}.{} at {}; reread before retry",
+                            entity.slug, p.property, target
+                        )));
+                    }
+                }
+            }
         }
         for managed in &input.create_managed {
             self.validator.check_managed_create(managed)?;
@@ -843,11 +937,13 @@ mod tests {
                 Some(serde_json::json!("A person")),
                 vec![
                     PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(30),
                         context: (),
                     },
                     PropertyValue {
+                        supersedes_tx: None,
                         property: "city".parse().unwrap(),
                         value: serde_json::json!("London"),
                         context: (),
@@ -919,6 +1015,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -1344,6 +1441,7 @@ mod tests {
                     "db-node".parse().unwrap(),
                     Some(serde_json::json!("Database node")),
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "status".parse().unwrap(),
                         value: serde_json::json!("healthy"),
                         context: (),
@@ -1354,6 +1452,7 @@ mod tests {
                     "server".parse().unwrap(),
                     None,
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "status".parse().unwrap(),
                         value: serde_json::json!("degraded"),
                         context: (),
@@ -1422,11 +1521,13 @@ mod tests {
                 None,
                 vec![
                     PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(30),
                         context: (),
                     },
                     PropertyValue {
+                        supersedes_tx: None,
                         property: "city".parse().unwrap(),
                         value: serde_json::json!("London"),
                         context: (),
@@ -1519,6 +1620,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 None,
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(30),
                     context: (),
@@ -1694,6 +1796,7 @@ mod tests {
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(30),
                         context: (),
@@ -1727,6 +1830,7 @@ mod tests {
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(30),
                         context: (),
@@ -1775,6 +1879,7 @@ mod tests {
                     "alice".parse().unwrap(),
                     None,
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(25),
                         context: (),
@@ -1812,11 +1917,13 @@ mod tests {
                     Some(serde_json::json!("Production server")),
                     vec![
                         PropertyValue {
+                            supersedes_tx: None,
                             property: "status".parse().unwrap(),
                             value: serde_json::json!("healthy"),
                             context: (),
                         },
                         PropertyValue {
+                            supersedes_tx: None,
                             property: "zone".parse().unwrap(),
                             value: serde_json::json!("us-east"),
                             context: (),
@@ -1848,6 +1955,7 @@ mod tests {
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("A person")),
                         vec![PropertyValue {
+                            supersedes_tx: None,
                             property: "age".parse().unwrap(),
                             value: serde_json::json!(30),
                             context: (),
@@ -1858,6 +1966,7 @@ mod tests {
                         "bob".parse().unwrap(),
                         Some(serde_json::json!("Another person")),
                         vec![PropertyValue {
+                            supersedes_tx: None,
                             property: "age".parse().unwrap(),
                             value: serde_json::json!(25),
                             context: (),
@@ -1943,6 +2052,7 @@ mod tests {
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("Person A")),
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(30),
                         context: (),
@@ -1983,6 +2093,7 @@ mod tests {
                     "alice".parse().unwrap(),
                     None,
                     vec![PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(31),
                         context: (),
@@ -2134,6 +2245,7 @@ mod tests {
                         "alice".parse().unwrap(),
                         None,
                         vec![PropertyValue {
+                            supersedes_tx: None,
                             property: "age".parse().unwrap(),
                             value: serde_json::json!(25),
                             context: (),
@@ -2144,6 +2256,7 @@ mod tests {
                         "alice".parse().unwrap(),
                         None,
                         vec![PropertyValue {
+                            supersedes_tx: None,
                             property: "age".parse().unwrap(),
                             value: serde_json::json!(26),
                             context: (),
@@ -2209,6 +2322,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Original Alice")),
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -2232,6 +2346,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("New Alice")),
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "role".parse().unwrap(),
                     value: serde_json::json!("admin"),
                     context: (),
@@ -2264,11 +2379,13 @@ mod tests {
                 Some(serde_json::json!("Alice")),
                 vec![
                     PropertyValue {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(25),
                         context: (),
                     },
                     PropertyValue {
+                        supersedes_tx: None,
                         property: "city".parse().unwrap(),
                         value: serde_json::json!("London"),
                         context: (),
@@ -2292,6 +2409,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("New Alice")),
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "role".parse().unwrap(),
                     value: serde_json::json!("admin"),
                     context: (),
@@ -2318,6 +2436,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("Alice")),
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),

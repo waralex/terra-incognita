@@ -13,7 +13,7 @@
 //!     .open()?;
 //! ```
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -63,12 +63,15 @@ pub struct TerraDbBuilder {
     path: PathBuf,
     mode: AccessMode,
     cf_names: BTreeSet<String>,
+    cf_versions: BTreeMap<String, u32>,
 }
 
 impl TerraDbBuilder {
     /// Register a [`DbItem`] type — its column family will be created on open.
     pub fn with<T: DbItem>(mut self) -> Self {
         self.cf_names.insert(T::cf().to_string());
+        self.cf_versions
+            .insert(T::cf().to_string(), T::FORMAT_VERSION);
         self
     }
 
@@ -80,7 +83,9 @@ impl TerraDbBuilder {
 
     /// Open the database with all registered column families.
     pub fn open(self) -> Result<TerraDb, DbError> {
-        TerraDb::open_internal(&self.path, self.mode, &self.cf_names)
+        let db = TerraDb::open_internal(&self.path, self.mode, &self.cf_names)?;
+        db.validate_formats(&self.cf_versions)?;
+        Ok(db)
     }
 }
 
@@ -102,7 +107,39 @@ impl TerraDb {
             path: path.to_path_buf(),
             mode: AccessMode::ReadWrite,
             cf_names: BTreeSet::new(),
+            cf_versions: BTreeMap::new(),
         }
+    }
+
+    fn validate_formats(&self, versions: &BTreeMap<String, u32>) -> Result<(), DbError> {
+        // Validate every family before committing any newly initialized markers.
+        let mut markers = rocksdb::WriteBatch::default();
+        for (name, expected) in versions {
+            let key = format!("terra.codec.{name}");
+            let stored = self.db.get(key.as_bytes())?;
+            if let Some(stored) = stored {
+                if stored.as_slice() != expected.to_be_bytes() {
+                    return Err(DbError::Storage(format!("incompatible storage format for {name}: expected {expected}; use a fresh database (no automatic migration)")));
+                }
+            } else if *expected != 1 {
+                let cf = self
+                    .db
+                    .cf_handle(name)
+                    .ok_or_else(|| DbError::Storage(format!("missing column family: {name}")))?;
+                let mut iter = self.db.raw_iterator_cf(cf);
+                iter.seek_to_first();
+                let nonempty = iter.valid();
+                iter.status()?;
+                if nonempty || self.mode == AccessMode::ReadOnly {
+                    return Err(DbError::Storage(format!("unversioned storage format for {name}; expected {expected}; use a fresh database (no automatic migration)")));
+                }
+                markers.put(key.as_bytes(), expected.to_be_bytes());
+            }
+        }
+        if self.mode == AccessMode::ReadWrite {
+            self.db.write(markers)?;
+        }
+        Ok(())
     }
 
     /// Access mode this database was opened with.
@@ -119,6 +156,8 @@ impl TerraDb {
         let key_bytes = key.encode();
         match self.db.get_cf(cf, &key_bytes) {
             Ok(Some(val_bytes)) => {
+                #[cfg(test)]
+                crate::io::db_iterator::VALUE_READS.with(|n| n.set(n.get() + 1));
                 let k = T::Key::decode(&key_bytes)?;
                 let v = T::Value::decode(&val_bytes)?;
                 Ok(Some(T::from_parts(k, v)))
@@ -145,6 +184,22 @@ impl TerraDb {
         let mode = IteratorMode::From(&lower, Direction::Forward);
         let inner = self.db.iterator_cf_opt(cf, opts, mode);
         Ok(DbIterator::new(inner, lower, upper, Direction::Forward))
+    }
+
+    /// Scan typed keys without copying or decoding values (storage blocks may still contain values).
+    pub fn scan_keys<T: DbItem>(
+        &self,
+        prefix: &impl KeyPrefix<Key = T::Key>,
+    ) -> Result<super::db_iterator::DbKeyIterator<'_, T>, DbError> {
+        let cf = self
+            .db
+            .cf_handle(T::cf())
+            .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
+        Ok(super::db_iterator::DbKeyIterator::new(
+            self.db.raw_iterator_cf(cf),
+            prefix.encode_lower_bound(),
+            prefix.encode_upper_bound(),
+        ))
     }
 
     /// Iterate in reverse over items within the prefix range.
@@ -212,6 +267,74 @@ mod tests {
     use crate::io::storage_key::KeyError;
     use crate::io::storage_key::StorageKey;
     use crate::io::storage_value::StorageValue;
+
+    #[test]
+    fn codec_version_guards_legacy_and_future_formats() {
+        use crate::store::entry::assertion::AssertionEntry;
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let db = TerraDb::builder(dir.path())
+                .with::<AssertionEntry>()
+                .open()
+                .unwrap();
+            assert_eq!(
+                db.db.get(b"terra.codec.assertions").unwrap().unwrap(),
+                2u32.to_be_bytes()
+            );
+        }
+        drop(
+            TerraDb::builder(dir.path())
+                .with::<AssertionEntry>()
+                .read_only()
+                .open()
+                .unwrap(),
+        );
+        {
+            let db = TerraDb::builder(dir.path())
+                .with::<AssertionEntry>()
+                .open()
+                .unwrap();
+            db.db.delete(b"terra.codec.assertions").unwrap();
+            db.db
+                .put_cf(
+                    db.db.cf_handle("assertions").unwrap(),
+                    b"legacy-key",
+                    b"legacy-value",
+                )
+                .unwrap();
+        }
+        assert!(TerraDb::builder(dir.path())
+            .with::<AssertionEntry>()
+            .open()
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unversioned"));
+        assert!(TerraDb::builder(dir.path())
+            .with::<AssertionEntry>()
+            .read_only()
+            .open()
+            .is_err());
+        {
+            // Test fixture repair through raw opener, not a public migration API.
+            let db = TerraDb::open_internal(
+                dir.path(),
+                AccessMode::ReadWrite,
+                &BTreeSet::from(["assertions".into()]),
+            )
+            .unwrap();
+            db.db
+                .put(b"terra.codec.assertions", 99u32.to_be_bytes())
+                .unwrap();
+        }
+        assert!(TerraDb::builder(dir.path())
+            .with::<AssertionEntry>()
+            .open()
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("incompatible"));
+    }
 
     #[derive(Debug, Clone)]
     struct TestKey;

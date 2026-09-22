@@ -9,3 +9,20 @@ temp
 node_modules
 models
 .mcp.json
+
+# Local evidence bundles and Python test caches
+.local/handoffs/
+__pycache__/
+
+# Local pilot state may contain connector configuration and private logs
+.local/pilots/
+.local/ui-runtime.log
+
+# Local migration backups
+.local/migrations/
+
+# Isolated Markdown-memory pilot database and screenshots
+.local/markdown-pilot/
+
+# Local databases, credentials, runtime logs and experiment artifacts
+/.local/

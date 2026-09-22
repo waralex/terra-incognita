@@ -10,12 +10,12 @@ use crate::command::Command;
 use crate::command::CommandState;
 use crate::config::DataSchema;
 use crate::domain::entity::Entity;
-use crate::domain::tx_meta::{time_from_uuid, TxMeta};
+use crate::domain::tx_meta::TxMeta;
 use crate::domain::validator::ValidationError;
-use crate::io::DbError;
+use crate::io::{DbError, Slug};
 use crate::store::branch_context::BranchContext;
 use crate::store::query::entity_slugs::entity_slugs;
-use crate::store::query::entity_snapshot::{entity_head, entity_snapshot};
+use crate::store::query::entity_snapshot::{entity_head, entity_snapshot, head_entity};
 
 /// Searches entities on the branch by matching a regex against the fields
 /// selected in the query scope (slug, property names, values, reasoning).
@@ -48,61 +48,63 @@ impl Command for GrepEntities {
             })
         })?;
 
-        let scope = input.scope;
         let at_tx = input.at_tx;
         let statuses = self.schema.assertion_statuses.as_ref();
         // The full snapshot is needed when matching against properties, or when
         // the caller wants properties in the output.
-        let need_snapshot = scope.needs_properties() || input.include_properties;
+        let need_snapshot = input.scope.needs_properties() || input.include_properties;
 
-        let mut results: Vec<Entity<TxMeta>> = Vec::new();
-        for slug in entity_slugs(branch)? {
-            let matched = if need_snapshot {
-                let Some(mut entity) = entity_snapshot(branch, &slug, at_tx, statuses)? else {
-                    continue;
-                };
-                if (scope.slug && re.is_match(slug.as_str()))
-                    || content_matches(&entity, scope, &re)
-                {
-                    if !input.include_properties {
-                        entity.properties.clear();
-                    }
-                    Some(entity)
-                } else {
-                    None
-                }
-            } else {
-                // Slug-only matching, slug-only output: skip the property scan.
-                if !(scope.slug && re.is_match(slug.as_str())) {
-                    continue;
-                }
-                entity_head(branch, &slug, at_tx)?.map(|head| Entity {
-                    slug: slug.clone(),
-                    description: head.description,
-                    properties: Vec::new(),
-                    meta: serde_json::Map::new(),
-                    status: None,
-                    context: TxMeta {
-                        tx_id: head.tx_id,
-                        branch: head.branch,
-                        reasoning: None,
-                        time: time_from_uuid(head.tx_id),
-                        status: None,
-                        source: None,
-                    },
-                })
-            };
-
-            if let Some(entity) = matched {
-                results.push(entity);
+        let load = |slug: &Slug| -> Result<Option<Entity<TxMeta>>, DbError> {
+            if need_snapshot {
+                return entity_snapshot(branch, slug, at_tx, statuses);
             }
-        }
-
-        // Reverse insertion order: tx_id is UUID v7, so this is newest-first.
-        results.sort_by_key(|r| std::cmp::Reverse(r.context.tx_id));
-        results.truncate(input.limit);
-        Ok(results)
+            // Slug-only matching, slug-only output: skip the property scan.
+            Ok(entity_head(branch, slug, at_tx)?.map(|head| head_entity(slug, head, Vec::new())))
+        };
+        scan(&input, &re, entity_slugs(branch)?, load)
     }
+}
+
+/// Walk the candidate slugs, load only those that can still match, and
+/// return the matches newest first, capped at the limit.
+///
+/// When no property-level field is in scope the slug is the sole match
+/// criterion, so a non-matching slug is skipped before any storage read —
+/// with `properties: true` that avoids building a full layered snapshot per
+/// entity on the branch. `load` resolves liveness (deleted or post-`at_tx`
+/// entities come back as `None`).
+fn scan<F>(
+    input: &GrepEntitiesQuery,
+    re: &Regex,
+    slugs: Vec<Slug>,
+    mut load: F,
+) -> Result<Vec<Entity<TxMeta>>, DbError>
+where
+    F: FnMut(&Slug) -> Result<Option<Entity<TxMeta>>, DbError>,
+{
+    let scope = input.scope;
+    let mut results: Vec<Entity<TxMeta>> = Vec::new();
+    for slug in slugs {
+        let slug_hit = scope.slug && re.is_match(slug.as_str());
+        if !scope.needs_properties() && !slug_hit {
+            continue;
+        }
+        let Some(mut entity) = load(&slug)? else {
+            continue;
+        };
+        if !(slug_hit || content_matches(&entity, scope, re)) {
+            continue;
+        }
+        if !input.include_properties {
+            entity.properties.clear();
+        }
+        results.push(entity);
+    }
+
+    // Reverse insertion order: tx_id is UUID v7, so this is newest-first.
+    results.sort_by_key(|r| std::cmp::Reverse(r.context.tx_id));
+    results.truncate(input.limit);
+    Ok(results)
 }
 
 /// Whether any enabled property-level field matches the pattern.
@@ -218,6 +220,7 @@ mod tests {
             props
                 .into_iter()
                 .map(|(p, v)| PV {
+                    supersedes_tx: None,
                     property: p.parse().unwrap(),
                     value: v,
                     context: (),
@@ -527,5 +530,103 @@ mod tests {
         // Still present on the parent branch.
         let on_main = grep(&main, GrepEntitiesQuery::new("^auth-".into(), 50));
         assert_eq!(on_main.len(), 1);
+    }
+
+    fn fake_entity(slug: &Slug, n: u128) -> Entity<TxMeta> {
+        Entity {
+            property_refs: vec![],
+            slug: slug.clone(),
+            description: None,
+            properties: vec![PV {
+                supersedes_tx: None,
+                property: "kind".parse().unwrap(),
+                value: Value::String("service".to_string()),
+                context: TxMeta {
+                    tx_id: Uuid::from_u128(n),
+                    branch: "main".parse().unwrap(),
+                    reasoning: None,
+                    time: None,
+                    status: None,
+                    source: None,
+                },
+            }],
+            meta: Map::new(),
+            status: None,
+            context: TxMeta {
+                tx_id: Uuid::from_u128(n),
+                branch: "main".parse().unwrap(),
+                reasoning: None,
+                time: None,
+                status: None,
+                source: None,
+            },
+        }
+    }
+
+    fn fake_slugs() -> Vec<Slug> {
+        ["auth-service", "auth-gateway", "payment-service"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect()
+    }
+
+    /// Run `scan` with a loader that counts calls and stamps tx ids in
+    /// slug order (later slug = newer).
+    fn scan_counting(query: GrepEntitiesQuery) -> (Vec<Entity<TxMeta>>, usize) {
+        let re = Regex::new(&query.pattern).unwrap();
+        let mut loads = 0;
+        let slugs = fake_slugs();
+        let results = scan(&query, &re, slugs.clone(), |slug| {
+            loads += 1;
+            let n = slugs.iter().position(|s| s == slug).unwrap() as u128 + 1;
+            Ok(Some(fake_entity(slug, n)))
+        })
+        .unwrap();
+        (results, loads)
+    }
+
+    #[test]
+    fn scan_slug_only_scope_loads_only_matching_slugs() {
+        let (results, loads) = scan_counting(GrepEntitiesQuery::new("^auth-".to_string(), 50));
+        assert_eq!(loads, 2, "non-matching slugs must not be loaded");
+        let slugs: Vec<&str> = results.iter().map(|e| e.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["auth-gateway", "auth-service"]);
+        assert_eq!(results[0].properties.len(), 1);
+    }
+
+    #[test]
+    fn scan_property_scope_loads_everything() {
+        let query = GrepEntitiesQuery::new("^auth-".to_string(), 50).scope(GrepScope {
+            slug: false,
+            property: false,
+            value: true,
+            reasoning: false,
+        });
+        let (results, loads) = scan_counting(query);
+        assert_eq!(loads, 3, "a property scope needs every snapshot");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn scan_all_false_scope_loads_nothing() {
+        let query = GrepEntitiesQuery::new(".*".to_string(), 50).scope(GrepScope {
+            slug: false,
+            property: false,
+            value: false,
+            reasoning: false,
+        });
+        let (results, loads) = scan_counting(query);
+        assert_eq!(loads, 0);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn scan_respects_limit_and_clears_properties_when_asked() {
+        let query = GrepEntitiesQuery::new(".*".to_string(), 2).include_properties(false);
+        let (results, loads) = scan_counting(query);
+        assert_eq!(loads, 3);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].slug.as_str(), "payment-service");
+        assert!(results.iter().all(|e| e.properties.is_empty()));
     }
 }

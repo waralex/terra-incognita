@@ -1,6 +1,6 @@
 //! Assertion entry — a single property value claim.
 //!
-//! Key: `branch(16) | entity(16) | prop(16) | tx_id(16)` = 64 bytes fixed + slug suffixes.
+//! Key: branch/entity hashes, tagged segment hashes, path terminator, tx, name suffixes.
 //! Value: JSON with change_id, the property value, an optional epistemic status,
 //! and an optional provenance `source`.
 //!
@@ -13,22 +13,19 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use super::assertion_key::AssertionKey;
+pub(crate) use super::assertion_key::AssertionRange;
 use crate::io::storage_value::StorageValue;
 use crate::io::{DbError, DbItem};
-use crate::store::versioned_key::versioned_key;
 
 const CF_ASSERTIONS: &str = "assertions";
-
-versioned_key! {
-    pub struct AssertionKey {
-        entity: Slug,
-        prop: Slug,
-    }
-}
 
 /// Assertion value — property value + provenance link.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssertionValue {
+    /// Target within the same entity/property; absent in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes_tx: Option<Uuid>,
     pub change_id: Uuid,
     pub value: serde_json::Value,
     pub reasoning: String,
@@ -70,6 +67,7 @@ pub struct AssertionEntry {
 }
 
 impl DbItem for AssertionEntry {
+    const FORMAT_VERSION: u32 = 2;
     type Key = AssertionKey;
     type Value = AssertionValue;
 
@@ -97,6 +95,13 @@ mod tests {
     use crate::io::TerraDb;
 
     #[test]
+    fn legacy_value_decodes_without_replacement_target() {
+        let raw = serde_json::json!({"change_id":Uuid::nil(),"value":"legacy","reasoning":"old"});
+        let decoded: AssertionValue = serde_json::from_value(raw).unwrap();
+        assert!(decoded.supersedes_tx.is_none());
+    }
+
+    #[test]
     fn roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let db = TerraDb::builder(dir.path())
@@ -112,6 +117,7 @@ mod tests {
                 tx_id: Uuid::now_v7(),
             },
             value: AssertionValue {
+                supersedes_tx: None,
                 change_id: Uuid::now_v7(),
                 value: serde_json::json!({"name": "London"}),
                 reasoning: "geographic data".into(),

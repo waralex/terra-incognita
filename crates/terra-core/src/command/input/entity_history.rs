@@ -16,6 +16,10 @@ pub struct EntityHistoryQuery {
     pub entity: Slug,
     /// Filter: only transactions where this property changed.
     pub property: Option<Slug>,
+    /// Select this property subtree in both event discovery and returned snapshots.
+    pub property_prefix: Option<Slug>,
+    /// Maximum depth relative to the selected prefix (or entity root).
+    pub property_depth: Option<usize>,
     /// Upper bound for cursor mode (default: head_tx).
     pub at_tx: Option<Uuid>,
     /// Max entries to return.
@@ -31,6 +35,8 @@ impl EntityHistoryQuery {
         Self {
             entity,
             property: None,
+            property_prefix: None,
+            property_depth: None,
             at_tx: None,
             limit,
             tx_id_from: None,

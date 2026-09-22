@@ -47,7 +47,15 @@ impl DeleteItem {
 /// 3. Update managed items
 /// 4. Delete entities (soft-delete with reasoning)
 /// 5. Explicit touches (override auto-touches from writes)
+pub struct PropertyPrecondition {
+    pub entity: Slug,
+    pub property: Slug,
+    /// None requires that the property is absent.
+    pub expected: Option<Value>,
+}
+
 pub struct TransactionInput {
+    pub(crate) preconditions: Vec<PropertyPrecondition>,
     pub(crate) meta: Map<String, Value>,
     pub(crate) write_entities: Vec<Entity>,
     pub(crate) create_managed: Vec<Managed>,
@@ -61,12 +69,18 @@ impl TransactionInput {
     pub fn new(meta: Map<String, Value>) -> Self {
         Self {
             meta,
+            preconditions: Vec::new(),
             write_entities: Vec::new(),
             create_managed: Vec::new(),
             update_managed: Vec::new(),
             delete_entities: Vec::new(),
             touched: Vec::new(),
         }
+    }
+
+    pub fn require_property(mut self, condition: PropertyPrecondition) -> Self {
+        self.preconditions.push(condition);
+        self
     }
 
     /// Add an entity to write — created if new, updated if it already exists.
@@ -136,6 +150,7 @@ mod tests {
                 "bob".parse().unwrap(),
                 None,
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(30),
                     context: (),
@@ -189,6 +204,7 @@ mod tests {
                 "server".parse().unwrap(),
                 None,
                 vec![PropertyValue {
+                    supersedes_tx: None,
                     property: "status".parse().unwrap(),
                     value: serde_json::json!("down"),
                     context: (),

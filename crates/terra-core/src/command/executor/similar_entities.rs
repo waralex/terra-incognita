@@ -192,6 +192,7 @@ mod tests {
                 "auth-service".parse().unwrap(),
                 Some(serde_json::json!("auth service")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "role".parse().unwrap(),
                     value: serde_json::json!("authentication"),
                     context: (),

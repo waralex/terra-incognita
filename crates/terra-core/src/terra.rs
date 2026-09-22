@@ -45,6 +45,7 @@ use crate::store::storage::Storage;
 ///
 /// Each input type implements this to wire itself to the right executor.
 pub trait Executable {
+    const MUTATES: bool = false;
     /// Output returned on success.
     type Output;
 
@@ -62,6 +63,7 @@ pub trait Executable {
 /// Owns storage, validator, schema, and embedder. Resolves branches by slug
 /// and handles CommandState lifecycle (create → execute → commit).
 pub struct Terra {
+    mutation_lock: std::sync::Mutex<()>,
     storage: Storage,
     validator: DomainValidator,
     schema: Arc<DataSchema>,
@@ -79,6 +81,7 @@ impl Terra {
         let storage = Storage::open(path, config)?;
         let validator = DomainValidator::new(schema.clone());
         Ok(Self {
+            mutation_lock: std::sync::Mutex::new(()),
             storage,
             validator,
             schema,
@@ -91,6 +94,15 @@ impl Terra {
     /// Resolves the branch slug, creates a CommandState, delegates to
     /// `Executable::execute_on`, and commits the batch atomically.
     pub fn execute<E: Executable>(&self, branch: &Slug, input: E) -> Result<E::Output, DbError> {
+        let _guard = if E::MUTATES {
+            Some(
+                self.mutation_lock
+                    .lock()
+                    .map_err(|_| DbError::Storage("mutation lock poisoned".into()))?,
+            )
+        } else {
+            None
+        };
         let ctx = self.resolve_branch(branch)?;
         let mut state = CommandState::with_embedder(&self.storage, self.embedder.clone());
         let output = input.execute_on(self, &ctx, &mut state)?;
@@ -115,6 +127,7 @@ impl Terra {
 // --- Executable impls ---
 
 impl Executable for TransactionInput {
+    const MUTATES: bool = true;
     type Output = Transaction<TxMeta>;
 
     fn execute_on(
@@ -128,6 +141,7 @@ impl Executable for TransactionInput {
 }
 
 impl Executable for CheckoutInput {
+    const MUTATES: bool = true;
     type Output = CheckoutOutput;
 
     fn execute_on(
@@ -328,6 +342,7 @@ mod tests {
                     "alice".parse().unwrap(),
                     Some(serde_json::json!("A person")),
                     vec![PV {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(25),
                         context: (),
@@ -445,6 +460,7 @@ mod tests {
                     "auth-service".parse().unwrap(),
                     Some(serde_json::json!("auth service")),
                     vec![PV {
+                        supersedes_tx: None,
                         property: "role".parse().unwrap(),
                         value: serde_json::json!("authentication"),
                         context: (),
@@ -494,6 +510,7 @@ mod tests {
                         "alice".parse().unwrap(),
                         Some(serde_json::json!("A person")),
                         vec![PV {
+                            supersedes_tx: None,
                             property: "city".parse().unwrap(),
                             value: serde_json::json!("Paris"),
                             context: (),
@@ -513,6 +530,7 @@ mod tests {
                         "alice".parse().unwrap(),
                         None,
                         vec![PV {
+                            supersedes_tx: None,
                             property: "city".parse().unwrap(),
                             value: serde_json::json!("Lyon?"),
                             context: (),

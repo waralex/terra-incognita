@@ -20,3 +20,18 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Markdown dependencies
+        run: npm ci --prefix markdown
+      - name: Markdown tests
+        run: npm test --prefix markdown
+      - name: Build document bridge
+        run: cargo build -p terra-core --example document-bridge
+      - name: Document integration tests
+        run: |
+          node markdown/document-integration.mjs
+          node --test markdown/document-mcp-integration.mjs
+      - name: Shared memory transport tests
+        run: node --test scripts/*.test.mjs

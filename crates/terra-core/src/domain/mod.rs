@@ -3,6 +3,8 @@ pub mod entity;
 pub mod entity_history;
 pub mod managed;
 pub mod property;
+pub mod property_path;
+pub mod property_tree;
 pub mod transaction;
 pub mod tx_meta;
 pub mod validator;

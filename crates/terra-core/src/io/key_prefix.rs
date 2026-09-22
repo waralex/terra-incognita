@@ -17,7 +17,7 @@ pub trait KeyPrefix {
     /// Size of the encoded prefix in bytes.
     const SIZE: usize;
 
-    /// Encode the prefix as fixed-size bytes.
+    /// Encode the address prefix; explicit variable-length ranges override both bounds.
     fn encode(&self) -> Vec<u8>;
 
     /// Encode the lower bound of the scan range.

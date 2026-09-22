@@ -9,7 +9,9 @@ use crate::io::slug::Slug;
 /// A single history entry: entity snapshot + what changed in this transaction.
 #[derive(Debug)]
 pub struct EntityHistoryEntry {
-    /// Full entity snapshot at this transaction point.
+    /// The event transaction, independent of snapshot entity/property timestamps.
+    pub tx_id: uuid::Uuid,
+    /// Full or selected entity snapshot at this transaction point.
     pub entity: Entity<TxMeta>,
     /// Property slugs that changed in this transaction.
     pub changed_properties: Vec<Slug>,

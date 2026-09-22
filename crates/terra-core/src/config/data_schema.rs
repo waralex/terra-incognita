@@ -61,7 +61,7 @@ pub struct DataSchema {
 
 /// Epistemic statuses an assertion can carry.
 ///
-/// `terminal` is the consolidating status (e.g. `fact`): in a snapshot it forms
+/// `terminal` lists consolidating statuses (e.g. `fact`, `summary`): in a snapshot it forms
 /// the baseline per property. Non-terminal statuses (hypothesis, observation)
 /// asserted after the latest terminal are layered on top. `default` is the
 /// status assigned when a write omits one (and how status-less legacy
@@ -71,11 +71,28 @@ pub struct AssertionStatusesDef {
     /// Full set of valid status names.
     pub values: Vec<String>,
 
-    /// The consolidating status that forms the snapshot baseline.
-    pub terminal: String,
+    /// Consolidating statuses; the first is used for automatic retractions.
+    /// YAML accepts either a single string or a nonempty list.
+    #[serde(deserialize_with = "deserialize_terminals")]
+    pub terminal: Vec<String>,
 
     /// Status assigned when a write omits one.
     pub default: String,
+}
+
+fn deserialize_terminals<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Terminals {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Terminals::deserialize(deserializer)? {
+        Terminals::One(s) => vec![s],
+        Terminals::Many(values) => values,
+    })
 }
 
 impl AssertionStatusesDef {
@@ -84,9 +101,9 @@ impl AssertionStatusesDef {
         status.unwrap_or(&self.default)
     }
 
-    /// Whether the (resolved) status is the terminal one.
+    /// Whether the (resolved) status is one of the terminal statuses.
     pub fn is_terminal(&self, status: Option<&str>) -> bool {
-        self.resolve(status) == self.terminal
+        self.terminal.iter().any(|s| s == self.resolve(status))
     }
 
     /// Whether `status` is a declared value.
@@ -201,10 +218,17 @@ impl DataSchema {
                     });
                 }
             }
-            if !statuses.contains(&statuses.terminal) {
+            if statuses.terminal.is_empty() {
                 return Err(ConfigError::AssertionStatuses {
-                    message: format!("terminal \"{}\" is not in values", statuses.terminal),
+                    message: "terminal is empty".into(),
                 });
+            }
+            for terminal in &statuses.terminal {
+                if !statuses.contains(terminal) {
+                    return Err(ConfigError::AssertionStatuses {
+                        message: format!("terminal \"{}\" is not in values", terminal),
+                    });
+                }
             }
             if !statuses.contains(&statuses.default) {
                 return Err(ConfigError::AssertionStatuses {
@@ -360,12 +384,26 @@ mod tests {
         .unwrap();
         let s = config.assertion_statuses.unwrap();
         assert_eq!(s.values, vec!["fact", "hypothesis", "observation"]);
-        assert_eq!(s.terminal, "fact");
+        assert_eq!(s.terminal, vec!["fact"]);
         assert_eq!(s.default, "observation");
         assert!(s.is_terminal(Some("fact")));
         assert!(!s.is_terminal(Some("hypothesis")));
         // None resolves to default (observation), which is not terminal.
         assert!(!s.is_terminal(None));
+    }
+
+    #[test]
+    fn multiple_terminals_config_validation() {
+        let config = DataSchema::from_yaml("assertion_statuses:\n  values: [fact, summary, observation]\n  terminal: [fact, summary]\n  default: summary").unwrap();
+        let statuses = config.assertion_statuses.unwrap();
+        assert!(statuses.is_terminal(Some("fact")));
+        assert!(statuses.is_terminal(Some("summary")));
+        assert!(statuses.is_terminal(None));
+        assert!(!statuses.is_terminal(Some("observation")));
+        for terminal in ["[]", "[fact, unknown]", "[fact, 123]", "null"] {
+            let yaml = format!("assertion_statuses:\n  values: [fact, observation]\n  terminal: {terminal}\n  default: observation");
+            assert!(DataSchema::from_yaml(&yaml).is_err(), "accepted {terminal}");
+        }
     }
 
     #[test]

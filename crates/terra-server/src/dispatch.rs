@@ -42,6 +42,10 @@ pub fn handle(terra: &Terra, body: &[u8], format: ContentFormat) -> Response {
     };
 
     match envelope.command.as_str() {
+        "capabilities" => ok_response(
+            format,
+            &serde_json::json!({"transaction_preconditions":true,"assertion_supersedes":true}),
+        ),
         "transaction" => cmd_transaction(terra, &branch, envelope.body, format),
         "checkout" => cmd_checkout(terra, &branch, envelope.body, format),
         "transactions.list" => cmd_list_transactions(terra, &branch, envelope.body, format),
@@ -302,11 +306,13 @@ fn cmd_get_entity(
             )
         }
     };
+    let tree = matches!(req.view, crate::dto::request::EntityView::Tree);
     let input = match convert::entity_get_req_to_query(req) {
         Ok(v) => v,
         Err(e) => return error_response(format, StatusCode::BAD_REQUEST, "parse_error", &e),
     };
     match terra.execute(branch, input) {
+        Ok(entity) if tree => ok_response(format, &convert::entity_to_tree_res(entity)),
         Ok(entity) => ok_response(format, &convert::entity_to_res(entity)),
         Err(e) => db_error_response(format, &e),
     }
@@ -639,6 +645,160 @@ mod tests {
         assert_eq!(props.len(), 1);
         assert_eq!(props[0]["property"], "language");
         assert_eq!(props[0]["value"], "TypeScript");
+    }
+
+    #[test]
+    fn entity_tree_is_lossless_filtered_and_optional() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+        let (status, _) = dispatch_json(
+            &terra,
+            json!({"command":"transaction", "meta":{"reasoning":"seed"}, "write":[{
+                "slug":"cube", "description":"test", "meta":{"reasoning":"seed"},
+                "properties":[{"property":"a", "value":"parent"}, {"property":"a.b.c", "value":{"raw.key":42}}, {"property":"ab", "value":"sibling"}]
+            }]}),
+        );
+        assert_eq!(status, StatusCode::OK);
+        let (status, flat) = dispatch_json(
+            &terra,
+            json!({"command":"entity.get", "entity":"cube", "property_prefix":"a"}),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(flat["properties"].as_array().unwrap().len(), 2);
+        let (status, tree) = dispatch_json(
+            &terra,
+            json!({"command":"entity.get", "entity":"cube", "view":"tree", "property_prefix":"a"}),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(tree["properties"].as_object().unwrap().len(), 1);
+        assert_eq!(tree["properties"]["a"]["assertions"][0]["value"], "parent");
+        let leaf = &tree["properties"]["a"]["children"]["b"]["children"]["c"]["assertions"][0];
+        let source = flat["properties"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["property"] == "a.b.c")
+            .unwrap();
+        assert_eq!(leaf["value"], source["value"]);
+        assert_eq!(leaf["context"], source["context"]);
+        let (_, empty) = dispatch_json(
+            &terra,
+            json!({"command":"entity.get", "entity":"cube", "view":"tree", "property_prefix":"missing"}),
+        );
+        assert_eq!(empty["properties"], json!({}));
+        let (status, _) = dispatch_json(
+            &terra,
+            json!({"command":"entity.get", "entity":"cube", "view":"unknown"}),
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn entity_depth_selects_values_and_exposes_navigation_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+        let (status, _) = dispatch_json(
+            &terra,
+            json!({"command":"transaction", "meta":{"reasoning":"seed"}, "write":[{
+                "slug":"cube", "description":"test", "meta":{"reasoning":"seed"},
+                "properties":[{"property":"a", "value":"parent"}, {"property":"a.b", "value":"child"}, {"property":"a.b.c", "value":"deep"}, {"property":"ab", "value":"sibling"}]
+            }]}),
+        );
+        assert_eq!(status, StatusCode::OK);
+        for view in ["flat", "tree"] {
+            let (status, limited) = dispatch_json(
+                &terra,
+                json!({
+                    "command":"entity.get", "entity":"cube", "view":view,
+                    "property_prefix":"a", "property_depth":1
+                }),
+            );
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(limited["property_refs"], json!(["a.b"]));
+            if view == "flat" {
+                assert_eq!(limited["properties"].as_array().unwrap().len(), 2);
+            } else {
+                assert_eq!(
+                    limited["properties"]["a"]["children"]["b"]["assertions"][0]["value"],
+                    "child"
+                );
+                assert!(limited["properties"]["a"]["children"]["b"]
+                    .get("children")
+                    .is_none());
+            }
+        }
+        let (status, opened) = dispatch_json(
+            &terra,
+            json!({
+                "command":"entity.get", "entity":"cube", "property_prefix":"a.b", "property_depth":1
+            }),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(opened["properties"].as_array().unwrap().len(), 2);
+        assert!(opened.get("property_refs").is_none());
+        let (status, zero) = dispatch_json(
+            &terra,
+            json!({
+                "command":"entity.get", "entity":"cube", "property_depth":0
+            }),
+        );
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(zero["properties"], json!([]));
+        assert!(!zero["property_refs"].as_array().unwrap().is_empty());
+        let (status, _) = dispatch_json(
+            &terra,
+            json!({
+                "command":"entity.get", "entity":"cube", "property_depth":-1
+            }),
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn addressed_update_and_retraction_without_status_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = open_terra(dir.path());
+        let write = |value: serde_json::Value, target: Option<uuid::Uuid>| {
+            dispatch_json(
+                &terra,
+                json!({
+                "command":"transaction", "meta":{"reasoning":"test"}, "write":[{
+                    "slug":"cube", "description":"test", "meta":{"reasoning":"test"},
+                    "properties":[{"property":"a.b", "value":value, "supersedes_tx":target}]
+                }]}),
+            )
+        };
+        assert_eq!(write(json!("old"), None).0, StatusCode::OK);
+        let (_, old) = dispatch_json(&terra, json!({"command":"entity.get", "entity":"cube"}));
+        let old_tx =
+            serde_json::from_value(old["properties"][0]["context"]["tx_id"].clone()).unwrap();
+        assert_eq!(write(json!("new"), Some(old_tx)).0, StatusCode::OK);
+        let (_, new) = dispatch_json(
+            &terra,
+            json!({"command":"entity.get", "entity":"cube", "view":"tree"}),
+        );
+        let assertion = &new["properties"]["a"]["children"]["b"]["assertions"][0];
+        assert_eq!(assertion["value"], "new");
+        assert_eq!(assertion["supersedes_tx"], old_tx.to_string());
+        let new_tx = serde_json::from_value(assertion["context"]["tx_id"].clone()).unwrap();
+        let (_, detail) =
+            dispatch_json(&terra, json!({"command":"transaction.get", "tx_id":new_tx}));
+        assert_eq!(
+            detail["updated"][0]["properties"][0]["supersedes_tx"],
+            old_tx.to_string()
+        );
+        assert_ne!(write(json!("stale"), Some(old_tx)).0, StatusCode::OK);
+        assert_eq!(
+            write(serde_json::Value::Null, Some(new_tx)).0,
+            StatusCode::OK
+        );
+        let (_, deleted) = dispatch_json(&terra, json!({"command":"entity.get", "entity":"cube"}));
+        assert!(deleted["properties"].as_array().unwrap().is_empty());
+        let (_, historical) = dispatch_json(
+            &terra,
+            json!({"command":"entity.get", "entity":"cube", "at_tx":old_tx}),
+        );
+        assert_eq!(historical["properties"][0]["value"], "old");
     }
 
     #[test]
@@ -992,5 +1152,36 @@ mod tests {
 
         let response = handle(&terra, yaml_body.as_bytes(), ContentFormat::Yaml);
         assert_eq!(response.status(), StatusCode::OK);
+    }
+    #[test]
+    fn concurrent_claims_have_one_winner_and_conflicts_write_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let terra = Arc::new(open_terra(dir.path()));
+        let create = json!({"command":"transaction","meta":{"reasoning":"create queue"},
+            "preconditions":[{"entity":"queue","property":"task","expected":null}],
+            "write":[{"slug":"queue","description":"queue","meta":{"reasoning":"create"},"properties":[{"property":"task","value":"queued"}]}]});
+        assert_eq!(dispatch_json(&terra, create.clone()).0, StatusCode::OK);
+        assert_eq!(dispatch_json(&terra, create).0, StatusCode::CONFLICT);
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let handles:Vec<_>=(0..4).map(|i| {
+            let terra=terra.clone();let barrier=barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                dispatch_json(&terra,json!({"command":"transaction","meta":{"reasoning":"claim"},
+                    "preconditions":[{"entity":"queue","property":"task","expected":"queued"}],
+                    "write":[{"slug":"queue","meta":{"reasoning":"claim"},"properties":[{"property":"task","value":format!("owner-{i}")}]}]})).0
+            })
+        }).collect();
+        let statuses: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(statuses.iter().filter(|s| **s == StatusCode::OK).count(), 1);
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|s| **s == StatusCode::CONFLICT)
+                .count(),
+            3
+        );
+        let (_, txs) = dispatch_json(&terra, json!({"command":"transactions.list","limit":20}));
+        assert_eq!(txs.as_array().unwrap().len(), 2);
     }
 }

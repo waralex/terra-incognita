@@ -29,6 +29,8 @@ pub struct CommandEnvelope {
 /// `transaction` command body.
 #[derive(Deserialize)]
 pub struct TransactionReq {
+    #[serde(default)]
+    pub preconditions: Vec<PropertyPreconditionReq>,
     pub meta: Map<String, Value>,
     /// Entities to write — created if new, updated if existing.
     #[serde(default)]
@@ -41,6 +43,14 @@ pub struct TransactionReq {
     pub delete: Vec<DeleteReq>,
     #[serde(default)]
     pub touch: Vec<TouchReq>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropertyPreconditionReq {
+    pub entity: String,
+    pub property: String,
+    pub expected: Value,
 }
 
 #[derive(Deserialize)]
@@ -58,6 +68,7 @@ pub struct EntityReq {
 
 #[derive(Deserialize)]
 pub struct PropertyValueReq {
+    pub supersedes_tx: Option<Uuid>,
     pub property: String,
     pub value: Value,
 }
@@ -125,6 +136,19 @@ pub struct GetTransactionReq {
 pub struct EntityGetReq {
     pub entity: String,
     pub at_tx: Option<Uuid>,
+    pub property_prefix: Option<String>,
+    pub property_depth: Option<usize>,
+    #[serde(default)]
+    pub view: EntityView,
+}
+
+/// Representation only; both views use the same status-aware snapshot.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityView {
+    #[default]
+    Flat,
+    Tree,
 }
 
 /// `entities.similar` command body.
@@ -159,6 +183,8 @@ pub struct GrepEntitiesReq {
 pub struct EntityHistoryReq {
     pub entity: String,
     pub property: Option<String>,
+    pub property_prefix: Option<String>,
+    pub property_depth: Option<usize>,
     pub at_tx: Option<Uuid>,
     #[serde(default = "default_limit")]
     pub limit: usize,

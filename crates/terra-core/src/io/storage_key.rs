@@ -35,17 +35,19 @@ pub const SUFFIX_SEPARATOR: u8 = 0x00;
 /// Upper-bound sentinel — always greater than `SUFFIX_SEPARATOR | any suffix`.
 pub const SUFFIX_SEPARATOR_UPPER: u8 = 0x01;
 
-/// Trait for storage keys with a fixed-size prefix and optional variable suffix.
+/// Typed storage keys with address bytes and an optional name suffix.
 ///
-/// `SIZE` is the fixed part size. Encoded keys are always
-/// `fixed | SUFFIX_SEPARATOR | slug_suffixes`.
+/// Generated keys have a fixed address size `SIZE`. Custom variable-path keys
+/// may use `SIZE` as the minimum address size and must decode their own framing.
+/// Never use `SIZE` as a universal suffix offset. Encodings use
+/// `address | SUFFIX_SEPARATOR | slug_suffixes`.
 pub trait StorageKey: Sized {
     const SIZE: usize;
 
     fn encode(&self) -> Vec<u8>;
     fn decode(bytes: &[u8]) -> Result<Self, KeyError>;
 
-    /// Encode only the fixed-size part (hashes for Slug fields, raw bytes for others).
+    /// Encode address bytes (fixed-size for generated keys, variable for path keys).
     /// No separator, no slug suffixes.
     fn encode_fixed(&self) -> Vec<u8>;
 

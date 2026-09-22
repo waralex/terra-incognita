@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/terra-core", "crates/terra-server"]
 
 [workspace.package]
 license = "Apache-2.0"

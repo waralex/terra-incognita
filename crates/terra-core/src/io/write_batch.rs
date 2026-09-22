@@ -39,6 +39,16 @@ impl WriteBatch {
         Ok(())
     }
 
+    /// Remove a derived current-index entry. Immutable history is kept separately.
+    pub fn delete<T: DbItem>(&mut self, key: &T::Key) -> Result<(), DbError> {
+        let cf = self
+            .db
+            .cf_handle(T::cf())
+            .ok_or_else(|| DbError::Storage(format!("missing column family: {}", T::cf())))?;
+        self.inner.delete_cf(cf, key.encode());
+        Ok(())
+    }
+
     /// Commit all accumulated operations atomically. Consumes the batch.
     pub fn commit(self) -> Result<(), DbError> {
         self.db

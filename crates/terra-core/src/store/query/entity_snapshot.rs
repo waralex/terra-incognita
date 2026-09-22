@@ -63,19 +63,38 @@ pub fn entity_snapshot(
     at_tx: Option<Uuid>,
     statuses: Option<&AssertionStatusesDef>,
 ) -> Result<Option<Entity<TxMeta>>, DbError> {
+    entity_snapshot_selected(branch, slug, at_tx, statuses, None, None)
+}
+
+pub(crate) fn entity_snapshot_selected(
+    branch: &BranchContext,
+    slug: &Slug,
+    at_tx: Option<Uuid>,
+    statuses: Option<&AssertionStatusesDef>,
+    prefix: Option<&Slug>,
+    depth: Option<usize>,
+) -> Result<Option<Entity<TxMeta>>, DbError> {
     let Some(head) = entity_head(branch, slug, at_tx)? else {
         return Ok(None);
     };
 
-    let assertion_entries = match statuses {
-        Some(s) => properties::layered_properties(branch, slug, at_tx, s)?,
-        None => properties::properties(branch, slug, at_tx)?,
+    let (assertion_entries, refs) = if prefix.is_some() || depth.is_some() {
+        properties::selected_properties(branch, slug, at_tx, statuses, prefix, depth)?
+    } else {
+        (
+            match statuses {
+                Some(s) => properties::layered_properties(branch, slug, at_tx, s)?,
+                None => properties::properties(branch, slug, at_tx)?,
+            },
+            vec![],
+        )
     };
     let properties: Vec<PropertyValue<TxMeta>> = assertion_entries
         .into_iter()
         .map(|a| {
             let status = statuses.map(|s| s.resolve(a.value.status.as_deref()).to_string());
             PropertyValue {
+                supersedes_tx: a.value.supersedes_tx,
                 property: a.key.prop,
                 value: a.value.value.clone(),
                 context: TxMeta {
@@ -90,7 +109,21 @@ pub fn entity_snapshot(
         })
         .collect();
 
-    Ok(Some(Entity {
+    let mut entity = head_entity(slug, head, properties);
+    entity.property_refs = refs;
+    Ok(Some(entity))
+}
+
+/// Assemble a read-side entity from its head record and (possibly empty)
+/// property list. The single place that decides what an entity's own
+/// `context` carries, shared by the snapshot and the head-only paths.
+pub fn head_entity(
+    slug: &Slug,
+    head: EntityHead,
+    properties: Vec<PropertyValue<TxMeta>>,
+) -> Entity<TxMeta> {
+    Entity {
+        property_refs: vec![],
         slug: slug.clone(),
         description: head.description,
         properties,
@@ -104,5 +137,5 @@ pub fn entity_snapshot(
             status: None,
             source: None,
         },
-    }))
+    }
 }

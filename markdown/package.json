@@ -1,0 +1,16 @@
+{
+  "name": "terra-document-memory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "dependencies": {
+    "unified": "^11.0.5",
+    "remark-parse": "^11.0.0",
+    "remark-gfm": "^4.0.1",
+    "mdast-util-to-string": "^4.0.0",
+    "mdast-util-to-markdown": "^2.1.2",
+    "mdast-util-gfm": "^3.1.0"
+  }
+}

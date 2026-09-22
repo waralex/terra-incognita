@@ -220,6 +220,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -271,6 +272,7 @@ mod tests {
                 "server".parse().unwrap(),
                 Some(serde_json::json!("A server")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "status".parse().unwrap(),
                     value: serde_json::json!("up"),
                     context: (),
@@ -303,6 +305,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -348,11 +351,13 @@ mod tests {
                 Some(serde_json::json!("A person")),
                 vec![
                     PV {
+                        supersedes_tx: None,
                         property: "age".parse().unwrap(),
                         value: serde_json::json!(25),
                         context: (),
                     },
                     PV {
+                        supersedes_tx: None,
                         property: "city".parse().unwrap(),
                         value: serde_json::json!("London"),
                         context: (),
@@ -384,6 +389,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),
@@ -411,6 +417,7 @@ mod tests {
                 "bob".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(30),
                     context: (),
@@ -436,6 +443,7 @@ mod tests {
                 "alice".parse().unwrap(),
                 Some(serde_json::json!("A person")),
                 vec![PV {
+                    supersedes_tx: None,
                     property: "age".parse().unwrap(),
                     value: serde_json::json!(25),
                     context: (),

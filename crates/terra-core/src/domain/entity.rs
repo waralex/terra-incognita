@@ -12,6 +12,8 @@ use crate::io::Slug;
 /// so it carries its own context `M`.
 #[derive(Debug, Clone)]
 pub struct PropertyValue<M = ()> {
+    /// Addressed replacement/retraction of a visible assertion of this same property.
+    pub supersedes_tx: Option<uuid::Uuid>,
     pub property: Slug,
     pub value: Value,
     pub context: M,
@@ -25,6 +27,8 @@ pub struct Entity<M = ()> {
     pub slug: Slug,
     pub description: Option<Value>,
     pub properties: Vec<PropertyValue<M>>,
+    /// Structural paths omitted by depth selection; not claims of live assertions.
+    pub property_refs: Vec<Slug>,
     /// Entity change metadata — validated against `DataSchema.entity_change_meta`.
     pub meta: Map<String, Value>,
     /// Epistemic status applied to this change's assertions (per `assertion_statuses`).
@@ -55,6 +59,7 @@ impl Entity<()> {
             slug,
             description,
             properties,
+            property_refs: vec![],
             meta,
             status: None,
             context: (),

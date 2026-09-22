@@ -145,6 +145,7 @@ export class DocumentMarkdown {
    const generated=top[0].id;
    top[0].id=previous.id;top[0].expected=expected;
    for(const e of edits)if(e.content.parent===generated)e.content.parent=previous.id;
+   top[0].content.entrypoint=previous.content.entrypoint??null;
    top[0].content.parent=previous.content.parent;
    top[0].content.position=previous.content.position;
    operations.push({Put:top[0]});

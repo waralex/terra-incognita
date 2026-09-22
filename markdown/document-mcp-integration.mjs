@@ -144,3 +144,33 @@ test('session checkpoints stay collapsed at root and update atomically with reco
   const pinned=await c.call('read',{id:session,at:initial.snapshot_tx,depth:2});assert.match(pinned.markdown,/TTL explanation/);
  }finally{await c.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('MCP search uses plain Markdown text and explicit regexp mode',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'terra-search-')),root=randomUUID(),c=connectDocumentMcp(dir,root);
+ try{
+  await c.call('write',{parent:root,markdown:'A **retry** [policy](https://private.example).',reason:'Search fixture'});
+  assert.equal((await c.call('search',{text:'retry policy'})).hits.length,1);
+  assert.equal((await c.call('search',{text:'private.example'})).hits.length,0);
+  const result=await c.call('search',{text:'RETRY\\s+policy|timeout',mode:'regex'});
+  assert.equal(result.mode,'regex');assert.equal(result.hits.length,1);
+  await assert.rejects(c.call('search',{text:'[',mode:'regex'}),/Invalid regexp/);
+ }finally{await c.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('deep entrypoints appear in root overview, survive edits and retain historical state',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'terra-entry-')),root=randomUUID(),c=connectDocumentMcp(dir,root);
+ try{
+  const receipt=await c.call('write',{parent:root,markdown:'# Area\n\n## Detail\n\nHidden content.',reason:'Fixture'});
+  const leaf=receipt.written.find(b=>b.kind==='Text');
+  const marked=await c.call('change',{edits:[{id:leaf.id,expected:leaf.revision,entrypoint:'Read before changing retries'}],reason:'Useful start point'});
+  const overview=await c.call('read',{});
+  assert.equal(overview.entrypoints.items[0].id,leaf.id);assert.doesNotMatch(overview.markdown,/Hidden content/);
+  const current=await c.call('read',{id:leaf.id,format:'json'});
+  await c.call('write',{target:leaf.id,expected:current.blocks[0].revision,markdown:'Updated content.',reason:'Update text'});
+  const edited=await c.call('read',{id:leaf.id,format:'json'});assert.equal(edited.blocks[0].entrypoint,'Read before changing retries');
+  await assert.rejects(c.call('change',{edits:[{id:leaf.id,expected:leaf.revision,entrypoint:null}],reason:'Stale removal'}));
+  await c.call('change',{edits:[{id:leaf.id,expected:edited.blocks[0].revision,entrypoint:null}],reason:'No longer a starting point'});
+  assert.equal((await c.call('read',{})).entrypoints.items.length,0);
+  assert.equal((await c.call('read',{at:marked.tx})).entrypoints.items.length,1);
+ }finally{await c.close();await rm(dir,{recursive:true,force:true});}
+});

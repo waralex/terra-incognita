@@ -7,7 +7,7 @@ Current project memory uses stable block IDs and per-block revisions. One shared
 | Tool | Purpose |
 | --- | --- |
 | `read` | Open root or block; optional `depth` (0–63, default 1), `at` snapshot, `format` (`markdown` default or `json`). |
-| `search` | Search current titles and text; not history. Reports `is_empty`, `scanned_blocks`, `complete`, and hit truncation. |
+| `search` | Search current Markdown-stripped titles and text; not history. `mode: "literal"` (default) or `"regex"` (case-insensitive Unicode JavaScript pattern, without `/…/` delimiters). Reports `is_empty`, `scanned_blocks`, `complete`, and hit truncation. |
 | `write` | Parse Markdown: append under `parent`, insert beside `anchor` with `expected` and `side`, or replace a Text `target` with `expected`. |
 | `change` | Atomically rename sections / toggle checkboxes: 1–30 edits containing `id`, `expected`, and `title` or `state` (`Todo`/`Done`). |
 | `remove` | Tombstone a block/subtree with `id`, `expected`, `reason`; descendants require `subtree_revision` from a complete current read. Root deletion is refused. |
@@ -43,7 +43,7 @@ RUSTC_WRAPPER= cargo build -p terra-core --example document-bridge
 node markdown/document-memory-server.mjs .local/document-memory
 ```
 
-The registry (`registry.json`, mode 0600) holds credentials and project root IDs; `db/` holds RocksDB. Back up both. Do not start another owner of the same database. RPC binds to loopback port 8097 with bearer authentication (override with `MEMORY_RPC_PORT`). No dashboard is bundled. Block addresses are memory references resolved by MCP, not a promise of a running web page.
+The registry (`registry.json`, mode 0600) holds credentials and project root IDs; `db/` holds RocksDB. Back up both. Do not start another owner of the same database. RPC binds to loopback port 8097 with bearer authentication (override with `MEMORY_RPC_PORT`). An optional separate read-only browser is available via `node markdown/document-viewer.mjs` on loopback port 8096; see [project setup](../terra-memory-pilot.md#read-only-browser).
 
 The existing local launchd service is `local.terra.document-memory`:
 
@@ -58,3 +58,19 @@ For isolated experiments only, `node markdown/document-mcp.mjs DB ROOT_UUID BRID
 ## Verification
 
 `node --test markdown/document-mcp-integration.mjs` exercises real stdio/RocksDB, compact reads, parsed writes, conflicts, deletion, history and links. See [agent experiments](../../markdown/experiments/README.md) for usability trials.
+
+Search excludes Markdown delimiters and link destinations; labels and code contents remain searchable. Regexp patterns are limited to 2000 characters and execute in an isolated worker with a 2-second timeout. Invalid or timed-out expressions return an error rather than empty results.
+
+## Project entry points
+
+Any block can have an optional `entrypoint` label. Set it through `change` with
+`{id, expected, entrypoint: "When to read this"}`; use null to remove it. Labels
+are single-line, nonempty and at most 300 characters. Changes use the same CAS,
+reason and history as other block edits; replacing text preserves the label.
+
+Root `read` returns an `entrypoints` collection separately from the ordinary tree
+view, in either format. It includes labels and live/pinned links, never target
+bodies. Discovery scans the project at the read snapshot (10000 nodes, depth 64,
+100 links returned) and reports completeness/truncation; there is no dedicated
+index yet. The viewer shows these links under “Start here”. Deleted subtrees are
+excluded; historical root reads recover their earlier entry points.

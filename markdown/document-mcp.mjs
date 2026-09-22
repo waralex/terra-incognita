@@ -6,6 +6,7 @@ import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {openDocumentBridge} from './document-bridge.mjs';
 import {blockHref,extractBlockLinks} from './document-links.mjs';
+import {searchBlocks} from './document-search.mjs';
 import {DocumentMarkdown} from './document-model.mjs';
 const schema=properties=>({type:'object',properties,additionalProperties:false});
 const str={type:'string'};
@@ -16,10 +17,10 @@ export const tools=[
  {name:'links',description:'Outgoing Markdown links from one block (default root). at reads source snapshot. Targets report ok/deleted/missing/outside_scope/external/legacy/invalid. Reference definitions resolve across this project. Use link_templates from Markdown read, or href/snapshot_href from JSON read; add links using write.',inputSchema:schema({id:str,at:str})},
  {name:'backlinks',description:'Current source blocks in this project that link to the target ID, including pinned historical targets. Not historical source history. Bounded on-demand scan, up to 10000 blocks, 200 results.',inputSchema:{...schema({id:str}),required:['id']}},
  {name:'remove',description:'Remove a block from current memory, retaining version history. For a section/list with children, read it fully first and supply subtree_revision. Refuses changed descendants or root deletion. expected is the block revision; reason is required.',inputSchema:{...schema({id:str,expected:str,subtree_revision:str,reason:str}),required:['id','expected','reason']}},
- {name:'read',description:'Read root or section. Default format markdown returns text once with block id/revision/kind/state comments; format json returns structured blocks instead. expected is unchanged. depth defaults to 1, use depth:63 for a complete subtree (up to 10000 blocks). truncated explicitly reports omitted descendants. Complete current reads return subtree_revision for safe section deletion. at reads historical state.',inputSchema:schema({id:str,at:str,format:{enum:['markdown','json']},depth:{type:'integer',minimum:0,maximum:63}})},
- {name:'search',description:'Search current text and titles; returns block IDs plus is_empty, scanned_blocks, complete and hit truncation. Zero hits in a populated tree differs from empty memory.',inputSchema:{...schema({text:str}),required:['text']}},
+ {name:'read',description:'Read root or section. Root reads also return entrypoints from anywhere in the project, without their bodies. Default format markdown returns text once with block id/revision/kind/state comments; format json returns structured blocks instead. expected is unchanged. depth defaults to 1, use depth:63 for a complete subtree (up to 10000 blocks). truncated explicitly reports omitted descendants. Complete current reads return subtree_revision for safe section deletion. at reads historical state.',inputSchema:schema({id:str,at:str,format:{enum:['markdown','json']},depth:{type:'integer',minimum:0,maximum:63}})},
+ {name:'search',description:'Search current Markdown-stripped text and titles, case-insensitive. mode literal (default) or regex (JavaScript Unicode regexp, 2-second timeout); link destinations and markup are excluded. Returns block IDs plus is_empty, scanned_blocks, complete and hit truncation. Zero hits in a populated tree differs from empty memory.',inputSchema:{...schema({text:str,mode:{enum:['literal','regex']}}),required:['text']}},
  {name:'write',description:'Insert Markdown with parent (append) or anchor+expected+side (before/after), OR replace one Text block with target+expected. Automatically splits paragraphs/lists/headings. When inserting into a List, supply one Markdown list of matching ordered/unordered type; its items are inserted into the existing list. One atomic transaction; reason required. Returns written IDs/revisions for every descendant block. Containers cannot be replaced; use remove to delete.',inputSchema:{...schema({markdown:str,reason:str,target:str,expected:str,parent:str,anchor:str,side:{enum:['before','after']}}),required:['markdown','reason']}},
- {name:'change',description:'Atomically rename sections or set task checkboxes. Supply edits [{id,expected,title}] or [{id,expected,state:"Todo"|"Done"}]. Read first for revisions.',inputSchema:{...schema({reason:str,edits:{type:'array',minItems:1,maxItems:30,items:{...schema({id:str,expected:str,title:str,state:{enum:['Todo','Done']}}),required:['id','expected']}}}),required:['reason','edits']}},
+ {name:'change',description:'Atomically rename sections, set task checkboxes or set an entrypoint label on any block (null removes it). Supply edits [{id,expected,title}] or [{id,expected,state:"Todo"|"Done"}] or [{id,expected,entrypoint:"When to read this"|null}]. Read first for revisions.',inputSchema:{...schema({reason:str,edits:{type:'array',minItems:1,maxItems:30,items:{...schema({id:str,expected:str,title:str,state:{enum:['Todo','Done']},entrypoint:{type:['string','null'],maxLength:300}}),required:['id','expected']}}}),required:['reason','edits']}},
  {name:'history',description:'Block versions newest first, with transaction author/reason. Use tx as read.at to inspect historical context. before is inclusive; at most 20 versions.',inputSchema:{...schema({id:str,before:str}),required:['id']}},
 ];
 export class DocumentMemory {
@@ -68,7 +69,17 @@ export class DocumentMemory {
    const depths=levels(snapshot,id),blocks=snapshot.filter(b=>depths.get(b.id)<=depth);
    const truncated=blocks.length!==snapshot.length;
    const preview=b=>snapshot.find(child=>child.content.parent===b.id&&child.content.kind==='Text')?.content.body.slice(0,200)??'';
-   const common={root:this.root,id,historical:!!a.at,snapshot_tx:snapshotTx,depth,truncated,subtree_revision:!a.at&&!truncated&&blocks.length?revision(blocks):null};
+   const common={root:this.root,id,entrypoint:current.content.entrypoint??null,historical:!!a.at,snapshot_tx:snapshotTx,depth,truncated,subtree_revision:!a.at&&!truncated&&blocks.length?revision(blocks):null};
+   if(id===this.root){
+    try{
+    const all=await this.query({command:'subtree',root:this.root,at:snapshotTx,depth:64,max_nodes:10000});
+    const entries=all.filter(b=>b.content.entrypoint);
+    common.entrypoints={items:entries.slice(0,100).map(b=>({id:b.id,revision:b.tx,label:b.content.entrypoint,href:blockHref(this.root,b.id),snapshot_href:blockHref(this.root,b.id,snapshotTx)})),truncated:entries.length>100,complete:![...levels(all,this.root).values()].includes(64)};
+    }catch(error){
+     if(error.kind!=='limit'||!/budget exceeded/.test(error.message))throw error;
+     common.entrypoints={items:[],complete:false,truncated:true,note:'Entry-point discovery exceeded the project scan budget.'};
+    }
+   }
    if(a.format==='json')return {...common,blocks:blocks.map(b=>({id:b.id,revision:b.tx,href:blockHref(this.root,b.id),snapshot_href:blockHref(this.root,b.id,snapshotTx),...b.content,...(b.content.kind.ListItem?{preview:preview(b)}:{})}))};
    const visible=new Set(blocks.map(b=>b.id));
    return {...common,link_templates:{href:blockHref(this.root,'BLOCK_ID'),snapshot_href:blockHref(this.root,'BLOCK_ID',snapshotTx)},markdown:blocks.map(b=>{
@@ -83,8 +94,8 @@ export class DocumentMemory {
   if(name==='search'){
    if(typeof a.text!=='string'||!a.text.trim())throw Error('Supply search text.');
    const blocks=await this.query({command:'subtree',root:this.root,depth:64,max_nodes:10000});
-   const hits=blocks.filter(b=>((b.content.title??'')+'\n'+b.content.body).toLowerCase().includes(a.text.toLowerCase()));
-   return {root:this.root,scanned_blocks:blocks.length,is_empty:blocks.length===1&&!blocks[0].content.body,complete:![...levels(blocks,this.root).values()].includes(64),hits:hits.slice(0,50).map(b=>({id:b.id,title:b.content.title,excerpt:b.content.body.slice(0,300)})),truncated:hits.length>50};
+   const result=await searchBlocks(blocks,a.text,a.mode??'literal');
+   return {root:this.root,mode:a.mode??'literal',scanned_blocks:blocks.length,is_empty:blocks.length===1&&!blocks[0].content.body,complete:![...levels(blocks,this.root).values()].includes(64),...result};
   }
   if(name==='history'){
    await this.scoped(a.id);
@@ -124,7 +135,10 @@ export class DocumentMemory {
      if(typeof e.title!=='string'||/[\r\n]/.test(e.title))throw Error('Use a single-line title.');content.title=e.title;
     }else if(Object.hasOwn(e,'state')&&Object.keys(e).length===3&&content.kind.ListItem&&['Todo','Done'].includes(e.state)){
      content.state=e.state;
-    }else throw Error('Use title on a Section or state on a ListItem.');
+    }else if(Object.hasOwn(e,'entrypoint')&&Object.keys(e).length===3){
+     if(e.entrypoint!==null&&(typeof e.entrypoint!=='string'||!e.entrypoint.trim()||e.entrypoint.length>300||/[\r\n]/.test(e.entrypoint)))throw Error('entrypoint must be null or a nonempty single-line label up to 300 characters.');
+     content.entrypoint=e.entrypoint;
+    }else throw Error('Use title on a Section, state on a ListItem, or entrypoint on any block.');
     operations.push({Put:{id:b.id,expected:e.expected,content}});
    }
    return this.query({command:'transact',author:this.author,reason:a.reason,operations});

@@ -52,6 +52,9 @@ pub struct Content {
     pub title: Option<String>,
     pub body: String,
     pub state: Option<TaskState>,
+    /// Optional project entry-point label, independent of tree placement.
+    #[serde(default)]
+    pub entrypoint: Option<String>,
     pub deleted: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

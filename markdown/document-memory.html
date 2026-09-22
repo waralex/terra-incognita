@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><title>Terra · Memory</title>
+<style>body{margin:0;background:#10151c;color:#dfe7ef;font:16px/1.65 system-ui}header{padding:18px 30px;border-bottom:1px solid #334155;display:flex;gap:20px;align-items:center}select,input,button{background:#1e293b;color:inherit;border:1px solid #475569;padding:8px;border-radius:6px}main{display:flex;max-width:1300px;margin:auto}aside{width:260px;padding:24px;flex-shrink:0}article{padding:30px;width:100%;min-width:0}a{color:#83c4ff;cursor:pointer}section{margin-bottom:25px;border-bottom:1px solid #263445;padding-bottom:16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}small{color:#94a3b8}h2{margin:8px 0}.details small{display:block}small.ids{display:none}.details small.ids{display:block}#notice{padding:0 30px;color:#eebd75}#history{padding:25px;background:#18212d}button{cursor:pointer}aside a{display:block;padding:5px}</style>
+<header><b>Terra · Memory</b><select id="projects"></select><button id="home">Project root</button><button id="back">Back</button><button id="mode">Details</button><input id="query" placeholder="Search memory"><select id="searchMode"><option value="literal">Text</option><option value="regex">Regexp</option></select><button id="search">Search</button><small>Read only</small></header><div id="notice"></div><main><aside id="tree"></aside><article id="content"></article></main><div id="history" hidden></div>
+<script type="module">
+import {linkTarget,blockHref} from "/document-link-address.mjs";
+const $=id=>document.getElementById(id),params=new URLSearchParams(location.search);let project,id,at,config;
+const api=async(path,args={})=>{const r=await fetch('/api/'+path+'?'+new URLSearchParams({project,...args})),v=await r.json();if(!r.ok)throw Error(v.error);return v;};
+const node=(tag,text,parent)=>{const n=document.createElement(tag);n.textContent=text;parent.append(n);return n;};
+function link(text,id,parent,tx){const a=node('a',text,parent);a.href='?'+new URLSearchParams({project,id,...(tx?{at:tx}:{})});return a;}
+function title(b){return b.title??b.preview??(b.body?b.body.slice(0,70):b.kind.List?'List':b.kind.ListItem?'List item':'Section');}
+function render(n,parent){
+ const tags={paragraph:'p',strong:'strong',emphasis:'em',delete:'del',inlineCode:'code',code:'pre',blockquote:'blockquote',listItem:'li',table:'table',tableRow:'tr',tableCell:'td',thematicBreak:'hr',break:'br'};
+ if(n.type==='root'){for(const c of n.children??[])render(c,parent);return;}
+ if(n.type==='text'||n.type==='html'){parent.append(document.createTextNode(n.value));return;}
+ if(n.type==='definition'||n.type==='footnoteDefinition')return;
+ let tag=tags[n.type]??(n.type==='heading'?'h'+n.depth:n.type==='list'?(n.ordered?'ol':'ul'):n.type==='link'?'a':'span');
+ const el=document.createElement(tag);parent.append(el);
+ if(n.type==='link'){let url=n.url;const target=linkTarget(url);if(target.kind==='block'){el.href=blockHref(target.root,target.id,target.at);}else if(url.startsWith('/?doc='))url='http://127.0.0.1:8093'+url;if(/^https?:\/\//.test(url)){el.href=url;el.target='_blank';el.rel='noopener noreferrer';}}
+ if(n.type==='list'&&n.ordered&&n.start!==null)el.start=n.start;
+ if(n.value!==undefined)el.textContent=n.value;
+ for(const c of n.children??[])render(c,el);
+}
+async function load(){
+ try{
+ const v=await api('read',{...(id?{id}:{}),...(at?{at}:{})});if(v.deleted){$('content').replaceChildren();node('p','This block was removed. Earlier versions remain in history.',$('content'));node('button','History',$('content')).onclick=()=>historyFor(id);return;}
+ id=v.blocks[0].id;$('content').replaceChildren();$('tree').replaceChildren();$('notice').textContent=at?'Historical snapshot — '+at:'';
+ link('Project root',config.projects[project].root,$('tree'));
+ if(v.entrypoints&&(v.entrypoints.items.length||!v.entrypoints.complete)){node('h3','Start here',$('tree'));for(const entry of v.entrypoints.items)link(entry.label,entry.id,$('tree'),at);if(v.entrypoints.truncated||!v.entrypoints.complete)node('small','Entry points incomplete',$('tree'));}
+ if(v.blocks[0].parent&&id!==config.projects[project].root)link('↑ Parent',v.blocks[0].parent,$('tree'),at);
+ for(const b of v.blocks){
+  const s=node('section','',$('content'));
+  if(b.title!==null)node('h2',b.title,s);
+  if(b.body){if(b.ast)render(b.ast,s);else node('pre',b.body,s);}
+  if(b.kind.ListItem)node('p',(b.state==='Done'?'☑ ':b.state==='Todo'?'☐ ':'• ')+(b.preview??''),s);
+  if(b.id!==id&&b.kind!=='Text'){link('Open '+title(b),b.id,s,at);link(title(b),b.id,$('tree'),at);}
+  node('small',b.id+' · '+b.revision,s).className='ids';
+  const h=node('button','History',s);h.onclick=()=>historyFor(b.id);
+  node('button','Links',s).onclick=()=>linksFor(b.id,'links');node('button','Backlinks',s).onclick=()=>linksFor(b.id,'backlinks');
+ }
+ 
+ }catch(e){$('notice').textContent=e.message;}
+}
+async function linksFor(block,kind){try{const v=await api(kind,{id:block,...(kind==='links'&&at?{at}:{})});$('history').hidden=false;$('history').replaceChildren();node('h2',kind==='links'?'Outgoing links':'Backlinks',$('history'));if(!v.links.length)node('p','No links found in this project.',$('history'));for(const e of v.links){const s=node('section','',$('history'));node('p',e.label+' · '+e.status,s);const a=node('a',kind==='links'?'Open target':'Open source',s);if(kind==='backlinks')a.href=e.source_href;else if(e.target.kind==='block')a.href=blockHref(e.target.root,e.target.id,e.target.at);else if(/^https?:\/\//.test(e.href))a.href=e.href;}if(v.truncated||!v.complete)node('p','Results are incomplete.',$('history'));}catch(e){$('notice').textContent=e.message;}}
+async function historyFor(block){try{const rows=await api('history',{id:block});$('history').hidden=false;$('history').replaceChildren();node('h2','Block history',$('history'));for(const r of rows){const s=node('section','',$('history'));node('b',r.transaction?.reason??'Change',s);node('small',' · '+(r.transaction?.author??'')+' · '+r.tx,s);node('pre',r.title??r.body??r.state??'',s);link('Open this version',r.id,s,r.tx);for(const changed of r.changed_blocks??[])if(changed!==r.id)link('Related block '+changed.slice(0,8),changed,s,r.tx);}}catch(e){$('notice').textContent=e.message;}}
+config=await (await fetch('/api/projects')).json();project=(params.has('root')?Object.keys(config.projects).find(p=>config.projects[p].root===params.get('root')):null)??params.get('project')??config.aliases?.[params.get('doc')]?.project??Object.keys(config.projects)[0];id=params.get('id');at=params.get('at');for(const p of Object.keys(config.projects)){const o=node('option',p,$('projects'));o.value=p;} $('projects').value=project;
+$('projects').onchange=()=>location.href='?project='+$('projects').value;$('home').onclick=()=>location.href='?project='+project;$('back').onclick=()=>window.history.back();$('mode').onclick=()=>{$('content').classList.toggle('details');};$('search').onclick=async()=>{try{const v=await api('search',{text:$('query').value,mode:$('searchMode').value});if($('searchMode').value==='regex'&&v.mode!=='regex')throw Error('The running memory server needs an update to support regexp search.');$('tree').replaceChildren();for(const h of v.hits)link(h.title??h.excerpt,h.id,$('tree'));}catch(e){$('notice').textContent=e.message;}};if(params.has('root')&&config.projects[project]?.root!==params.get('root'))$('notice').textContent='This memory root is unavailable (it may have been archived).';else if(!project)$('notice').textContent='No projects registered.';else await load();
+</script>

@@ -7,6 +7,7 @@ fn section(parent: Option<Uuid>, title: &str) -> Content {
         title: Some(title.into()),
         body: String::new(),
         state: None,
+        entrypoint: None,
         deleted: false,
     }
 }
@@ -536,6 +537,7 @@ fn text(parent: Uuid, body: &str) -> Content {
         title: None,
         body: body.into(),
         state: None,
+        entrypoint: None,
         deleted: false,
     }
 }
@@ -779,4 +781,13 @@ fn staged_moves_hide_old_index_positions() {
     );
     assert_eq!(store.children(root, Some(tx)).unwrap().len(), 2);
     assert_eq!(store.changed_blocks(after).unwrap().len(), 3);
+}
+
+#[test]
+fn existing_content_without_entrypoint_remains_readable() {
+    let content = section(None, "Old content");
+    let mut json = serde_json::to_value(&content).unwrap();
+    json.as_object_mut().unwrap().remove("entrypoint");
+    let decoded: Content = serde_json::from_value(json).unwrap();
+    assert_eq!(decoded, content);
 }

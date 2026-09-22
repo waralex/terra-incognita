@@ -40,3 +40,5 @@ its ID, revision, kind, parent and optional checkbox state. Use that revision as
 only when structured blocks are useful; the two formats are mutually exclusive.
 `link_templates` supplies addresses once per Markdown response: replace BLOCK_ID
 with the chosen block ID. In JSON mode blocks retain href/snapshot_href.
+
+Root reads include `entrypoints`: selected links from anywhere in the tree, without loading their bodies into your context. Open relevant ones as needed. Set a concise “when to read this” label with `change(edits:[{id,expected,entrypoint:"..."}],reason)`; set `entrypoint:null` to remove it. Keep this collection small and useful across sessions, not a list of everything. This changes neither hierarchy nor the target text; labels and removals retain history.

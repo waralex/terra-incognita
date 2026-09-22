@@ -52,3 +52,13 @@ Install `skills/terra-checkpoint` and `skills/terra-resume` alongside terra-memo
 3. `/terra-resume SESSION_ID` reads the checkpoint, checks the workspace and continues. Use the ID from the save receipt.
 
 Default root reads do not expand session content. Explicit deep reads and search can include it. These skills neither clear context nor install hooks. A failed save is not a signal to clear. Keep the restore ID outside the conversation before clearing; the skill cannot recover a forgotten choice among several sessions automatically.
+
+## Read-only browser
+
+`node markdown/document-viewer.mjs` serves the project tree, Markdown, search,
+links and block history at `http://127.0.0.1:8096`. It reads through the running
+RPC service; it neither opens RocksDB nor requires restarting that service.
+Override `MEMORY_VIEW_PORT` or `MEMORY_RPC_URL` if needed. Its registry path is
+an optional first argument (default `.local/document-memory`). Only read routes
+are exposed; credentials stay in the server process. The viewer is intended for
+local use and binds to loopback.

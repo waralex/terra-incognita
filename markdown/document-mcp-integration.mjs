@@ -123,3 +123,24 @@ test('default Markdown reads do not duplicate bodies and retain editable metadat
   await assert.rejects(()=>c.call('read',{format:'both'}),/Invalid format/);
  }finally{await c.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('session checkpoints stay collapsed at root and update atomically with recoverable history',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'terra-checkpoint-')),root=randomUUID(),c=connectDocumentMcp(dir,root);
+ try{
+  const sessions=(await c.call('write',{parent:root,markdown:'# Сессии',reason:'Organize session checkpoints'})).blocks[0];
+  const old='**Goal:** Repair cache expiry.\n**Constraint:** Do not deploy.\n**State:** TTL explanation remains unverified.\n**Next:** Check clock alignment.';
+  const receipt=await c.call('write',{parent:sessions,markdown:'# Cache investigation\n\n'+old,reason:'Save before manual clear'});
+  const session=receipt.blocks[0];
+  const initial=await c.call('read',{id:session,depth:2,format:'json'});
+  const text=initial.blocks.find(b=>b.kind==='Text');assert.ok(text);
+  assert.equal(initial.blocks.length,2);
+  const shallow=await c.call('read',{});assert.match(shallow.markdown,/Сессии/);assert.doesNotMatch(shallow.markdown,/Cache investigation|Do not deploy|TTL explanation/);
+  const next='**Goal:** Repair cache expiry.\n**Constraint:** Do not deploy.\n**State:** Clock skew reproduced; TTL unchanged.\n**Next:** Add a clock-skew regression test.';
+  await c.call('write',{target:text.id,expected:text.revision,markdown:next,reason:'Correct diagnosis from controlled reproduction'});
+  await assert.rejects(c.call('write',{target:text.id,expected:text.revision,markdown:old,reason:'Stale writer'}));
+  const fresh=await c.call('read',{id:session,depth:2,format:'json'});
+  assert.equal(fresh.blocks.length,2);assert.equal(fresh.blocks[1].id,text.id);assert.equal(fresh.blocks[1].body,next);
+  const history=await c.call('history',{id:text.id});assert.ok(history.some(v=>v.body===old));
+  const pinned=await c.call('read',{id:session,at:initial.snapshot_tx,depth:2});assert.match(pinned.markdown,/TTL explanation/);
+ }finally{await c.close();await rm(dir,{recursive:true,force:true});}
+});

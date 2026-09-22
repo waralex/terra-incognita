@@ -42,3 +42,13 @@ Current history is per block, with transaction reasons and related block IDs.
 
 Disconnecting MCP preserves data. Use ordinary work to evaluate whether memory
 reduces repeated investigation; avoid creating a separate reporting ritual.
+
+## Save a conversation before clearing
+
+Install `skills/terra-checkpoint` and `skills/terra-resume` alongside terra-memory in the client's skills directory. In Claude Code:
+
+1. `/terra-checkpoint` distills reusable knowledge and saves a session under the root's **Сессии** section. Subsequent saves update the same checkpoint and retain history.
+2. Inspect the receipt and saved content. Run `/clear` yourself when satisfied.
+3. `/terra-resume SESSION_ID` reads the checkpoint, checks the workspace and continues. Use the ID from the save receipt.
+
+Default root reads do not expand session content. Explicit deep reads and search can include it. These skills neither clear context nor install hooks. A failed save is not a signal to clear. Keep the restore ID outside the conversation before clearing; the skill cannot recover a forgotten choice among several sessions automatically.
